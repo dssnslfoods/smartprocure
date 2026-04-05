@@ -4,7 +4,11 @@
 -- ============================================================
 
 -- 1. ENUM TYPES
-CREATE TYPE public.app_role AS ENUM ('admin', 'procurement_officer', 'approver', 'executive', 'supplier');
+-- NOTE: app_role includes 'moderator' and 'user' to match the migration file
+-- (20260405172845) and the auto-generated types.ts. The app currently uses
+-- admin / procurement_officer / approver / executive / supplier actively, but
+-- moderator and user are retained for forward-compatibility.
+CREATE TYPE public.app_role AS ENUM ('admin', 'moderator', 'user', 'procurement_officer', 'approver', 'executive', 'supplier');
 CREATE TYPE public.supplier_status AS ENUM ('draft', 'submitted', 'review', 'approved', 'rejected', 'suspended');
 CREATE TYPE public.supplier_tier AS ENUM ('critical_tier_1', 'non_critical_tier_1');
 CREATE TYPE public.rfq_status AS ENUM ('draft', 'published', 'closed', 'evaluation', 'awarded');
@@ -377,6 +381,8 @@ CREATE TABLE public.supplier_score_summary (
 ALTER TABLE public.supplier_score_summary ENABLE ROW LEVEL SECURITY;
 
 -- 27. NOTIFICATIONS
+-- NOTE: 'link' column added to match types.ts (generated from actual DB) and
+-- NotificationBell.tsx which reads n.link to navigate on click.
 CREATE TABLE public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -386,6 +392,7 @@ CREATE TABLE public.notifications (
   is_read BOOLEAN DEFAULT false,
   entity_type TEXT,
   entity_id UUID,
+  link TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
