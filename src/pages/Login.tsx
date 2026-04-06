@@ -125,6 +125,10 @@ export default function Login() {
             </div>
           </CardContent>
         </Card>
+
+        <div className="mt-8 text-center text-xs text-muted-foreground">
+          © 2026 Arnon Arpaket. All Rights Reserved.
+        </div>
       </div>
     </div>
   );
