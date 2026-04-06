@@ -1,21 +1,21 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle2, XCircle, RotateCcw, FileCheck, Eye } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Search, CheckCircle2, XCircle, RotateCcw, Eye } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { usePagination } from '@/hooks/use-pagination';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 
 export default function AwardsPage() {
-  const [awards, setAwards] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(true);
+  const [stats, setStats] = useState({ total: 0, pending: 0, approved: 0, poReady: 0 });
   const [search, setSearch] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<any>(null);
@@ -23,15 +23,47 @@ export default function AwardsPage() {
   const { hasRole } = useAuth();
   const { toast } = useToast();
 
-  const fetchAwards = async () => {
-    const { data } = await supabase.from('awards')
-      .select('*, suppliers(company_name), rfqs(title, rfq_number)')
-      .order('created_at', { ascending: false });
-    if (data) setAwards(data);
-    setLoading(false);
+  const fetchStats = async () => {
+    setLoadingStats(true);
+    const [
+      { count: total },
+      { count: pending },
+      { count: approved },
+      { count: poReady }
+    ] = await Promise.all([
+      supabase.from('awards').select('*', { count: 'exact', head: true }),
+      supabase.from('awards').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('awards').select('*', { count: 'exact', head: true }).eq('status', 'approved'),
+      supabase.from('awards').select('*', { count: 'exact', head: true }).eq('ready_for_po', true),
+    ]);
+    setStats({
+      total: total || 0,
+      pending: pending || 0,
+      approved: approved || 0,
+      poReady: poReady || 0,
+    });
+    setLoadingStats(false);
   };
 
-  useEffect(() => { fetchAwards(); }, []);
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  const filters = useCallback((query: any) => {
+    if (search) {
+      // Note: Foreign key search in Supabase requires some care. 
+      // This is a simplified version. For complex join search, consider a RPC or view.
+      return query.or(`award_number.ilike.%${search}%,recommendation.ilike.%${search}%`);
+    }
+    return query;
+  }, [search]);
+
+  const pagination = useSupabasePagination<any>({
+    tableName: 'awards',
+    select: '*, suppliers(company_name), rfqs(title, rfq_number)',
+    pageSize: 20,
+    filters,
+  });
 
   const handleStatusChange = async (id: string, status: string) => {
     const updates: any = { status, updated_at: new Date().toISOString() };
@@ -44,16 +76,10 @@ export default function AwardsPage() {
     } else {
       toast({ title: `Award ${status}` });
       setDecisionReason('');
-      fetchAwards();
+      fetchStats();
+      pagination.refresh();
     }
   };
-
-  const filtered = awards.filter(a =>
-    a.suppliers?.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-    a.rfqs?.title?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const pagination = usePagination(filtered, { pageSize: 20 });
 
   const statusConfig: Record<string, { color: string; label: string }> = {
     pending: { color: 'bg-amber-500/10 text-amber-600', label: 'Pending Approval' },
@@ -64,13 +90,6 @@ export default function AwardsPage() {
 
   const canApprove = hasRole('admin') || hasRole('approver');
 
-  const stats = {
-    total: awards.length,
-    pending: awards.filter(a => a.status === 'pending').length,
-    approved: awards.filter(a => a.status === 'approved').length,
-    poReady: awards.filter(a => a.ready_for_po).length,
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -78,12 +97,11 @@ export default function AwardsPage() {
         <p className="text-sm text-muted-foreground">Review, approve, and track supplier award decisions</p>
       </div>
 
-      {/* KPI Cards */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Awards</p><p className="text-2xl font-bold">{stats.total}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Pending Approval</p><p className="text-2xl font-bold text-amber-600">{stats.pending}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Approved</p><p className="text-2xl font-bold text-emerald-600">{stats.approved}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">PO Ready</p><p className="text-2xl font-bold text-blue-600">{stats.poReady}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Awards</p><p className="text-2xl font-bold">{loadingStats ? '...' : stats.total}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Pending Approval</p><p className="text-2xl font-bold text-amber-600">{loadingStats ? '...' : stats.pending}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Approved</p><p className="text-2xl font-bold text-emerald-600">{loadingStats ? '...' : stats.approved}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">PO Ready</p><p className="text-2xl font-bold text-blue-600">{loadingStats ? '...' : stats.poReady}</p></CardContent></Card>
       </div>
 
       <div className="relative max-w-sm">
@@ -107,12 +125,12 @@ export default function AwardsPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {pagination.loading ? (
                   <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-                ) : pagination.paginatedItems.length === 0 ? (
+                ) : pagination.items.length === 0 ? (
                   <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No awards yet</td></tr>
                 ) : (
-                  pagination.paginatedItems.map(a => {
+                  pagination.items.map(a => {
                     const sc = statusConfig[a.status] || statusConfig.pending;
                     return (
                       <tr key={a.id} className="border-b hover:bg-muted/30">
@@ -130,13 +148,10 @@ export default function AwardsPage() {
                             {canApprove && a.status === 'pending' && (
                               <>
                                 <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleStatusChange(a.id, 'approved')}>
-                                  <CheckCircle2 className="w-3 h-3 mr-1" />Approve
+                                  <CheckCircle2 className="w-3 h-3 mr-1" />
                                 </Button>
                                 <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleStatusChange(a.id, 'rejected')}>
-                                  <XCircle className="w-3 h-3 mr-1" />Reject
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => handleStatusChange(a.id, 'revise')}>
-                                  <RotateCcw className="w-3 h-3 mr-1" />Revise
+                                  <XCircle className="w-3 h-3 mr-1" />
                                 </Button>
                               </>
                             )}
@@ -153,7 +168,6 @@ export default function AwardsPage() {
         </CardContent>
       </Card>
 
-      {/* Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Award Details</DialogTitle></DialogHeader>
@@ -174,13 +188,13 @@ export default function AwardsPage() {
                   <Textarea value={decisionReason} onChange={e => setDecisionReason(e.target.value)} placeholder="Reason for your decision..." rows={2} />
                   <div className="flex gap-2">
                     <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => { handleStatusChange(selected.id, 'approved'); setDetailOpen(false); }}>
-                      <CheckCircle2 className="w-3 h-3 mr-1" />Approve
+                      Approve
                     </Button>
                     <Button size="sm" variant="destructive" onClick={() => { handleStatusChange(selected.id, 'rejected'); setDetailOpen(false); }}>
-                      <XCircle className="w-3 h-3 mr-1" />Reject
+                      Reject
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => { handleStatusChange(selected.id, 'revise'); setDetailOpen(false); }}>
-                      <RotateCcw className="w-3 h-3 mr-1" />Revise
+                      Revise
                     </Button>
                   </div>
                 </div>

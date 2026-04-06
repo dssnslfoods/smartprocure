@@ -4,11 +4,10 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
-import { usePagination } from '@/hooks/use-pagination';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 
 const statusColors: Record<string, string> = {
@@ -19,31 +18,29 @@ const statusColors: Record<string, string> = {
   awarded: 'bg-emerald-500/10 text-emerald-600',
 };
 
+const RFQ_STATUSES = ['draft', 'published', 'closed', 'evaluation', 'awarded'];
+
 export default function RFQList() {
-  const [rfqs, setRfqs] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
   const { hasRole } = useAuth();
 
-  useEffect(() => {
-    const fetchRfqs = async () => {
-      const { data } = await supabase.from('rfqs').select('*').order('created_at', { ascending: false });
-      if (data) setRfqs(data);
-      setLoading(false);
-    };
-    fetchRfqs();
-  }, []);
+  const filters = useCallback((query: any) => {
+    let filteredQuery = query;
+    if (search) {
+      filteredQuery = filteredQuery.or(`title.ilike.%${search}%,rfq_number.ilike.%${search}%`);
+    }
+    if (statusFilter !== 'all') {
+      filteredQuery = filteredQuery.eq('status', statusFilter);
+    }
+    return filteredQuery;
+  }, [search, statusFilter]);
 
-  const filtered = rfqs.filter((r) => {
-    const matchesSearch = r.title?.toLowerCase().includes(search.toLowerCase()) ||
-      r.rfq_number?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || r.status === statusFilter;
-    return matchesSearch && matchesStatus;
+  const pagination = useSupabasePagination<any>({
+    tableName: 'rfqs',
+    pageSize: 20,
+    filters,
   });
-
-  const pagination = usePagination(filtered, { pageSize: 20 });
-  const statuses = [...new Set(rfqs.map(r => r.status).filter(Boolean))];
 
   return (
     <div className="space-y-6">
@@ -67,7 +64,7 @@ export default function RFQList() {
           <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
-            {statuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {RFQ_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -83,12 +80,12 @@ export default function RFQList() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {pagination.loading ? (
                 <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-              ) : pagination.paginatedItems.length === 0 ? (
+              ) : pagination.items.length === 0 ? (
                 <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No RFQs found</td></tr>
               ) : (
-                pagination.paginatedItems.map((r) => (
+                pagination.items.map((r) => (
                   <tr key={r.id} className="border-b hover:bg-muted/30">
                     <td className="p-3 font-medium">
                       <Link to={`/rfq/${r.id}`} className="text-primary hover:underline">{r.rfq_number || '—'}</Link>

@@ -4,10 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { usePagination } from '@/hooks/use-pagination';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 
 const statusColor: Record<string, string> = {
@@ -17,29 +16,30 @@ const statusColor: Record<string, string> = {
   cancelled: 'bg-destructive/10 text-destructive',
 };
 
+const BIDDING_STATUSES = ['scheduled', 'active', 'closed', 'cancelled'];
+
 export default function BiddingPage() {
   const navigate = useNavigate();
-  const [events, setEvents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  useEffect(() => {
-    supabase.from('bidding_events').select('*, rfqs(title)').order('created_at', { ascending: false }).then(({ data }) => {
-      if (data) setEvents(data);
-      setLoading(false);
-    });
-  }, []);
+  const filters = useCallback((query: any) => {
+    let filteredQuery = query;
+    if (search) {
+      filteredQuery = filteredQuery.ilike('title', `%${search}%`);
+    }
+    if (statusFilter !== 'all') {
+      filteredQuery = filteredQuery.eq('status', statusFilter);
+    }
+    return filteredQuery;
+  }, [search, statusFilter]);
 
-  const filtered = events.filter(e => {
-    const matchesSearch = e.title?.toLowerCase().includes(search.toLowerCase()) ||
-      e.rfqs?.title?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || e.status === statusFilter;
-    return matchesSearch && matchesStatus;
+  const pagination = useSupabasePagination<any>({
+    tableName: 'bidding_events',
+    select: '*, rfqs(title)',
+    pageSize: 20,
+    filters,
   });
-
-  const pagination = usePagination(filtered, { pageSize: 20 });
-  const statuses = [...new Set(events.map(e => e.status).filter(Boolean))];
 
   return (
     <div className="space-y-6">
@@ -59,7 +59,7 @@ export default function BiddingPage() {
           <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
-            {statuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {BIDDING_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -77,12 +77,12 @@ export default function BiddingPage() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {pagination.loading ? (
                 <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-              ) : pagination.paginatedItems.length === 0 ? (
+              ) : pagination.items.length === 0 ? (
                 <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No bidding events found</td></tr>
               ) : (
-                pagination.paginatedItems.map((e) => (
+                pagination.items.map((e) => (
                   <tr key={e.id} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => navigate(`/bidding/${e.id}`)}>
                     <td className="p-3 font-medium text-primary hover:underline">{e.title || 'Untitled'}</td>
                     <td className="p-3 text-muted-foreground">{e.rfqs?.title || '—'}</td>

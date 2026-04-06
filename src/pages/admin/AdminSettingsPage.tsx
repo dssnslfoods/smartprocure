@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Users, Shield, Settings, Mail, Save } from 'lucide-react';
-import { useAuth } from '@/contexts/AuthContext';
+import { Plus, Users, Shield, Settings, Mail, Save, Search } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 
 interface EmailConfig {
   email_enabled: boolean;
@@ -49,28 +50,31 @@ const DEFAULT_EMAIL_CONFIG: EmailConfig = {
 };
 
 export default function AdminSettingsPage() {
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', full_name: '', role: 'procurement_officer' as string });
   const [creating, setCreating] = useState(false);
   const [emailConfig, setEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
   const [savingEmail, setSavingEmail] = useState(false);
+  const [search, setSearch] = useState('');
   const { toast } = useToast();
 
   useEffect(() => {
-    fetchUsers();
     fetchEmailConfig();
   }, []);
 
-  const fetchUsers = async () => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*, user_roles(role)')
-      .order('created_at', { ascending: false });
-    if (data) setUsers(data);
-    setLoading(false);
-  };
+  const filters = useCallback((query: any) => {
+    if (search) {
+      return query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`);
+    }
+    return query;
+  }, [search]);
+
+  const pagination = useSupabasePagination<any>({
+    tableName: 'profiles',
+    select: '*, user_roles(role)',
+    pageSize: 20,
+    filters,
+  });
 
   const fetchEmailConfig = async () => {
     const { data } = await supabase
@@ -119,7 +123,7 @@ export default function AdminSettingsPage() {
     setCreating(false);
     setShowCreateUser(false);
     setNewUser({ email: '', password: '', full_name: '', role: 'procurement_officer' });
-    fetchUsers();
+    pagination.refresh();
   };
 
   return (
@@ -137,9 +141,12 @@ export default function AdminSettingsPage() {
           <TabsTrigger value="config" className="gap-2"><Settings className="w-4 h-4" />Config</TabsTrigger>
         </TabsList>
 
-        {/* Users Tab */}
         <TabsContent value="users" className="space-y-4">
-          <div className="flex justify-end">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="relative w-72">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder="Search users..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            </div>
             <Dialog open={showCreateUser} onOpenChange={setShowCreateUser}>
               <DialogTrigger asChild>
                 <Button><Plus className="w-4 h-4 mr-2" />Create User</Button>
@@ -182,45 +189,47 @@ export default function AdminSettingsPage() {
 
           <Card>
             <CardContent className="p-0">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium text-muted-foreground">Name</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Email</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Role(s)</th>
-                    <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-                  ) : users.length === 0 ? (
-                    <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No users found</td></tr>
-                  ) : (
-                    users.map((u) => (
-                      <tr key={u.id} className="border-b hover:bg-muted/30">
-                        <td className="p-3 font-medium">{u.full_name || '—'}</td>
-                        <td className="p-3 text-muted-foreground">{u.email || '—'}</td>
-                        <td className="p-3">
-                          {u.user_roles?.map((r: any) => (
-                            <Badge key={r.role} variant="secondary" className="mr-1">{r.role}</Badge>
-                          )) || '—'}
-                        </td>
-                        <td className="p-3">
-                          <Badge variant="secondary" className={u.is_active !== false ? 'bg-emerald-500/10 text-emerald-600' : 'bg-destructive/10 text-destructive'}>
-                            {u.is_active !== false ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left p-3 font-medium text-muted-foreground">Name</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">Email</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">Role(s)</th>
+                      <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagination.loading ? (
+                      <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
+                    ) : pagination.items.length === 0 ? (
+                      <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No users found</td></tr>
+                    ) : (
+                      pagination.items.map((u) => (
+                        <tr key={u.id} className="border-b hover:bg-muted/30">
+                          <td className="p-3 font-medium">{u.full_name || '—'}</td>
+                          <td className="p-3 text-muted-foreground">{u.email || '—'}</td>
+                          <td className="p-3">
+                            {u.user_roles?.map((r: any) => (
+                              <Badge key={r.role} variant="secondary" className="mr-1">{r.role}</Badge>
+                            )) || '—'}
+                          </td>
+                          <td className="p-3">
+                            <Badge variant="secondary" className={u.is_active !== false ? 'bg-emerald-500/10 text-emerald-600' : 'bg-destructive/10 text-destructive'}>
+                              {u.is_active !== false ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationControls {...pagination} />
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Roles Tab */}
         <TabsContent value="roles">
           <Card>
             <CardHeader><CardTitle className="text-base">System Roles</CardTitle></CardHeader>
@@ -238,9 +247,7 @@ export default function AdminSettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Email Tab */}
         <TabsContent value="email" className="space-y-4">
-          {/* Master Toggle */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
@@ -258,7 +265,6 @@ export default function AdminSettingsPage() {
             </CardHeader>
           </Card>
 
-          {/* SMTP Settings */}
           <Card>
             <CardHeader><CardTitle className="text-base">SMTP Server</CardTitle></CardHeader>
             <CardContent className="space-y-4">
@@ -293,7 +299,6 @@ export default function AdminSettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Notification Toggles */}
           <Card>
             <CardHeader><CardTitle className="text-base">เหตุการณ์ที่ส่งอีเมล</CardTitle></CardHeader>
             <CardContent className="space-y-4">
@@ -321,7 +326,6 @@ export default function AdminSettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Email Templates */}
           <Card>
             <CardHeader><CardTitle className="text-base">เทมเพลตอีเมล</CardTitle></CardHeader>
             <CardContent className="space-y-6">
@@ -365,7 +369,6 @@ export default function AdminSettingsPage() {
           </div>
         </TabsContent>
 
-        {/* Config Tab */}
         <TabsContent value="config">
           <Card>
             <CardHeader><CardTitle className="text-base">Scoring Weights</CardTitle></CardHeader>

@@ -7,21 +7,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye, ArrowUpDown } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { usePagination } from '@/hooks/use-pagination';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 
 export default function FinalQuotationsPage() {
-  const [quotations, setQuotations] = useState<any[]>([]);
   const [rfqs, setRfqs] = useState<any[]>([]);
   const [sourceQuotations, setSourceQuotations] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [compareQuotations, setCompareQuotations] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [compareRfqId, setCompareRfqId] = useState<string>('');
@@ -35,28 +34,46 @@ export default function FinalQuotationsPage() {
     currency: 'USD', payment_terms: '', delivery_terms: '', notes: '',
   });
 
-  const fetchAll = async () => {
-    const [fqRes, rfqRes, supRes] = await Promise.all([
-      supabase.from('final_quotations').select('*, suppliers(company_name), rfqs(title, rfq_number)').order('created_at', { ascending: false }),
+  const fetchBasics = async () => {
+    const [rfqRes, supRes] = await Promise.all([
       supabase.from('rfqs').select('id, title, rfq_number').order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id, company_name').eq('status', 'approved'),
     ]);
-    if (fqRes.data) setQuotations(fqRes.data);
     if (rfqRes.data) setRfqs(rfqRes.data);
     if (supRes.data) setSuppliers(supRes.data);
-    setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchBasics(); }, []);
 
-  const fetchSourceQuotations = async (rfqId: string) => {
+  const fetchCompareData = useCallback(async (rfqId: string) => {
+    if (!rfqId) {
+      setCompareQuotations([]);
+      return;
+    }
+    const { data } = await supabase.from('final_quotations').select('*, suppliers(company_name)').eq('rfq_id', rfqId);
+    if (data) setCompareQuotations(data);
+  }, []);
+
+  useEffect(() => { fetchCompareData(compareRfqId); }, [compareRfqId, fetchCompareData]);
+
+  const filters = useCallback((query: any) => {
+    if (search) {
+      return query.or(`notes.ilike.%${search}%,currency.ilike.%${search}%`);
+    }
+    return query;
+  }, [search]);
+
+  const pagination = useSupabasePagination<any>({
+    tableName: 'final_quotations',
+    select: '*, suppliers(company_name), rfqs(title, rfq_number)',
+    pageSize: 20,
+    filters,
+  });
+
+  const handleRfqChange = async (rfqId: string) => {
+    setForm(p => ({ ...p, rfq_id: rfqId, quotation_id: '', supplier_id: '' }));
     const { data } = await supabase.from('quotations').select('*, suppliers(company_name)').eq('rfq_id', rfqId);
     if (data) setSourceQuotations(data);
-  };
-
-  const handleRfqChange = (rfqId: string) => {
-    setForm(p => ({ ...p, rfq_id: rfqId, quotation_id: '', supplier_id: '' }));
-    fetchSourceQuotations(rfqId);
   };
 
   const handleSourceQuotationChange = (qId: string) => {
@@ -87,19 +104,24 @@ export default function FinalQuotationsPage() {
       toast({ title: 'Final quotation created' });
       setCreateOpen(false);
       setForm({ rfq_id: '', supplier_id: '', quotation_id: '', total_amount: '', currency: 'USD', payment_terms: '', delivery_terms: '', notes: '' });
-      fetchAll();
+      pagination.refresh();
+      if (compareRfqId === form.rfq_id) fetchCompareData(compareRfqId);
     }
     setSaving(false);
   };
 
-  const handleSelect = async (id: string) => {
+  const handleSelect = async (id: string, rfqId: string) => {
     const { error } = await supabase.from('final_quotations').update({ is_selected: true, status: 'selected', updated_at: new Date().toISOString() }).eq('id', id);
-    if (!error) { toast({ title: 'Quotation selected' }); fetchAll(); }
+    if (!error) { 
+      toast({ title: 'Quotation selected' }); 
+      pagination.refresh();
+      if (compareRfqId === rfqId) fetchCompareData(compareRfqId);
+    }
   };
 
   const handleReadyForPO = async (id: string) => {
     const { error } = await supabase.from('final_quotations').update({ ready_for_po: true, status: 'ready_for_po', updated_at: new Date().toISOString() }).eq('id', id);
-    if (!error) { toast({ title: 'Marked ready for PO' }); fetchAll(); }
+    if (!error) { toast({ title: 'Marked ready for PO' }); pagination.refresh(); }
   };
 
   const handleCreateAward = async (fq: any) => {
@@ -113,19 +135,9 @@ export default function FinalQuotationsPage() {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Award created for approval' });
-      fetchAll();
+      pagination.refresh();
     }
   };
-
-  const filtered = quotations.filter((q) =>
-    q.suppliers?.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-    q.rfqs?.title?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const pagination = usePagination(filtered, { pageSize: 20 });
-
-  const compareQuotations = quotations.filter(q => q.rfq_id === compareRfqId);
-  const rfqsWithQuotations = [...new Set(quotations.map(q => q.rfq_id))].filter(Boolean);
 
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
@@ -148,7 +160,7 @@ export default function FinalQuotationsPage() {
         )}
       </div>
 
-      <Tabs defaultValue="all" className="space-y-4">
+      <Tabs defaultValue="all" className="space-y-4" onValueChange={(v) => v === 'compare' && compareRfqId && fetchCompareData(compareRfqId)}>
         <TabsList>
           <TabsTrigger value="all">All Quotations</TabsTrigger>
           <TabsTrigger value="compare"><BarChart3 className="w-4 h-4 mr-1" />Comparison</TabsTrigger>
@@ -175,12 +187,12 @@ export default function FinalQuotationsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {loading ? (
+                    {pagination.loading ? (
                       <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-                    ) : pagination.paginatedItems.length === 0 ? (
+                    ) : pagination.items.length === 0 ? (
                       <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No final quotations</td></tr>
                     ) : (
-                      pagination.paginatedItems.map((q) => {
+                      pagination.items.map((q) => {
                         const sc = statusConfig[q.status] || statusConfig.pending;
                         return (
                           <tr key={q.id} className="border-b hover:bg-muted/30">
@@ -200,7 +212,7 @@ export default function FinalQuotationsPage() {
                                   <Eye className="w-3 h-3" />
                                 </Button>
                                 {canManage && !q.is_selected && (
-                                  <Button variant="outline" size="sm" onClick={() => handleSelect(q.id)}>
+                                  <Button variant="outline" size="sm" onClick={() => handleSelect(q.id, q.rfq_id)}>
                                     <CheckCircle2 className="w-3 h-3 mr-1" />Select
                                   </Button>
                                 )}
@@ -232,10 +244,9 @@ export default function FinalQuotationsPage() {
             <Select value={compareRfqId} onValueChange={setCompareRfqId}>
               <SelectTrigger className="w-72"><SelectValue placeholder="Select an RFQ" /></SelectTrigger>
               <SelectContent>
-                {rfqsWithQuotations.map(rid => {
-                  const rfq = rfqs.find(r => r.id === rid);
-                  return <SelectItem key={rid} value={rid}>{rfq?.title || rid}</SelectItem>;
-                })}
+                {rfqs.map(rfq => (
+                  <SelectItem key={rfq.id} value={rfq.id}>{rfq.title || rfq.id}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -272,7 +283,7 @@ export default function FinalQuotationsPage() {
                 {canManage && (
                   <div className="mt-4 flex gap-2 flex-wrap">
                     {compareQuotations.filter(q => !q.is_selected).map(q => (
-                      <Button key={q.id} variant="outline" size="sm" onClick={() => handleSelect(q.id)}>
+                      <Button key={q.id} variant="outline" size="sm" onClick={() => handleSelect(q.id, q.rfq_id)}>
                         <CheckCircle2 className="w-3 h-3 mr-1" />Select {q.suppliers?.company_name}
                       </Button>
                     ))}
@@ -286,7 +297,6 @@ export default function FinalQuotationsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add Final Quotation</DialogTitle></DialogHeader>
@@ -352,22 +362,21 @@ export default function FinalQuotationsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Quotation Details</DialogTitle></DialogHeader>
           {selectedDetail && (
             <div className="space-y-3 text-sm">
-              <Row label="Supplier" value={selectedDetail.suppliers?.company_name} />
-              <Row label="RFQ" value={selectedDetail.rfqs?.title} />
-              <Row label="Amount" value={selectedDetail.total_amount ? `${selectedDetail.currency} ${Number(selectedDetail.total_amount).toLocaleString()}` : null} />
-              <Row label="Payment Terms" value={selectedDetail.payment_terms} />
-              <Row label="Delivery Terms" value={selectedDetail.delivery_terms} />
-              <Row label="Status" value={selectedDetail.status} />
-              <Row label="Selected" value={selectedDetail.is_selected ? 'Yes' : 'No'} />
-              <Row label="PO Ready" value={selectedDetail.ready_for_po ? 'Yes' : 'No'} />
-              <Row label="Notes" value={selectedDetail.notes} />
-              <Row label="Created" value={selectedDetail.created_at ? new Date(selectedDetail.created_at).toLocaleString() : null} />
+              <DetailRow label="Supplier" value={selectedDetail.suppliers?.company_name} />
+              <DetailRow label="RFQ" value={selectedDetail.rfqs?.title} />
+              <DetailRow label="Amount" value={selectedDetail.total_amount ? `${selectedDetail.currency} ${Number(selectedDetail.total_amount).toLocaleString()}` : null} />
+              <DetailRow label="Payment Terms" value={selectedDetail.payment_terms} />
+              <DetailRow label="Delivery Terms" value={selectedDetail.delivery_terms} />
+              <DetailRow label="Status" value={selectedDetail.status} />
+              <DetailRow label="Selected" value={selectedDetail.is_selected ? 'Yes' : 'No'} />
+              <DetailRow label="PO Ready" value={selectedDetail.ready_for_po ? 'Yes' : 'No'} />
+              <DetailRow label="Notes" value={selectedDetail.notes} />
+              <DetailRow label="Created" value={selectedDetail.created_at ? new Date(selectedDetail.created_at).toLocaleString() : null} />
             </div>
           )}
         </DialogContent>
@@ -376,7 +385,7 @@ export default function FinalQuotationsPage() {
   );
 }
 
-function Row({ label, value }: { label: string; value?: string | null }) {
+function DetailRow({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="flex justify-between">
       <span className="text-muted-foreground">{label}</span>

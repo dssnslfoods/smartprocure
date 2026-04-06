@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePagination } from '@/hooks/use-pagination';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 
 const statusColors: Record<string, string> = {
@@ -20,40 +19,34 @@ const statusColors: Record<string, string> = {
   suspended: 'bg-muted text-muted-foreground',
 };
 
+const SUPPLIER_STATUSES = ['draft', 'submitted', 'review', 'approved', 'rejected', 'suspended'];
+const SUPPLIER_TIERS = ['Silver', 'Gold', 'Platinum'];
+
 export default function SupplierList() {
-  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
   const { hasRole } = useAuth();
 
-  useEffect(() => {
-    fetchSuppliers();
-  }, []);
+  const filters = useCallback((query: any) => {
+    let filteredQuery = query;
+    if (search) {
+      filteredQuery = filteredQuery.or(`company_name.ilike.%${search}%,tax_id.ilike.%${search}%`);
+    }
+    if (statusFilter !== 'all') {
+      filteredQuery = filteredQuery.eq('status', statusFilter);
+    }
+    if (tierFilter !== 'all') {
+      filteredQuery = filteredQuery.eq('tier', tierFilter);
+    }
+    return filteredQuery;
+  }, [search, statusFilter, tierFilter]);
 
-  const fetchSuppliers = async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from('suppliers')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (data) setSuppliers(data);
-    setLoading(false);
-  };
-
-  const filtered = suppliers.filter((s) => {
-    const matchesSearch = s.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-      s.tax_id?.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || s.status === statusFilter;
-    const matchesTier = tierFilter === 'all' || s.tier === tierFilter;
-    return matchesSearch && matchesStatus && matchesTier;
+  const pagination = useSupabasePagination<any>({
+    tableName: 'suppliers',
+    pageSize: 20,
+    filters,
   });
-
-  const pagination = usePagination(filtered, { pageSize: 20 });
-
-  const statuses = [...new Set(suppliers.map(s => s.status).filter(Boolean))];
-  const tiers = [...new Set(suppliers.map(s => s.tier).filter(Boolean))];
 
   return (
     <div className="space-y-6">
@@ -78,14 +71,14 @@ export default function SupplierList() {
           <SelectTrigger className="w-[150px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
-            {statuses.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {SUPPLIER_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={tierFilter} onValueChange={setTierFilter}>
           <SelectTrigger className="w-[150px]"><SelectValue placeholder="Tier" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Tiers</SelectItem>
-            {tiers.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {SUPPLIER_TIERS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -104,12 +97,12 @@ export default function SupplierList() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {pagination.loading ? (
                   <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-                ) : pagination.paginatedItems.length === 0 ? (
+                ) : pagination.items.length === 0 ? (
                   <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No suppliers found</td></tr>
                 ) : (
-                  pagination.paginatedItems.map((s) => (
+                  pagination.items.map((s) => (
                     <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
                       <td className="p-3 font-medium">
                         <Link to={`/suppliers/${s.id}`} className="text-primary hover:underline">{s.company_name}</Link>

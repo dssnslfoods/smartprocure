@@ -1,31 +1,30 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Search } from 'lucide-react';
-import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 
 export default function PriceListPage() {
-  const [items, setItems] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const { hasRole } = useAuth();
 
-  useEffect(() => {
-    const fetch = async () => {
-      const { data } = await supabase.from('price_lists').select('*, suppliers(company_name)').order('created_at', { ascending: false });
-      if (data) setItems(data);
-      setLoading(false);
-    };
-    fetch();
-  }, []);
+  const filters = useCallback((query: any) => {
+    if (search) {
+      return query.ilike('title', `%${search}%`);
+    }
+    return query;
+  }, [search]);
 
-  const filtered = items.filter((i) =>
-    i.suppliers?.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-    i.title?.toLowerCase().includes(search.toLowerCase())
-  );
+  const pagination = useSupabasePagination<any>({
+    tableName: 'price_lists',
+    select: '*, suppliers(company_name)',
+    pageSize: 20,
+    filters,
+  });
 
   return (
     <div className="space-y-6">
@@ -54,12 +53,12 @@ export default function PriceListPage() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {pagination.loading ? (
                 <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-              ) : filtered.length === 0 ? (
+              ) : pagination.items.length === 0 ? (
                 <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No price lists found</td></tr>
               ) : (
-                filtered.map((item) => (
+                pagination.items.map((item) => (
                   <tr key={item.id} className="border-b hover:bg-muted/30">
                     <td className="p-3 font-medium">{item.title}</td>
                     <td className="p-3 text-muted-foreground">{item.suppliers?.company_name || '—'}</td>
@@ -70,6 +69,7 @@ export default function PriceListPage() {
               )}
             </tbody>
           </table>
+          <PaginationControls {...pagination} />
         </CardContent>
       </Card>
     </div>
