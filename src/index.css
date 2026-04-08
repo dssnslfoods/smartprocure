@@ -15,16 +15,16 @@
     --popover: 0 0% 100%;
     --popover-foreground: 220 30% 10%;
 
-    --primary: 217 91% 40%;
+    --primary: 25 90% 54%; /* NSL Orange #F37920 */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 16% 93%;
-    --secondary-foreground: 220 30% 20%;
+    --secondary: 188 92% 25%; /* NSL Dark Teal #056A7A */
+    --secondary-foreground: 0 0% 100%;
 
     --muted: 220 16% 95%;
     --muted-foreground: 220 10% 46%;
 
-    --accent: 170 60% 40%;
+    --accent: 188 92% 25%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
@@ -68,13 +68,13 @@
     --card-foreground: 220 10% 90%;
     --popover: 220 30% 12%;
     --popover-foreground: 220 10% 90%;
-    --primary: 217 91% 55%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 220 25% 18%;
-    --secondary-foreground: 220 10% 90%;
+    --primary: 25 90% 54%;
+    --primary-foreground: 220 10% 10%;
+    --secondary: 188 92% 30%;
+    --secondary-foreground: 0 0% 100%;
     --muted: 220 25% 15%;
     --muted-foreground: 220 10% 55%;
-    --accent: 170 60% 45%;
+    --accent: 188 92% 30%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;

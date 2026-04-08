@@ -61,7 +61,7 @@ export default function Login() {
     <div className="min-h-screen w-full flex flex-col md:flex-row bg-background font-sans">
       {/* Brand/Hero Section - Visible on medium screens and up */}
       <div className="hidden md:flex md:w-5/12 lg:w-1/2 bg-slate-950 relative overflow-hidden items-center justify-center p-12">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/90 to-slate-900/90 mix-blend-multiply z-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/95 to-secondary/95 mix-blend-multiply z-10" />
         <div 
           className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center z-0 opacity-40 grayscale-[30%]"
         />
