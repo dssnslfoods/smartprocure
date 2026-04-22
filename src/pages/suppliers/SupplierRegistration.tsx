@@ -112,6 +112,9 @@ export default function SupplierRegistration() {
     setLoading(true);
 
     try {
+      // Clear any existing session before creating new user
+      await supabase.auth.signOut();
+
       // 1. Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: form.reg_email,
@@ -128,7 +131,8 @@ export default function SupplierRegistration() {
       const userId = authData.user.id;
 
       // 2. Assign supplier role
-      await supabase.from('user_roles').insert({ user_id: userId, role: 'supplier' });
+      const { error: roleError } = await supabase.from('user_roles').insert({ user_id: userId, role: 'supplier' });
+      if (roleError) throw roleError;
 
       // 3. Create supplier record
       const { data: supplier, error: supError } = await supabase.from('suppliers').insert({
@@ -230,6 +234,8 @@ export default function SupplierRegistration() {
 
       navigate('/login?registered=true');
     } catch (err: any) {
+      // Ensure new user session is cleared on any error
+      await supabase.auth.signOut();
       toast({ title: 'เกิดข้อผิดพลาด', description: err.message, variant: 'destructive' });
     } finally {
       setLoading(false);

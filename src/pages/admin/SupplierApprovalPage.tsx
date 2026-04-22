@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
-import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, Landmark } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, Landmark, KeyRound } from 'lucide-react';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -21,14 +21,19 @@ export default function SupplierApprovalPage() {
   const [contacts, setContacts] = useState<any[]>([]);
   const [documents, setDocuments] = useState<any[]>([]);
   const [rejectReason, setRejectReason] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetTarget, setResetTarget] = useState<any>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
   const { toast } = useToast();
 
   const fetchSuppliers = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('suppliers')
-      .select('*, profiles!suppliers_created_by_fkey(full_name, email)')
-      .in('status', ['submitted', 'review'])
+      .select('*')
+      .in('status', ['submitted', 'review', 'approved', 'rejected'])
       .order('created_at', { ascending: false });
+    if (error) console.error('fetchSuppliers error:', error);
     if (data) setSuppliers(data);
     setLoading(false);
   };
@@ -159,6 +164,27 @@ export default function SupplierApprovalPage() {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      toast({ title: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', variant: 'destructive' });
+      return;
+    }
+    setResetLoading(true);
+    const { error } = await supabase.rpc('admin_reset_supplier_password', {
+      p_user_id: resetTarget.created_by,
+      p_new_password: newPassword,
+    });
+    setResetLoading(false);
+    if (error) {
+      toast({ title: 'เกิดข้อผิดพลาด', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'รีเซ็ตรหัสผ่านสำเร็จ', description: `รหัสผ่านของ ${resetTarget.company_name} ถูกเปลี่ยนแล้ว` });
+      setResetOpen(false);
+      setNewPassword('');
+      setResetTarget(null);
+    }
+  };
+
   const filtered = suppliers.filter(s =>
     s.company_name?.toLowerCase().includes(search.toLowerCase()) ||
     s.tax_id?.toLowerCase().includes(search.toLowerCase())
@@ -173,7 +199,7 @@ export default function SupplierApprovalPage() {
         <p className="text-sm text-muted-foreground">ตรวจสอบข้อมูลและเอกสารของ Supplier ที่ลงทะเบียนใหม่</p>
       </div>
 
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card>
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">รอตรวจสอบ</p>
@@ -192,8 +218,18 @@ export default function SupplierApprovalPage() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">ทั้งหมด</p>
-            <p className="text-2xl font-bold">{suppliers.length}</p>
+            <p className="text-xs text-muted-foreground">อนุมัติแล้ว</p>
+            <p className="text-2xl font-bold text-emerald-600">
+              {suppliers.filter(s => s.status === 'approved').length}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs text-muted-foreground">ปฏิเสธ</p>
+            <p className="text-2xl font-bold text-red-600">
+              {suppliers.filter(s => s.status === 'rejected').length}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -227,12 +263,17 @@ export default function SupplierApprovalPage() {
                     <tr key={s.id} className="border-b hover:bg-muted/30">
                       <td className="p-3 font-medium">{s.company_name}</td>
                       <td className="p-3 text-muted-foreground">{s.tax_id || '—'}</td>
-                      <td className="p-3 text-muted-foreground">{s.profiles?.full_name || s.profiles?.email || '—'}</td>
+                      <td className="p-3 text-muted-foreground">{s.email || '—'}</td>
                       <td className="p-3">
                         <Badge variant="secondary" className={
-                          s.status === 'submitted' ? 'bg-amber-500/10 text-amber-600' : 'bg-blue-500/10 text-blue-600'
+                          s.status === 'submitted' ? 'bg-amber-500/10 text-amber-600' :
+                          s.status === 'review'    ? 'bg-blue-500/10 text-blue-600' :
+                          s.status === 'approved'  ? 'bg-emerald-500/10 text-emerald-600' :
+                          'bg-red-500/10 text-red-600'
                         }>
-                          {s.status === 'submitted' ? 'รอตรวจสอบ' : 'กำลังตรวจสอบ'}
+                          {s.status === 'submitted' ? 'รอตรวจสอบ' :
+                           s.status === 'review'    ? 'กำลังตรวจสอบ' :
+                           s.status === 'approved'  ? 'อนุมัติแล้ว' : 'ปฏิเสธ'}
                         </Badge>
                       </td>
                       <td className="p-3 text-muted-foreground">{new Date(s.created_at).toLocaleDateString('th-TH')}</td>
@@ -241,9 +282,16 @@ export default function SupplierApprovalPage() {
                           <Button variant="ghost" size="sm" onClick={() => openDetail(s)}>
                             <Eye className="w-3 h-3 mr-1" /> ตรวจสอบ
                           </Button>
-                          <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleApprove(s.id)}>
-                            <CheckCircle2 className="w-3 h-3 mr-1" /> อนุมัติ
-                          </Button>
+                          {s.created_by && (
+                            <Button variant="ghost" size="sm" className="text-blue-600" onClick={() => { setResetTarget(s); setNewPassword(''); setResetOpen(true); }}>
+                              <KeyRound className="w-3 h-3 mr-1" /> รีเซ็ตรหัสผ่าน
+                            </Button>
+                          )}
+                          {(s.status === 'submitted' || s.status === 'review') && (
+                            <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleApprove(s.id)}>
+                              <CheckCircle2 className="w-3 h-3 mr-1" /> อนุมัติ
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -352,6 +400,39 @@ export default function SupplierApprovalPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4" /> รีเซ็ตรหัสผ่าน
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              ตั้งรหัสผ่านใหม่สำหรับ <span className="font-medium text-foreground">{resetTarget?.company_name}</span>
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-password">รหัสผ่านใหม่</Label>
+              <Input
+                id="new-password"
+                type="password"
+                placeholder="อย่างน้อย 6 ตัวอักษร"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setResetOpen(false)}>ยกเลิก</Button>
+              <Button onClick={handleResetPassword} disabled={resetLoading}>
+                <KeyRound className="w-3 h-3 mr-1" />
+                {resetLoading ? 'กำลังบันทึก...' : 'ยืนยัน'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
