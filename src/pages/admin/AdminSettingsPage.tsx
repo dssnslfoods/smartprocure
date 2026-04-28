@@ -100,10 +100,10 @@ export default function AdminSettingsPage() {
     const from = (pg - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    let countQ = supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true });
-    let dataQ = supabaseAdmin
+    let countQ = (supabaseAdmin as any).from('profiles').select('*', { count: 'exact', head: true });
+    let dataQ = (supabaseAdmin as any)
       .from('profiles')
-      .select('id, email, full_name, is_active, created_at, user_roles(role)')
+      .select('id, email, full_name, is_active, created_at')
       .order('created_at', { ascending: false })
       .range(from, to);
 
@@ -117,10 +117,29 @@ export default function AdminSettingsPage() {
 
     if (error) {
       toast({ title: 'Error loading users', description: error.message, variant: 'destructive' });
-    } else {
-      setUsers((data as unknown as UserRow[]) || []);
-      setTotalUsers(count || 0);
+      setLoadingUsers(false);
+      return;
     }
+
+    const profiles: Omit<UserRow, 'user_roles'>[] = data || [];
+    const ids = profiles.map((p) => p.id);
+    let rolesMap: Record<string, { role: string }[]> = {};
+
+    if (ids.length > 0) {
+      const { data: rolesData } = await (supabaseAdmin as any)
+        .from('user_roles')
+        .select('user_id, role')
+        .in('user_id', ids);
+      if (rolesData) {
+        for (const r of rolesData) {
+          if (!rolesMap[r.user_id]) rolesMap[r.user_id] = [];
+          rolesMap[r.user_id].push({ role: r.role });
+        }
+      }
+    }
+
+    setUsers(profiles.map((p) => ({ ...p, user_roles: rolesMap[p.id] || [] })));
+    setTotalUsers(count || 0);
     setLoadingUsers(false);
   }, [toast]);
 

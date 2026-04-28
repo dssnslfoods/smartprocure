@@ -11,6 +11,8 @@ import { useToast } from '@/hooks/use-toast';
 import SupplierContacts from './SupplierContacts';
 import SupplierDocuments from './SupplierDocuments';
 import SupplierESG from './SupplierESG';
+import SupplierItems from './SupplierItems';
+import { cn } from '@/lib/utils';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -102,10 +104,55 @@ export default function SupplierDetail() {
         </div>
       </div>
 
+      {/* ABC-XYZ Classification Card */}
+      {(supplier.abc_class || supplier.priority_score) && (
+        <Card className={cn(
+          'border-2',
+          (supplier.priority_score ?? 0) >= 7 ? 'border-red-200 bg-red-50/40' :
+          (supplier.priority_score ?? 0) >= 4 ? 'border-amber-200 bg-amber-50/40' :
+          'border-emerald-200 bg-emerald-50/40'
+        )}>
+          <CardContent className="pt-6">
+            <div className="flex flex-wrap items-center gap-6">
+              <div>
+                <p className="text-xs text-muted-foreground">ABC-XYZ Class</p>
+                <p className={cn('text-3xl font-bold font-mono',
+                  (supplier.priority_score ?? 0) >= 7 ? 'text-red-700' :
+                  (supplier.priority_score ?? 0) >= 4 ? 'text-amber-700' : 'text-emerald-700'
+                )}>
+                  {abcLetter(supplier.abc_class)}{xyzLetter(supplier.xyz_class)}
+                </p>
+              </div>
+              <Divider />
+              <div>
+                <p className="text-xs text-muted-foreground">Priority</p>
+                <p className="text-2xl font-bold">P{supplier.priority_score ?? '—'}</p>
+              </div>
+              <Divider />
+              <div>
+                <p className="text-xs text-muted-foreground">Risk Level</p>
+                <p className="text-base font-semibold">{supplier.risk_label || '—'}</p>
+              </div>
+              <Divider />
+              <div>
+                <p className="text-xs text-muted-foreground">Total Spend (2025)</p>
+                <p className="text-xl font-bold">฿{(supplier.total_spend ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })}</p>
+              </div>
+              <Divider />
+              <div>
+                <p className="text-xs text-muted-foreground">Items</p>
+                <p className="text-xl font-bold">{supplier.num_items ?? '—'}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tabs */}
       <Tabs defaultValue="info" className="space-y-4">
         <TabsList>
           <TabsTrigger value="info">Information</TabsTrigger>
+          <TabsTrigger value="items">Items / Price List</TabsTrigger>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="esg">ESG Profile</TabsTrigger>
@@ -138,6 +185,10 @@ export default function SupplierDetail() {
           </div>
         </TabsContent>
 
+        <TabsContent value="items">
+          <SupplierItems supplierId={id!} />
+        </TabsContent>
+
         <TabsContent value="contacts">
           <SupplierContacts supplierId={id!} />
         </TabsContent>
@@ -161,4 +212,15 @@ function Row({ label, value }: { label: string; value?: string | null }) {
       <span className="font-medium text-right">{value || '—'}</span>
     </div>
   );
+}
+
+function Divider() {
+  return <span className="hidden sm:block w-px h-10 bg-border" />;
+}
+
+function abcLetter(n: number | null | undefined) {
+  return n === 3 ? 'A' : n === 2 ? 'B' : n === 1 ? 'C' : '?';
+}
+function xyzLetter(n: number | null | undefined) {
+  return n === 1 ? 'X' : n === 2 ? 'Y' : n === 3 ? 'Z' : '?';
 }

@@ -28,6 +28,8 @@ import EvaluationTemplateForm from "@/pages/evaluations/EvaluationTemplateForm";
 import EvaluationScoringForm from "@/pages/evaluations/EvaluationScoringForm";
 import EvaluationComparison from "@/pages/evaluations/EvaluationComparison";
 import ReportsPage from "@/pages/reports/ReportsPage";
+import AbcXyzMatrixPage from "@/pages/reports/AbcXyzMatrixPage";
+import AnalyticsPage from "@/pages/reports/AnalyticsPage";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import SupplierApprovalPage from "@/pages/admin/SupplierApprovalPage";
 import NotFound from "@/pages/NotFound";
@@ -71,6 +73,8 @@ const App = () => (
               <Route path="/evaluations/score" element={<EvaluationScoringForm />} />
               <Route path="/evaluations/compare" element={<EvaluationComparison />} />
               <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/reports/abc-xyz" element={<AbcXyzMatrixPage />} />
+              <Route path="/reports/analytics" element={<AnalyticsPage />} />
               <Route path="/admin" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminSettingsPage />
