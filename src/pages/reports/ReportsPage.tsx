@@ -2,11 +2,10 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart } from 'recharts';
 import { supabase } from '@/integrations/supabase/client';
 import { TrendingUp, TrendingDown, BarChart3, Activity, Users } from 'lucide-react';
 
-// Chart configs
 const spendingConfig = {
   amount: { label: 'Spending (฿)', color: 'hsl(var(--primary))' },
   savings: { label: 'Savings (฿)', color: 'hsl(var(--accent))' },
@@ -25,14 +24,6 @@ const supplierConfig = {
   rejected: { label: 'Rejected', color: 'hsl(0 84% 60%)' },
 };
 
-const performanceConfig = {
-  quality: { label: 'Quality', color: 'hsl(var(--primary))' },
-  delivery: { label: 'Delivery', color: 'hsl(142 76% 36%)' },
-  price: { label: 'Price', color: 'hsl(45 93% 47%)' },
-  service: { label: 'Service', color: 'hsl(280 67% 55%)' },
-  compliance: { label: 'Compliance', color: 'hsl(200 80% 50%)' },
-};
-
 const COLORS = ['hsl(142 76% 36%)', 'hsl(45 93% 47%)', 'hsl(var(--muted-foreground))', 'hsl(0 84% 60%)'];
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -41,15 +32,13 @@ export default function ReportsPage() {
   const [supplierStats, setSupplierStats] = useState({ total: 0, approved: 0, pending: 0, draft: 0, rejected: 0 });
   const [rfqStats, setRfqStats] = useState({ total: 0, open: 0, closed: 0, awarded: 0 });
   const [_awardCount, setAwardCount] = useState(0);
-  const [topSuppliers, setTopSuppliers] = useState<{ name: string; score: number }[]>([]);
 
   useEffect(() => {
     const load = async () => {
-      const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: scores }] = await Promise.all([
+      const [{ data: suppliers }, { data: rfqs }, { data: awards }] = await Promise.all([
         supabase.from('suppliers').select('status'),
         supabase.from('rfqs').select('status'),
         supabase.from('awards').select('id'),
-        supabase.from('supplier_score_summary').select('supplier_id, avg_score, suppliers(name)').order('avg_score', { ascending: false }).limit(5),
       ]);
 
       if (suppliers) {
@@ -70,17 +59,10 @@ export default function ReportsPage() {
         });
       }
       if (awards) setAwardCount(awards.length);
-      if (scores) {
-        setTopSuppliers(scores.map((s: any) => ({
-          name: s.suppliers?.name || 'Unknown',
-          score: Number(s.avg_score) || 0,
-        })));
-      }
     };
     load();
   }, []);
 
-  // Generate monthly trend data (simulated based on real counts)
   const monthlySpending = MONTHS.map((m, i) => ({
     month: m,
     amount: Math.round((800000 + Math.random() * 600000) * (1 + i * 0.05)),
@@ -101,15 +83,6 @@ export default function ReportsPage() {
     { name: 'Rejected', value: supplierStats.rejected },
   ].filter(d => d.value > 0);
 
-  // Radar data for top supplier performance
-  const radarData = [
-    { metric: 'Quality', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.8 + Math.random() * 0.4)) }), {})) },
-    { metric: 'Delivery', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.7 + Math.random() * 0.5)) }), {})) },
-    { metric: 'Price', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.75 + Math.random() * 0.45)) }), {})) },
-    { metric: 'Service', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.8 + Math.random() * 0.4)) }), {})) },
-    { metric: 'Compliance', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.85 + Math.random() * 0.3)) }), {})) },
-  ];
-
   const totalSpend = monthlySpending.reduce((s, m) => s + m.amount, 0);
   const totalSavings = monthlySpending.reduce((s, m) => s + m.savings, 0);
   const savingsRate = totalSpend > 0 ? ((totalSavings / totalSpend) * 100).toFixed(1) : '0';
@@ -121,7 +94,6 @@ export default function ReportsPage() {
         <p className="text-sm text-muted-foreground">Procurement insights and performance metrics</p>
       </div>
 
-      {/* KPI Summary */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -171,10 +143,9 @@ export default function ReportsPage() {
         <TabsList>
           <TabsTrigger value="spending">Spending Trends</TabsTrigger>
           <TabsTrigger value="rfq">RFQ Analytics</TabsTrigger>
-          <TabsTrigger value="suppliers">Supplier Performance</TabsTrigger>
+          <TabsTrigger value="suppliers">Supplier Status</TabsTrigger>
         </TabsList>
 
-        {/* Spending Tab */}
         <TabsContent value="spending" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <Card className="md:col-span-2">
@@ -215,7 +186,6 @@ export default function ReportsPage() {
           </div>
         </TabsContent>
 
-        {/* RFQ Tab */}
         <TabsContent value="rfq" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <Card className="md:col-span-2">
@@ -257,19 +227,18 @@ export default function ReportsPage() {
           </div>
         </TabsContent>
 
-        {/* Supplier Tab */}
         <TabsContent value="suppliers" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Supplier Status Distribution</CardTitle>
                 <CardDescription>Current registration status breakdown</CardDescription>
               </CardHeader>
               <CardContent className="flex justify-center">
-                <ChartContainer config={supplierConfig} className="h-[250px] w-full max-w-[280px]">
+                <ChartContainer config={supplierConfig} className="h-[280px] w-full max-w-[320px]">
                   <PieChart>
                     <ChartTooltip content={<ChartTooltipContent />} />
-                    <Pie data={supplierPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={3}>
+                    <Pie data={supplierPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={110} paddingAngle={3}>
                       {supplierPieData.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
@@ -278,54 +247,34 @@ export default function ReportsPage() {
                 </ChartContainer>
               </CardContent>
             </Card>
-            <Card className="md:col-span-2">
+            <Card>
               <CardHeader>
-                <CardTitle className="text-base">Top Supplier Performance Radar</CardTitle>
-                <CardDescription>Multi-dimensional evaluation of top-rated suppliers</CardDescription>
+                <CardTitle className="text-base">Supplier Summary</CardTitle>
+                <CardDescription>Registration status breakdown</CardDescription>
               </CardHeader>
-              <CardContent>
-                {topSuppliers.length > 0 ? (
-                  <ChartContainer config={performanceConfig} className="h-[300px] w-full">
-                    <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
-                      <PolarGrid className="stroke-border" />
-                      <PolarAngleAxis dataKey="metric" className="text-xs" />
-                      <PolarRadiusAxis domain={[0, 5]} tick={false} />
-                      <ChartTooltip content={<ChartTooltipContent />} />
-                      {topSuppliers.slice(0, 3).map((s, i) => (
-                        <Radar key={s.name} name={s.name} dataKey={`s${i}`} stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.15} strokeWidth={2} />
-                      ))}
-                    </RadarChart>
-                  </ChartContainer>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-12">No supplier scores available yet</p>
-                )}
+              <CardContent className="space-y-4 pt-2">
+                {[
+                  { label: 'Approved', value: supplierStats.approved, color: 'bg-emerald-500' },
+                  { label: 'Pending Review', value: supplierStats.pending, color: 'bg-amber-500' },
+                  { label: 'Draft', value: supplierStats.draft, color: 'bg-muted-foreground' },
+                  { label: 'Rejected', value: supplierStats.rejected, color: 'bg-red-500' },
+                ].map(({ label, value, color }) => (
+                  <div key={label}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>{label}</span>
+                      <span className="font-medium">{value}</span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${color}`}
+                        style={{ width: `${supplierStats.total > 0 ? (value / supplierStats.total) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
               </CardContent>
             </Card>
           </div>
-          {/* Top suppliers table */}
-          {topSuppliers.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Top Rated Suppliers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {topSuppliers.map((s, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-muted-foreground w-6">#{i + 1}</span>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{s.name}</p>
-                        <div className="h-2 rounded-full bg-muted mt-1 overflow-hidden">
-                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(s.score / 5) * 100}%` }} />
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold">{s.score.toFixed(2)}/5.00</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </TabsContent>
       </Tabs>
     </div>

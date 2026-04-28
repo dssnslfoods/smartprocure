@@ -14,11 +14,10 @@ const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
   published: 'bg-blue-500/10 text-blue-600',
   closed: 'bg-muted text-muted-foreground',
-  evaluation: 'bg-amber-500/10 text-amber-600',
   awarded: 'bg-emerald-500/10 text-emerald-600',
 };
 
-const RFQ_STATUSES = ['draft', 'published', 'closed', 'evaluation', 'awarded'];
+const RFQ_STATUSES = ['draft', 'published', 'closed', 'awarded'];
 
 export default function RFQList() {
   const [search, setSearch] = useState('');

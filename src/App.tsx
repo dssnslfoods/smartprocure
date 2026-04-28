@@ -23,10 +23,6 @@ import BiddingForm from "@/pages/bidding/BiddingForm";
 import BiddingDetail from "@/pages/bidding/BiddingDetail";
 import FinalQuotationsPage from "@/pages/quotations/FinalQuotationsPage";
 import AwardsPage from "@/pages/awards/AwardsPage";
-import EvaluationsPage from "@/pages/evaluations/EvaluationsPage";
-import EvaluationTemplateForm from "@/pages/evaluations/EvaluationTemplateForm";
-import EvaluationScoringForm from "@/pages/evaluations/EvaluationScoringForm";
-import EvaluationComparison from "@/pages/evaluations/EvaluationComparison";
 import ReportsPage from "@/pages/reports/ReportsPage";
 import AbcXyzMatrixPage from "@/pages/reports/AbcXyzMatrixPage";
 import AnalyticsPage from "@/pages/reports/AnalyticsPage";
@@ -68,10 +64,6 @@ const App = () => (
               <Route path="/bidding/:id" element={<BiddingDetail />} />
               <Route path="/final-quotations" element={<FinalQuotationsPage />} />
               <Route path="/awards" element={<AwardsPage />} />
-              <Route path="/evaluations" element={<EvaluationsPage />} />
-              <Route path="/evaluations/templates/new" element={<EvaluationTemplateForm />} />
-              <Route path="/evaluations/score" element={<EvaluationScoringForm />} />
-              <Route path="/evaluations/compare" element={<EvaluationComparison />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/reports/abc-xyz" element={<AbcXyzMatrixPage />} />
               <Route path="/reports/analytics" element={<AnalyticsPage />} />

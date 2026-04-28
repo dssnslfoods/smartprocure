@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Send, Lock, Award, Eye } from 'lucide-react';
+import { ArrowLeft, Send, Lock, Award } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
@@ -15,15 +15,13 @@ const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
   published: 'bg-blue-500/10 text-blue-600',
   closed: 'bg-muted text-muted-foreground',
-  evaluation: 'bg-amber-500/10 text-amber-600',
   awarded: 'bg-emerald-500/10 text-emerald-600',
 };
 
 const statusTransitions: Record<string, { next: string; label: string; icon: any }[]> = {
   draft: [{ next: 'published', label: 'Publish RFQ', icon: Send }],
   published: [{ next: 'closed', label: 'Close Submissions', icon: Lock }],
-  closed: [{ next: 'evaluation', label: 'Start Evaluation', icon: Eye }],
-  evaluation: [{ next: 'awarded', label: 'Mark Awarded', icon: Award }],
+  closed: [{ next: 'awarded', label: 'Mark Awarded', icon: Award }],
 };
 
 export default function RFQDetail() {

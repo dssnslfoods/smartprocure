@@ -294,7 +294,7 @@ export default function Dashboard() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Score suppliers via Evaluations to see rankings here</p>
+            <p className="text-sm text-muted-foreground">No supplier scores available yet</p>
           )}
         </CardContent>
       </Card>
