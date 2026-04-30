@@ -241,48 +241,47 @@ function buildChecklistSheet(
     { key: 'desc',     width: 32  },                  // E
     { key: 'unit',     width: 8   },                  // F
     { key: 'qty',      width: 14  },                  // G target qty
-    { key: 'ref',      width: 14  },                  // H reference price
-    { key: 'divider',  width: 3   },                  // I divider
-    { key: 'price',    width: 18  },                  // J ★ supplier fills
-    { key: 'moq',      width: 12  },                  // K ★
-    { key: 'lead',     width: 14  },                  // L ★
-    { key: 'quoteno',  width: 22  },                  // M ★
-    { key: 'notes',    width: 28  },                  // N ★
+    { key: 'divider',  width: 3   },                  // H divider
+    { key: 'price',    width: 18  },                  // I ★ supplier fills
+    { key: 'moq',      width: 12  },                  // J ★
+    { key: 'lead',     width: 14  },                  // K ★
+    { key: 'quoteno',  width: 22  },                  // L ★
+    { key: 'notes',    width: 28  },                  // M ★
   ];
   ws.columns = cols.map(c => ({ key: c.key, width: c.width, hidden: c.hidden }));
 
   // ── Row 1: Document title banner ──
   ws.getRow(1).height = 30;
-  ws.mergeCells('A1:H1');
+  ws.mergeCells('A1:G1');
   const titleLeft = ws.getCell('A1');
   titleLeft.value = `NSL Foods PLC  ·  PRICE LIST QUOTATION CHECKLIST  ·  ${meta.catalogTitle.toUpperCase()}`;
   titleLeft.fill = solidFill(NAVY);
   titleLeft.font = font({ color: { argb: `FF${WHITE}` }, bold: true, size: 13 });
   titleLeft.alignment = alignment('left');
 
-  ws.mergeCells('J1:N1');
-  const titleRight = ws.getCell('J1');
+  ws.mergeCells('I1:M1');
+  const titleRight = ws.getCell('I1');
   titleRight.value = `RFQ: ${meta.rfqNumber || '—'}   |   ${meta.supplierName || 'เปิดให้ทุกราย'}`;
   titleRight.fill = solidFill(NAVY);
   titleRight.font = font({ color: { argb: `FFFFD700` }, bold: true, size: 11 });
   titleRight.alignment = alignment('right');
 
-  // divider cell I1
-  ws.getCell('I1').fill = solidFill(NAVY);
+  // divider cell H1
+  ws.getCell('H1').fill = solidFill(NAVY);
 
   // ── Row 2: Section labels ──
   ws.getRow(2).height = 18;
-  ws.mergeCells('B2:H2');
+  ws.mergeCells('B2:G2');
   const readOnly = ws.getCell('B2');
   readOnly.value = '◀  ข้อมูลอ้างอิง (ห้ามแก้ไข)';
   readOnly.fill = solidFill('CBD5E1');
   readOnly.font = font({ color: { argb: `FF${GRAY}` }, bold: true, size: 9 });
   readOnly.alignment = alignment('right');
 
-  ws.getCell('I2').fill = solidFill('334155');
+  ws.getCell('H2').fill = solidFill('334155');
 
-  ws.mergeCells('J2:N2');
-  const fillArea = ws.getCell('J2');
+  ws.mergeCells('I2:M2');
+  const fillArea = ws.getCell('I2');
   fillArea.value = 'กรอกข้อมูลในส่วนนี้  ▶';
   fillArea.fill = solidFill(BLUE);
   fillArea.font = font({ color: { argb: `FF${WHITE}` }, bold: true, size: 9 });
@@ -294,15 +293,15 @@ function buildChecklistSheet(
   gen.value = `Generated: ${new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
   gen.font = font({ color: { argb: `FF${GRAY}` }, size: 8, italic: true });
   gen.fill = solidFill(GRAY50);
-  ['C3','D3','E3','F3','G3','H3'].forEach(a => { ws.getCell(a).fill = solidFill(GRAY50); });
-  ws.getCell('I3').fill = solidFill('334155');
-  ['J3','K3','L3','M3','N3'].forEach(a => { ws.getCell(a).fill = solidFill(LIGHT); });
+  ['C3','D3','E3','F3','G3'].forEach(a => { ws.getCell(a).fill = solidFill(GRAY50); });
+  ws.getCell('H3').fill = solidFill('334155');
+  ['I3','J3','K3','L3','M3'].forEach(a => { ws.getCell(a).fill = solidFill(LIGHT); });
 
   // ── Row 4: spacer ──
   ws.getRow(4).height = 4;
-  for (let c = 1; c <= 14; c++) {
+  for (let c = 1; c <= 13; c++) {
     const cell = ws.getRow(4).getCell(c);
-    cell.fill = solidFill(c === 9 ? '334155' : c <= 8 ? 'E2E8F0' : 'BFDBFE');
+    cell.fill = solidFill(c === 8 ? '334155' : c <= 7 ? 'E2E8F0' : 'BFDBFE');
   }
 
   // ── Row 5: Column headers ──
@@ -315,13 +314,12 @@ function buildChecklistSheet(
     { col: 'E', label: 'รายละเอียด', bg: NAVY,    fc: WHITE, align: 'left'   as const },
     { col: 'F', label: 'หน่วย',       bg: NAVY,    fc: WHITE, align: 'center' as const },
     { col: 'G', label: 'ปริมาณที่ขอ', bg: NAVY,    fc: WHITE, align: 'center' as const },
-    { col: 'H', label: 'ราคาอ้างอิง\n(บาท/หน่วย)', bg: '0F4C81', fc: WHITE, align: 'center' as const },
-    { col: 'I', label: '',            bg: '1E293B', fc: WHITE, align: 'center' as const },
-    { col: 'J', label: '★ ราคาต่อหน่วย\n(THB) *บังคับ*', bg: '1D4ED8', fc: WHITE, align: 'center' as const },
-    { col: 'K', label: 'MOQ ที่เสนอ', bg: TEAL,    fc: WHITE, align: 'center' as const },
-    { col: 'L', label: 'Lead Time\n(วัน)',          bg: TEAL,    fc: WHITE, align: 'center' as const },
-    { col: 'M', label: 'เลขใบเสนอราคา\nอ้างอิง',  bg: TEAL,    fc: WHITE, align: 'center' as const },
-    { col: 'N', label: 'หมายเหตุ',   bg: TEAL,    fc: WHITE, align: 'left'   as const },
+    { col: 'H', label: '',            bg: '1E293B', fc: WHITE, align: 'center' as const },
+    { col: 'I', label: '★ ราคาต่อหน่วย\n(THB) *บังคับ*', bg: '1D4ED8', fc: WHITE, align: 'center' as const },
+    { col: 'J', label: 'MOQ ที่เสนอ', bg: TEAL,    fc: WHITE, align: 'center' as const },
+    { col: 'K', label: 'Lead Time\n(วัน)',          bg: TEAL,    fc: WHITE, align: 'center' as const },
+    { col: 'L', label: 'เลขใบเสนอราคา\nอ้างอิง',  bg: TEAL,    fc: WHITE, align: 'center' as const },
+    { col: 'M', label: 'หมายเหตุ',   bg: TEAL,    fc: WHITE, align: 'left'   as const },
   ];
 
   for (const h of headers) {
@@ -387,38 +385,33 @@ function buildChecklistSheet(
     styleCell(qtyCell, { bg: readBg, align: 'right', size: 10, numFmt: '#,##0.##' });
     if (it.target_quantity) qtyCell.font = font({ bold: true, size: 10, color: { argb: `FF${NAVY}` } });
 
-    // H: reference price
-    const refCell = row.getCell(8);
-    refCell.value = it.reference_price ?? null;
-    styleCell(refCell, { bg: readBg, align: 'right', size: 10, numFmt: '#,##0.00', fontColor: '0F4C81', italic: true });
-
-    // I: visual divider
-    const divCell = row.getCell(9);
+    // H: visual divider
+    const divCell = row.getCell(8);
     divCell.fill = solidFill('1E293B');
 
-    // J: bid price ★ supplier fills
-    const priceCell = row.getCell(10);
+    // I: bid price ★ supplier fills
+    const priceCell = row.getCell(9);
     priceCell.value = null;
     styleCell(priceCell, { bg: fillBg, align: 'right', size: 11, numFmt: '#,##0.00', borderColor: '93C5FD', borderStyle: 'medium' });
     priceCell.font = font({ bold: true, size: 11, color: { argb: `FF${'1E40AF'}` } });
 
-    // K: bid MOQ
-    const moqCell = row.getCell(11);
+    // J: bid MOQ
+    const moqCell = row.getCell(10);
     moqCell.value = null;
     styleCell(moqCell, { bg: fillBg, align: 'right', size: 10, numFmt: '#,##0', borderColor: '5EEAD4' });
 
-    // L: lead time
-    const leadCell = row.getCell(12);
+    // K: lead time
+    const leadCell = row.getCell(11);
     leadCell.value = null;
     styleCell(leadCell, { bg: fillBg, align: 'right', size: 10, numFmt: '0', borderColor: '5EEAD4' });
 
-    // M: ref quotation no
-    const quoteCell = row.getCell(13);
+    // L: ref quotation no
+    const quoteCell = row.getCell(12);
     quoteCell.value = null;
     styleCell(quoteCell, { bg: fillBg, size: 9, borderColor: '5EEAD4' });
 
-    // N: notes
-    const notesCell = row.getCell(14);
+    // M: notes
+    const notesCell = row.getCell(13);
     notesCell.value = null;
     styleCell(notesCell, { bg: fillBg, size: 9, borderColor: '5EEAD4', wrap: true });
   });
@@ -433,21 +426,20 @@ function buildChecklistSheet(
   totalLabel.font = font({ color: { argb: `FF${WHITE}` }, bold: true });
   totalLabel.alignment = alignment('right');
 
-  ws.getCell(`H${summaryRow}`).fill = solidFill(NAVY);
-  ws.getCell(`I${summaryRow}`).fill = solidFill('1E293B');
+  ws.getCell(`H${summaryRow}`).fill = solidFill('1E293B');
 
-  ws.mergeCells(`J${summaryRow}:N${summaryRow}`);
-  const totalHint = ws.getCell(`J${summaryRow}`);
+  ws.mergeCells(`I${summaryRow}:M${summaryRow}`);
+  const totalHint = ws.getCell(`I${summaryRow}`);
   totalHint.value = '← กรอกราคาต่อหน่วยทุกรายการที่ต้องการเสนอ แล้วบันทึกไฟล์ส่งคืนจัดซื้อ';
   totalHint.fill = solidFill('1D4ED8');
   totalHint.font = font({ color: { argb: `FF${WHITE}` }, size: 9, italic: true });
   totalHint.alignment = alignment('left');
 
   // ── Auto-filter on header row ──
-  ws.autoFilter = { from: { row: 5, column: 2 }, to: { row: 5, column: 8 } };
+  ws.autoFilter = { from: { row: 5, column: 2 }, to: { row: 5, column: 7 } };
 
   // ── Print area ──
-  ws.pageSetup.printArea = `A1:N${summaryRow}`;
+  ws.pageSetup.printArea = `A1:M${summaryRow}`;
 }
 
 // Helper for alternating fill-area rows
@@ -498,8 +490,8 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
 
   // Header is row 5 (index 4); data starts at row 6 (index 5)
   // Columns (0-indexed): A=0(ID) B=1(#) C=2(code) D=3(name) E=4(desc) F=5(unit)
-  //                      G=6(qty) H=7(ref) I=8(divider)
-  //                      J=9(price) K=10(moq) L=11(lead) M=12(quoteno) N=13(notes)
+  //                      G=6(qty) H=7(divider)
+  //                      I=8(price) J=9(moq) K=10(lead) L=11(quoteno) M=12(notes)
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false }) as unknown[][];
 
   for (let i = 5; i < grid.length; i++) {   // skip rows 0-4 (banner + header)
@@ -507,7 +499,7 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
     const id  = String(row?.[0] || '').trim();
     if (!id || id.length < 10) continue;     // skip non-UUID rows
 
-    const bidPriceRaw = row[9];              // col J
+    const bidPriceRaw = row[8];              // col I
     if (bidPriceRaw === undefined || bidPriceRaw === '' || bidPriceRaw === null) continue;
 
     const bidPrice = Number(bidPriceRaw);
@@ -526,10 +518,10 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
       price_list_item_id:     id,
       target_quantity:        num(row[6]),   // col G
       bid_price:              bidPrice,
-      bid_moq:                num(row[10]),  // col K
-      bid_lead_time:          num(row[11]),  // col L
-      reference_quotation_no: row[12] ? String(row[12]) : null,
-      notes:                  row[13] ? String(row[13]) : null,
+      bid_moq:                num(row[9]),   // col J
+      bid_lead_time:          num(row[10]),  // col K
+      reference_quotation_no: row[11] ? String(row[11]) : null,
+      notes:                  row[12] ? String(row[12]) : null,
       source_row:             i + 1,
     });
   }
