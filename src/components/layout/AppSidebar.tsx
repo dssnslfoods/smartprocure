@@ -1,48 +1,45 @@
 import { Link, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard,
-  Building2,
-  FileText,
-  Send,
-  Gavel,
-  ClipboardList,
-  Award,
-  Star,
-  BarChart3,
-  Settings,
-  LogOut,
-  ChevronLeft,
-  ChevronRight,
-  UserCheck,
-  Briefcase,
+  LayoutDashboard, Building2, FileText, Send, Gavel, ClipboardList,
+  Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
+  UserCheck, Briefcase, ShieldAlert, Languages,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-
-const menuItems = [
-  { icon: LayoutDashboard, label: 'Dashboard', path: '/', roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'] },
-  { icon: Briefcase, label: 'Supplier Portal', path: '/supplier-portal', roles: ['supplier'] },
-  { icon: Building2, label: 'Suppliers', path: '/suppliers', roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
-  { icon: FileText, label: 'Price Lists', path: '/price-lists', roles: ['admin', 'procurement_officer', 'supplier'] },
-  { icon: Send, label: 'RFQ', path: '/rfq', roles: ['admin', 'procurement_officer', 'supplier'] },
-  { icon: Gavel, label: 'e-Bidding', path: '/bidding', roles: ['admin', 'procurement_officer', 'supplier'] },
-  { icon: ClipboardList, label: 'Final Quotations', path: '/final-quotations', roles: ['admin', 'procurement_officer', 'approver'] },
-  { icon: Award, label: 'Awards', path: '/awards', roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
-  { icon: Star, label: 'Evaluations', path: '/evaluations', roles: ['admin', 'procurement_officer'] },
-  { icon: BarChart3, label: 'Reports', path: '/reports', roles: ['admin', 'procurement_officer', 'executive'] },
-  { icon: Settings, label: 'Admin Settings', path: '/admin', roles: ['admin'] },
-  { icon: UserCheck, label: 'Supplier Approvals', path: '/admin/supplier-approvals', roles: ['admin'] },
-];
+import { useTranslation } from '@/i18n';
 
 export default function AppSidebar() {
   const { roles, profile, signOut } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const { t, i18n } = useTranslation();
+
+  const menuItems = [
+    { icon: LayoutDashboard, label: t('nav.dashboard'),         path: '/',                        roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'] },
+    { icon: Briefcase,       label: t('nav.supplierPortal'),    path: '/supplier-portal',          roles: ['supplier'] },
+    { icon: Building2,       label: t('nav.suppliers'),         path: '/suppliers',                roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
+    { icon: ShieldAlert,     label: t('nav.vendorRisk'),        path: '/vendor-risk',              roles: ['admin', 'procurement_officer', 'approver'] },
+    { icon: FileText,        label: t('nav.priceLists'),        path: '/price-lists',              roles: ['admin', 'procurement_officer', 'supplier'] },
+    { icon: Send,            label: t('nav.rfq'),               path: '/rfq',                     roles: ['admin', 'procurement_officer', 'supplier'] },
+    { icon: Gavel,           label: t('nav.eBidding'),          path: '/bidding',                 roles: ['admin', 'procurement_officer', 'supplier'] },
+    { icon: ClipboardList,   label: t('nav.finalQuotations'),   path: '/final-quotations',         roles: ['admin', 'procurement_officer', 'approver'] },
+    { icon: Award,           label: t('nav.awards'),            path: '/awards',                  roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
+    { icon: BarChart3,       label: t('nav.reports'),           path: '/reports',                 roles: ['admin', 'procurement_officer', 'executive'] },
+    { icon: Settings,        label: t('nav.adminSettings'),     path: '/admin',                   roles: ['admin'] },
+    { icon: UserCheck,       label: t('nav.supplierApprovals'), path: '/admin/supplier-approvals', roles: ['admin'] },
+  ];
 
   const visibleItems = menuItems.filter(
     (item) => item.roles.some((r) => roles.includes(r as any))
   );
+
+  const toggleLang = () => {
+    const next = i18n.language === 'th' ? 'en' : 'th';
+    i18n.changeLanguage(next as 'en' | 'th');
+  };
+
+  const langLabel = i18n.language === 'th' ? 'EN' : 'ไทย';
 
   return (
     <aside
@@ -99,14 +96,26 @@ export default function AppSidebar() {
             </p>
           </div>
         )}
+
+        {/* Language switcher */}
+        <button
+          onClick={toggleLang}
+          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+          title={collapsed ? langLabel : undefined}
+        >
+          <Languages className="w-4 h-4 shrink-0" />
+          {!collapsed && <span className="font-medium">{langLabel}</span>}
+        </button>
+
         <button
           onClick={signOut}
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
-          title={collapsed ? 'Sign out' : undefined}
+          title={collapsed ? t('nav.signOut') : undefined}
         >
           <LogOut className="w-4 h-4 shrink-0" />
-          {!collapsed && <span>Sign out</span>}
+          {!collapsed && <span>{t('nav.signOut')}</span>}
         </button>
+
         <button
           onClick={() => setCollapsed(!collapsed)}
           className="flex items-center justify-center px-3 py-2 rounded-md text-sm w-full text-sidebar-foreground hover:bg-sidebar-accent transition-colors"

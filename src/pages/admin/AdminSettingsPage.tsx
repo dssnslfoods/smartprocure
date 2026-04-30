@@ -11,8 +11,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  DEFAULT_CYCLE, loadPricelistCycle, savePricelistCycle,
+  type PricelistCycleSettings,
+} from '@/lib/pricelistCycle';
 
 interface EmailConfig {
   email_enabled: boolean;
@@ -90,6 +94,10 @@ export default function AdminSettingsPage() {
   const [emailConfig, setEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
   const [savingEmail, setSavingEmail] = useState(false);
 
+  // ── Pricelist cycle state ────────────────────────────────────
+  const [cycle, setCycle] = useState<PricelistCycleSettings>(DEFAULT_CYCLE);
+  const [savingCycle, setSavingCycle] = useState(false);
+
   const { toast } = useToast();
 
   const totalPages = Math.max(1, Math.ceil(totalUsers / PAGE_SIZE));
@@ -103,7 +111,7 @@ export default function AdminSettingsPage() {
     let countQ = supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true });
     let dataQ = supabaseAdmin
       .from('profiles')
-      .select('id, email, full_name, is_active, created_at, user_roles(role)')
+      .select('id, email, full_name, is_active, created_at')
       .order('created_at', { ascending: false })
       .range(from, to);
 
@@ -117,10 +125,32 @@ export default function AdminSettingsPage() {
 
     if (error) {
       toast({ title: 'Error loading users', description: error.message, variant: 'destructive' });
-    } else {
-      setUsers((data as unknown as UserRow[]) || []);
-      setTotalUsers(count || 0);
+      setLoadingUsers(false);
+      return;
     }
+
+    const profiles = data || [];
+
+    // Fetch roles separately (user_roles.user_id → auth.users, no FK to profiles)
+    let mergedUsers: UserRow[] = profiles.map(p => ({ ...p, user_roles: [] }));
+    if (profiles.length > 0) {
+      const ids = profiles.map(p => p.id);
+      const { data: roles } = await supabaseAdmin
+        .from('user_roles')
+        .select('user_id, role')
+        .in('user_id', ids);
+      if (roles) {
+        const roleMap: Record<string, { role: string }[]> = {};
+        roles.forEach(r => {
+          if (!roleMap[r.user_id]) roleMap[r.user_id] = [];
+          roleMap[r.user_id].push({ role: r.role });
+        });
+        mergedUsers = profiles.map(p => ({ ...p, user_roles: roleMap[p.id] || [] }));
+      }
+    }
+
+    setUsers(mergedUsers as unknown as UserRow[]);
+    setTotalUsers(count || 0);
     setLoadingUsers(false);
   }, [toast]);
 
@@ -158,6 +188,20 @@ export default function AdminSettingsPage() {
   };
 
   const updateEmail = (key: keyof EmailConfig, val: any) => setEmailConfig(prev => ({ ...prev, [key]: val }));
+
+  // ── Pricelist cycle ──────────────────────────────────────────
+  useEffect(() => { loadPricelistCycle().then(setCycle); }, []);
+  const saveCycle = async () => {
+    if (cycle.update_cycle_days < 1 || cycle.update_cycle_days > 730) {
+      toast({ title: 'ค่าไม่ถูกต้อง', description: 'รอบการอัปเดตต้องอยู่ระหว่าง 1–730 วัน', variant: 'destructive' });
+      return;
+    }
+    setSavingCycle(true);
+    const { error } = await savePricelistCycle(cycle);
+    setSavingCycle(false);
+    if (error) toast({ title: 'Error', description: error, variant: 'destructive' });
+    else toast({ title: 'บันทึกสำเร็จ', description: `รอบ Pricelist = ${cycle.update_cycle_days} วัน` });
+  };
 
   // ── Create user ──────────────────────────────────────────────
   const handleCreateUser = async () => {
@@ -233,6 +277,7 @@ export default function AdminSettingsPage() {
           <TabsTrigger value="users" className="gap-2"><Users className="w-4 h-4" />Users</TabsTrigger>
           <TabsTrigger value="roles" className="gap-2"><Shield className="w-4 h-4" />Roles</TabsTrigger>
           <TabsTrigger value="email" className="gap-2"><Mail className="w-4 h-4" />Email</TabsTrigger>
+          <TabsTrigger value="pricelist" className="gap-2"><FileSpreadsheet className="w-4 h-4" />Pricelist</TabsTrigger>
           <TabsTrigger value="config" className="gap-2"><Settings className="w-4 h-4" />Config</TabsTrigger>
         </TabsList>
 
@@ -500,6 +545,53 @@ export default function AdminSettingsPage() {
               {savingEmail ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
             </Button>
           </div>
+        </TabsContent>
+
+        {/* ── Pricelist Tab ── */}
+        <TabsContent value="pricelist" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">รอบการอัปเดต Pricelist</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>รอบการอัปเดตราคา (วัน)</Label>
+                  <Input type="number" min={1} max={730}
+                    value={cycle.update_cycle_days}
+                    onChange={e => setCycle(c => ({ ...c, update_cycle_days: Number(e.target.value) || 0 }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Supplier ต้องส่ง pricelist ใหม่ทุก ๆ {cycle.update_cycle_days} วัน
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>ระยะเวลายืนราคา (วัน)</Label>
+                  <Input type="number" min={1} max={730}
+                    value={cycle.hold_until_days ?? ''}
+                    onChange={e => setCycle(c => ({ ...c, hold_until_days: Number(e.target.value) || 0 }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Supplier ต้องยืนราคาตาม pricelist อย่างน้อย {cycle.hold_until_days || 0} วัน
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-muted/50 p-3 rounded text-xs space-y-1">
+                <div className="font-medium">ผลของการตั้งค่า:</div>
+                <div>• Supplier จะเห็น banner เตือนเมื่อใกล้ครบรอบ ({'<='} 7 วัน)</div>
+                <div>• เมื่อเกินรอบจะแสดงสถานะ "เกินรอบ" สีแดง — ต้องส่ง pricelist ใหม่</div>
+                <div>• Procurement เห็นสถานะของ supplier แต่ละรายในหน้า catalog</div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button onClick={saveCycle} disabled={savingCycle}>
+                  <Save className="w-4 h-4 mr-2" />
+                  {savingCycle ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ── Config Tab ── */}

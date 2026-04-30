@@ -1,21 +1,32 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Building2, FileText, Gavel, Award, Star, Clock, Activity } from 'lucide-react';
+import {
+  Building2, FileText, Gavel, Award, Clock, Activity,
+  ShieldAlert, ShieldX, AlertTriangle, Trophy, BarChart2, TrendingDown,
+} from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from '@/i18n';
 
 interface KPIData {
   totalSuppliers: number;
   approvedSuppliers: number;
   pendingSuppliers: number;
+  highRiskSuppliers: number;
+  criticalRiskSuppliers: number;
+  expiredCerts: number;
   openRfqs: number;
   draftRfqs: number;
+  pendingBidReview: number;
+  pendingApproval: number;
+  awardedRfqs: number;
   activeBids: number;
   pendingAwards: number;
-  avgScore: number;
-  topSuppliers: { company_name: string; overall_score: number }[];
+  awardsToHighRisk: number;
+  totalSavings: number;
+  avgCycleDays: number | null;
   suppliersByStatus: Record<string, number>;
   recentActivity: { type: string; title: string; time: string; icon: string }[];
 }
@@ -23,81 +34,106 @@ interface KPIData {
 export default function Dashboard() {
   const { profile, roles } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [kpi, setKpi] = useState<KPIData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchKPIs = async () => {
-      const [
-        suppliersRes,
-        rfqRes,
-        biddingRes,
-        awardsRes,
-        scoresRes,
-        recentSuppRes,
-        recentRfqRes,
-        recentBidRes,
-      ] = await Promise.all([
-        supabase.from('suppliers').select('id, status'),
-        supabase.from('rfqs').select('id, status'),
-        supabase.from('bidding_events').select('id, status'),
-        supabase.from('awards').select('id, status'),
-        supabase.from('supplier_score_summary').select('supplier_id, overall_score, suppliers(company_name)').order('overall_score', { ascending: false }).limit(5),
-        supabase.from('suppliers').select('id, company_name, status, created_at').order('created_at', { ascending: false }).limit(5),
-        supabase.from('rfqs').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(5),
-        supabase.from('bidding_events').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(3),
-      ]);
+      try {
+        const [
+          suppliersRes,
+          rfqRes,
+          biddingRes,
+          awardsRes,
+          recentSuppRes,
+          recentRfqRes,
+          recentBidRes,
+          savingsRes,
+        ] = await Promise.all([
+          supabase.from('suppliers').select('id, status, risk_level, certificate_expiry_date'),
+          supabase.from('rfqs').select('id, status, workflow_status, created_at, updated_at'),
+          supabase.from('bidding_events').select('id, status'),
+          supabase.from('awards').select('id, status, award_lifecycle_status, final_amount, amount, supplier_id, suppliers(risk_level)'),
+          supabase.from('suppliers').select('id, company_name, status, created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('rfqs').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(5),
+          supabase.from('bidding_events').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(3),
+          supabase.from('quotations').select('discount').not('discount', 'is', null).gt('discount', 0),
+        ]);
 
-      const suppliers = suppliersRes.data || [];
-      const rfqs = rfqRes.data || [];
-      const bids = biddingRes.data || [];
-      const awards = awardsRes.data || [];
-      const scores = scoresRes.data || [];
+        const suppliers = suppliersRes.data || [];
+        const rfqs = rfqRes.data || [];
+        const bids = biddingRes.data || [];
+        const awards = awardsRes.data || [];
+        const suppliersByStatus: Record<string, number> = {};
+        suppliers.forEach((s: any) => { suppliersByStatus[s.status] = (suppliersByStatus[s.status] || 0) + 1; });
 
-      const suppliersByStatus: Record<string, number> = {};
-      suppliers.forEach((s: any) => { suppliersByStatus[s.status] = (suppliersByStatus[s.status] || 0) + 1; });
+        // Compute risk stats from already-fetched suppliers
+        const now = new Date().toISOString();
+        const highRiskSuppliers = suppliers.filter((s: any) => s.risk_level === 'high').length;
+        const criticalRiskSuppliers = suppliers.filter((s: any) => s.risk_level === 'critical').length;
+        const expiredCerts = suppliers.filter((s: any) => s.certificate_expiry_date && s.certificate_expiry_date < now).length;
 
-      const topSuppliers = scores.map((s: any) => ({
-        company_name: s.suppliers?.company_name || 'Unknown',
-        overall_score: s.overall_score || 0,
-      }));
+        // Awards to high/critical risk — computed from awards data
+        const awardsToHighRisk = awards.filter((a: any) => {
+          const rl = a.suppliers?.risk_level;
+          return rl === 'high' || rl === 'critical';
+        }).length;
 
-      const avgScore = topSuppliers.length > 0
-        ? topSuppliers.reduce((sum: number, s: any) => sum + s.overall_score, 0) / topSuppliers.length
-        : 0;
+        // Savings from discounts on quotations
+        const totalSavings = (savingsRes.data || []).reduce((sum: number, q: any) => sum + (q.discount || 0), 0);
 
-      // Build recent activity feed
-      const activity: { type: string; title: string; time: string; icon: string }[] = [];
-      (recentSuppRes.data || []).forEach((s: any) => {
-        activity.push({ type: 'supplier', title: `Supplier "${s.company_name}" — ${s.status}`, time: s.created_at, icon: 'building' });
-      });
-      (recentRfqRes.data || []).forEach((r: any) => {
-        activity.push({ type: 'rfq', title: `RFQ "${r.title}" — ${r.status}`, time: r.created_at, icon: 'file' });
-      });
-      (recentBidRes.data || []).forEach((b: any) => {
-        activity.push({ type: 'bidding', title: `Auction "${b.title}" — ${b.status}`, time: b.created_at, icon: 'gavel' });
-      });
-      activity.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+        // Average RFQ cycle time
+        const awardedRfqList = rfqs.filter((r: any) => r.status === 'awarded' && r.created_at && r.updated_at);
+        const avgCycleDays = awardedRfqList.length > 0
+          ? awardedRfqList.reduce((sum: number, r: any) => {
+              const days = (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 86400000;
+              return sum + days;
+            }, 0) / awardedRfqList.length
+          : null;
 
-      setKpi({
-        totalSuppliers: suppliers.length,
-        approvedSuppliers: suppliersByStatus['approved'] || 0,
-        pendingSuppliers: (suppliersByStatus['submitted'] || 0) + (suppliersByStatus['review'] || 0),
-        openRfqs: rfqs.filter((r: any) => r.status === 'published').length,
-        draftRfqs: rfqs.filter((r: any) => r.status === 'draft').length,
-        activeBids: bids.filter((b: any) => b.status === 'active').length,
-        pendingAwards: awards.filter((a: any) => a.status === 'pending').length,
-        avgScore,
-        topSuppliers,
-        suppliersByStatus,
-        recentActivity: activity.slice(0, 8),
-      });
-      setLoading(false);
+        // Build recent activity feed
+        const activity: { type: string; title: string; time: string; icon: string }[] = [];
+        (recentSuppRes.data || []).forEach((s: any) => {
+          activity.push({ type: 'supplier', title: `Supplier "${s.company_name}" — ${s.status}`, time: s.created_at, icon: 'building' });
+        });
+        (recentRfqRes.data || []).forEach((r: any) => {
+          activity.push({ type: 'rfq', title: `RFQ "${r.title}" — ${r.status}`, time: r.created_at, icon: 'file' });
+        });
+        (recentBidRes.data || []).forEach((b: any) => {
+          activity.push({ type: 'bidding', title: `Auction "${b.title}" — ${b.status}`, time: b.created_at, icon: 'gavel' });
+        });
+        activity.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
+        setKpi({
+          totalSuppliers: suppliers.length,
+          approvedSuppliers: suppliersByStatus['approved'] || 0,
+          pendingSuppliers: (suppliersByStatus['submitted'] || 0) + (suppliersByStatus['review'] || 0),
+          highRiskSuppliers,
+          criticalRiskSuppliers,
+          expiredCerts,
+          openRfqs: rfqs.filter((r: any) => r.status === 'published').length,
+          draftRfqs: rfqs.filter((r: any) => r.status === 'draft').length,
+          pendingBidReview: rfqs.filter((r: any) => r.status === 'closed' || r.workflow_status === 'under_evaluation').length,
+          pendingApproval: rfqs.filter((r: any) => r.workflow_status === 'pending_approval').length,
+          awardedRfqs: rfqs.filter((r: any) => r.status === 'awarded').length,
+          activeBids: bids.filter((b: any) => b.status === 'active').length,
+          pendingAwards: awards.filter((a: any) => a.status === 'pending' || a.award_lifecycle_status === 'pending_approval').length,
+          awardsToHighRisk,
+          totalSavings,
+          avgCycleDays,
+          suppliersByStatus,
+          recentActivity: activity.slice(0, 8),
+        });
+      } catch (err) {
+        console.error('Dashboard fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchKPIs();
 
-    // Real-time updates
     const channel = supabase
       .channel('dashboard-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, () => fetchKPIs())
@@ -108,20 +144,6 @@ export default function Dashboard() {
 
     return () => { supabase.removeChannel(channel); };
   }, []);
-
-  const getScoreColor = (s: number) => {
-    if (s >= 4) return 'text-green-600';
-    if (s >= 3) return 'text-blue-600';
-    if (s >= 2) return 'text-yellow-600';
-    return 'text-destructive';
-  };
-
-  const getBarColor = (s: number) => {
-    if (s >= 4) return 'bg-green-500';
-    if (s >= 3) return 'bg-blue-500';
-    if (s >= 2) return 'bg-yellow-500';
-    return 'bg-destructive';
-  };
 
   const getActivityIcon = (icon: string) => {
     switch (icon) {
@@ -141,71 +163,151 @@ export default function Dashboard() {
     suspended: 'bg-orange-100 text-orange-800',
   };
 
+  const stat = (val: number | null | undefined) => loading ? '...' : (val ?? 0);
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">
-          Welcome back{profile?.full_name ? `, ${profile.full_name}` : ''}
+          {t('dashboard.welcome')}{profile?.full_name ? `, ${profile.full_name}` : ''}
         </h1>
-        <p className="text-muted-foreground text-sm mt-1">Here's your procurement overview</p>
+        <p className="text-muted-foreground text-sm mt-1">{t('dashboard.overview')}</p>
       </div>
 
-      {/* KPI Cards */}
+      {/* Primary KPI row */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/suppliers')}>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Suppliers</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.totalSuppliers')}</CardTitle>
             <Building2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loading ? '...' : kpi?.totalSuppliers}</div>
+            <div className="text-2xl font-bold">{stat(kpi?.totalSuppliers)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {loading ? '' : `${kpi?.approvedSuppliers} approved · ${kpi?.pendingSuppliers} pending`}
+              {loading ? '' : t('dashboard.suppliersSub', { approved: kpi?.approvedSuppliers, pending: kpi?.pendingSuppliers })}
             </p>
           </CardContent>
         </Card>
 
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/rfq')}>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Open RFQs</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.openRfqs')}</CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loading ? '...' : kpi?.openRfqs}</div>
+            <div className="text-2xl font-bold">{stat(kpi?.openRfqs)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {loading ? '' : `${kpi?.draftRfqs} draft`}
+              {loading ? '' : t('dashboard.rfqsSub', { draft: kpi?.draftRfqs, awarded: kpi?.awardedRfqs })}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/bidding')}>
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/rfq')}>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Auctions</CardTitle>
-            <Gavel className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.pendingBidReview')}</CardTitle>
+            <BarChart2 className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loading ? '...' : kpi?.activeBids}</div>
-            <p className="text-xs text-muted-foreground mt-1">Live reverse auctions</p>
+            <div className="text-2xl font-bold text-amber-600">{stat(kpi?.pendingBidReview)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {loading ? '' : t('dashboard.pendingBidReviewSub', { count: kpi?.pendingApproval })}
+            </p>
           </CardContent>
         </Card>
 
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/awards')}>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending Awards</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.pendingAwards')}</CardTitle>
             <Award className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{loading ? '...' : kpi?.pendingAwards}</div>
-            <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
+            <div className="text-2xl font-bold">{stat(kpi?.pendingAwards)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.pendingAwardsSub')}</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Second Row */}
+      {/* Risk & Compliance KPI row */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-orange-200" onClick={() => navigate('/vendor-risk')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.highRiskSuppliers')}</CardTitle>
+            <ShieldAlert className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-orange-600">{stat(kpi?.highRiskSuppliers)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.highRiskSub')}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-red-200" onClick={() => navigate('/vendor-risk')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.criticalRisk')}</CardTitle>
+            <ShieldX className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{stat(kpi?.criticalRiskSuppliers)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.criticalSub')}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-amber-200" onClick={() => navigate('/suppliers')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.expiredCerts')}</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-600">{stat(kpi?.expiredCerts)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.expiredSub')}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-orange-200" onClick={() => navigate('/awards')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.awardsToHighRisk')}</CardTitle>
+            <Trophy className="h-4 w-4 text-orange-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-orange-600">{stat(kpi?.awardsToHighRisk)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.awardsHighRiskSub')}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Savings & Cycle Time */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.totalSavings')}</CardTitle>
+            <TrendingDown className="h-4 w-4 text-emerald-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-emerald-600">
+              {loading ? '...' : `$${(kpi?.totalSavings || 0).toLocaleString()}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.savingsSub')}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.avgCycleTime')}</CardTitle>
+            <Clock className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">
+              {loading ? '...' : kpi?.avgCycleDays != null ? t('dashboard.days', { count: kpi.avgCycleDays.toFixed(1) }) : '—'}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.avgCycleSub')}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Second section */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Supplier Breakdown */}
         <Card>
-          <CardHeader><CardTitle className="text-base">Suppliers by Status</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{t('dashboard.suppliersByStatus')}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             {loading ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
@@ -224,7 +326,7 @@ export default function Dashboard() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground">No suppliers yet</p>
+              <p className="text-sm text-muted-foreground">{t('dashboard.noSuppliersYet')}</p>
             )}
           </CardContent>
         </Card>
@@ -233,7 +335,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2"><Activity className="w-4 h-4" /> Recent Activity</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2"><Activity className="w-4 h-4" /> {t('dashboard.recentActivity')}</CardTitle>
               <Clock className="w-4 h-4 text-muted-foreground" />
             </div>
           </CardHeader>
@@ -255,49 +357,12 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No recent activity</p>
+              <p className="text-sm text-muted-foreground">{t('dashboard.noActivity')}</p>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Top Suppliers */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><Star className="w-4 h-4" /> Top Rated Suppliers</CardTitle>
-            {kpi && kpi.avgScore > 0 && (
-              <span className="text-sm text-muted-foreground">Avg: <span className={`font-semibold ${getScoreColor(kpi.avgScore)}`}>{kpi.avgScore.toFixed(2)}/5</span></span>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : kpi && kpi.topSuppliers.length > 0 ? (
-            <div className="space-y-3">
-              {kpi.topSuppliers.map((s, i) => (
-                <div key={i} className="flex items-center gap-4">
-                  <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${i === 0 ? 'bg-yellow-100 text-yellow-800' : i === 1 ? 'bg-gray-100 text-gray-700' : i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-muted text-muted-foreground'}`}>
-                    {i + 1}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium truncate">{s.company_name}</span>
-                      <span className={`text-sm font-bold ${getScoreColor(s.overall_score)}`}>{s.overall_score.toFixed(2)}</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${getBarColor(s.overall_score)}`} style={{ width: `${(s.overall_score / 5) * 100}%` }} />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Score suppliers via Evaluations to see rankings here</p>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

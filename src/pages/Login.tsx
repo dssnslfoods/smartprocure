@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { CheckCircle2, Building2 } from 'lucide-react';
+import { CheckCircle2, Building2, Languages } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -18,6 +19,12 @@ export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const justRegistered = searchParams.get('registered') === 'true';
+  const { t, i18n } = useTranslation();
+
+  const toggleLang = () => {
+    const next = i18n.language === 'th' ? 'en' : 'th';
+    i18n.changeLanguage(next as 'en' | 'th');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,8 +110,14 @@ export default function Login() {
           </div>
 
           <div className="text-center md:text-left space-y-2 hidden md:block mb-2">
-            <h2 className="text-3xl font-bold tracking-tight text-foreground">Welcome back</h2>
-            <p className="text-muted-foreground text-sm">Enter your credentials to access your account.</p>
+            <div className="flex items-center justify-between">
+              <h2 className="text-3xl font-bold tracking-tight text-foreground">{t('login.title')}</h2>
+              <button onClick={toggleLang} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border rounded-md px-2 py-1 transition-colors">
+                <Languages className="w-3.5 h-3.5" />
+                {i18n.language === 'th' ? 'EN' : 'ไทย'}
+              </button>
+            </div>
+            <p className="text-muted-foreground text-sm">{t('login.subtitle')}</p>
           </div>
 
           {justRegistered && (
@@ -119,20 +132,20 @@ export default function Login() {
           <div className="bg-white dark:bg-card border border-slate-200 dark:border-border rounded-2xl p-6 sm:p-8 shadow-xl shadow-slate-200/40 dark:shadow-none">
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2.5">
-                <Label htmlFor="email" className="text-sm font-semibold text-slate-700 dark:text-slate-300">Email Address</Label>
+                <Label htmlFor="email" className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('login.emailLabel')}</Label>
                 <Input
                   id="email"
                   type="email"
                   className="h-11 bg-slate-50 dark:bg-background border-slate-200 dark:border-border focus-visible:ring-primary/30 focus-visible:border-primary transition-all rounded-xl"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@nslfoods.com"
+                  placeholder={t('login.emailPlaceholder')}
                   required
                 />
               </div>
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="password" className="text-sm font-semibold text-slate-700 dark:text-slate-300">Password</Label>
+                  <Label htmlFor="password" className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('login.passwordLabel')}</Label>
                 </div>
                 <Input
                   id="password"
@@ -140,7 +153,7 @@ export default function Login() {
                   className="h-11 bg-slate-50 dark:bg-background border-slate-200 dark:border-border focus-visible:ring-primary/30 focus-visible:border-primary transition-all rounded-xl"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder={t('login.passwordPlaceholder')}
                   required
                 />
               </div>
@@ -157,7 +170,7 @@ export default function Login() {
                 className="w-full h-12 text-base font-semibold shadow-lg shadow-primary/20 transition-all hover:translate-y-[-2px] rounded-xl mt-2" 
                 disabled={loading}
               >
-                {loading ? 'Authenticating...' : 'Sign In'}
+                {loading ? t('login.signingIn') : t('login.signIn')}
               </Button>
             </form>
 
@@ -176,14 +189,14 @@ export default function Login() {
               <Link to="/register/supplier">
                 <Button variant="outline" className="w-full h-12 border-slate-300 dark:border-border hover:bg-slate-50 dark:hover:bg-accent hover:text-slate-900 dark:hover:text-foreground transition-all rounded-xl font-medium">
                   <Building2 className="w-4 h-4 mr-2" /> 
-                  Register as a New Supplier
+                  {t('login.registerSupplier')}
                 </Button>
               </Link>
             </div>
           </div>
 
           <div className="text-center md:text-left text-xs text-slate-500 dark:text-muted-foreground font-medium pt-4">
-            © 2026 Arnon Arpaket. All Rights Reserved.
+            {t('login.copyright', { year: new Date().getFullYear() })}
           </div>
         </div>
       </div>
