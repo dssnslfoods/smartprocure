@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Plus, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
+import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -31,7 +32,7 @@ export default function SupplierList() {
   const filters = useCallback((query: any) => {
     let filteredQuery = query;
     if (search) {
-      filteredQuery = filteredQuery.or(`company_name.ilike.%${search}%,tax_id.ilike.%${search}%`);
+      filteredQuery = filteredQuery.or(`company_name.ilike.%${search}%,tax_id.ilike.%${search}%,supplier_code.ilike.%${search}%`);
     }
     if (statusFilter !== 'all') {
       filteredQuery = filteredQuery.eq('status', statusFilter);
@@ -46,6 +47,7 @@ export default function SupplierList() {
     tableName: 'suppliers',
     pageSize: 20,
     filters,
+    select: 'id, company_name, supplier_code, supplier_type, tax_id, email, status, tier, risk_level, certificate_expiry_date, created_at, supplier_risk_assessments(total_risk_score, assessed_at)',
   });
 
   return (
@@ -90,31 +92,67 @@ export default function SupplierList() {
               <thead>
                 <tr className="border-b bg-muted/50">
                   <th className="text-left p-3 font-medium text-muted-foreground">Company</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">Tax ID</th>
+                  <th className="text-left p-3 font-medium text-muted-foreground">Code</th>
+                  <th className="text-left p-3 font-medium text-muted-foreground">Type</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">Tier</th>
+                  <th className="text-left p-3 font-medium text-muted-foreground">Risk</th>
+                  <th className="text-right p-3 font-medium text-muted-foreground">คะแนนความเสี่ยง</th>
+                  <th className="text-left p-3 font-medium text-muted-foreground">Cert Expiry</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Created</th>
                 </tr>
               </thead>
               <tbody>
                 {pagination.loading ? (
-                  <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
+                  <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
                 ) : pagination.items.length === 0 ? (
-                  <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No suppliers found</td></tr>
+                  <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">No suppliers found</td></tr>
                 ) : (
-                  pagination.items.map((s) => (
-                    <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
-                      <td className="p-3 font-medium">
-                        <Link to={`/suppliers/${s.id}`} className="text-primary hover:underline">{s.company_name}</Link>
-                      </td>
-                      <td className="p-3 text-muted-foreground">{s.tax_id || '—'}</td>
-                      <td className="p-3">
-                        <Badge variant="secondary" className={statusColors[s.status] || ''}>{s.status}</Badge>
-                      </td>
-                      <td className="p-3 text-muted-foreground">{s.tier || '—'}</td>
-                      <td className="p-3 text-muted-foreground">{s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}</td>
-                    </tr>
-                  ))
+                  pagination.items.map((s) => {
+                    const expiry = s.certificate_expiry_date ? new Date(s.certificate_expiry_date) : null;
+                    const isExpired = expiry ? expiry < new Date() : false;
+                    return (
+                      <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
+                        <td className="p-3 font-medium">
+                          <Link to={`/suppliers/${s.id}`} className="text-primary hover:underline">{s.company_name}</Link>
+                        </td>
+                        <td className="p-3 text-muted-foreground font-mono text-xs">{s.supplier_code || '—'}</td>
+                        <td className="p-3"><SupplierTypeBadge type={s.supplier_type} /></td>
+                        <td className="p-3">
+                          <Badge variant="secondary" className={statusColors[s.status] || ''}>{s.status}</Badge>
+                        </td>
+                        <td className="p-3">
+                          {(() => {
+                            const assessments = s.supplier_risk_assessments as any[];
+                            const hasAssessment = assessments?.length > 0;
+                            return hasAssessment
+                              ? <RiskBadge level={s.risk_level} />
+                              : <span className="text-muted-foreground text-xs">ยังไม่ประเมิน</span>;
+                          })()}
+                        </td>
+                        <td className="p-3 text-right">
+                          {(() => {
+                            const latest = (s.supplier_risk_assessments as any[])?.sort(
+                              (a: any, b: any) => new Date(b.assessed_at).getTime() - new Date(a.assessed_at).getTime()
+                            )[0];
+                            return latest?.total_risk_score != null ? (
+                              <span className="font-semibold tabular-nums text-sm">
+                                {Number(latest.total_risk_score).toFixed(1)}
+                                <span className="text-[10px] text-muted-foreground font-normal">/100</span>
+                              </span>
+                            ) : <span className="text-muted-foreground text-xs">—</span>;
+                          })()}
+                        </td>
+                        <td className="p-3">
+                          {expiry ? (
+                            <span className={isExpired ? 'text-red-600 font-medium text-xs' : 'text-muted-foreground text-xs'}>
+                              {expiry.toLocaleDateString()}{isExpired ? ' ⚠' : ''}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="p-3 text-muted-foreground text-xs">{s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}</td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

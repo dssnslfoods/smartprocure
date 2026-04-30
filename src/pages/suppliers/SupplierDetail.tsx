@@ -11,6 +11,9 @@ import { useToast } from '@/hooks/use-toast';
 import SupplierContacts from './SupplierContacts';
 import SupplierDocuments from './SupplierDocuments';
 import SupplierESG from './SupplierESG';
+import SupplierRiskTab from './SupplierRiskTab';
+import SupplierCertificates from './SupplierCertificates';
+import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -79,11 +82,13 @@ export default function SupplierDetail() {
             <Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button>
           </Link>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold">{supplier.company_name}</h1>
               <Badge variant="secondary" className={statusColors[supplier.status] || ''}>
                 {supplier.status}
               </Badge>
+              <SupplierTypeBadge type={supplier.supplier_type} />
+              <RiskBadge level={supplier.risk_level} />
             </div>
             <p className="text-sm text-muted-foreground">{supplier.email || 'No email'} · {supplier.city || ''}{supplier.country ? `, ${supplier.country}` : ''}</p>
           </div>
@@ -107,8 +112,10 @@ export default function SupplierDetail() {
         <TabsList>
           <TabsTrigger value="info">Information</TabsTrigger>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
+          <TabsTrigger value="certificates">ใบรับรอง</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="esg">ESG Profile</TabsTrigger>
+          <TabsTrigger value="risk">Risk Assessment</TabsTrigger>
         </TabsList>
 
         <TabsContent value="info">
@@ -142,12 +149,20 @@ export default function SupplierDetail() {
           <SupplierContacts supplierId={id!} />
         </TabsContent>
 
+        <TabsContent value="certificates">
+          <SupplierCertificates supplierId={id!} />
+        </TabsContent>
+
         <TabsContent value="documents">
           <SupplierDocuments supplierId={id!} />
         </TabsContent>
 
         <TabsContent value="esg">
           <SupplierESG supplierId={id!} />
+        </TabsContent>
+
+        <TabsContent value="risk">
+          <SupplierRiskTab supplierId={id!} onRiskUpdated={fetchSupplier} />
         </TabsContent>
       </Tabs>
     </div>

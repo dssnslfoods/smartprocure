@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart } from 'recharts';
 import { supabase } from '@/integrations/supabase/client';
 import { TrendingUp, TrendingDown, BarChart3, Activity, Users } from 'lucide-react';
 
@@ -41,15 +41,12 @@ export default function ReportsPage() {
   const [supplierStats, setSupplierStats] = useState({ total: 0, approved: 0, pending: 0, draft: 0, rejected: 0 });
   const [rfqStats, setRfqStats] = useState({ total: 0, open: 0, closed: 0, awarded: 0 });
   const [_awardCount, setAwardCount] = useState(0);
-  const [topSuppliers, setTopSuppliers] = useState<{ name: string; score: number }[]>([]);
-
   useEffect(() => {
     const load = async () => {
-      const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: scores }] = await Promise.all([
+      const [{ data: suppliers }, { data: rfqs }, { data: awards }] = await Promise.all([
         supabase.from('suppliers').select('status'),
         supabase.from('rfqs').select('status'),
         supabase.from('awards').select('id'),
-        supabase.from('supplier_score_summary').select('supplier_id, avg_score, suppliers(name)').order('avg_score', { ascending: false }).limit(5),
       ]);
 
       if (suppliers) {
@@ -70,12 +67,6 @@ export default function ReportsPage() {
         });
       }
       if (awards) setAwardCount(awards.length);
-      if (scores) {
-        setTopSuppliers(scores.map((s: any) => ({
-          name: s.suppliers?.name || 'Unknown',
-          score: Number(s.avg_score) || 0,
-        })));
-      }
     };
     load();
   }, []);
@@ -100,15 +91,6 @@ export default function ReportsPage() {
     { name: 'Draft', value: supplierStats.draft || 1 },
     { name: 'Rejected', value: supplierStats.rejected },
   ].filter(d => d.value > 0);
-
-  // Radar data for top supplier performance
-  const radarData = [
-    { metric: 'Quality', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.8 + Math.random() * 0.4)) }), {})) },
-    { metric: 'Delivery', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.7 + Math.random() * 0.5)) }), {})) },
-    { metric: 'Price', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.75 + Math.random() * 0.45)) }), {})) },
-    { metric: 'Service', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.8 + Math.random() * 0.4)) }), {})) },
-    { metric: 'Compliance', ...(topSuppliers.reduce((acc, s, i) => ({ ...acc, [`s${i}`]: Math.min(5, s.score * (0.85 + Math.random() * 0.3)) }), {})) },
-  ];
 
   const totalSpend = monthlySpending.reduce((s, m) => s + m.amount, 0);
   const totalSavings = monthlySpending.reduce((s, m) => s + m.savings, 0);
@@ -278,54 +260,7 @@ export default function ReportsPage() {
                 </ChartContainer>
               </CardContent>
             </Card>
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-base">Top Supplier Performance Radar</CardTitle>
-                <CardDescription>Multi-dimensional evaluation of top-rated suppliers</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {topSuppliers.length > 0 ? (
-                  <ChartContainer config={performanceConfig} className="h-[300px] w-full">
-                    <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
-                      <PolarGrid className="stroke-border" />
-                      <PolarAngleAxis dataKey="metric" className="text-xs" />
-                      <PolarRadiusAxis domain={[0, 5]} tick={false} />
-                      <ChartTooltip content={<ChartTooltipContent />} />
-                      {topSuppliers.slice(0, 3).map((s, i) => (
-                        <Radar key={s.name} name={s.name} dataKey={`s${i}`} stroke={COLORS[i]} fill={COLORS[i]} fillOpacity={0.15} strokeWidth={2} />
-                      ))}
-                    </RadarChart>
-                  </ChartContainer>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-12">No supplier scores available yet</p>
-                )}
-              </CardContent>
-            </Card>
           </div>
-          {/* Top suppliers table */}
-          {topSuppliers.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Top Rated Suppliers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {topSuppliers.map((s, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-muted-foreground w-6">#{i + 1}</span>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{s.name}</p>
-                        <div className="h-2 rounded-full bg-muted mt-1 overflow-hidden">
-                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(s.score / 5) * 100}%` }} />
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold">{s.score.toFixed(2)}/5.00</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </TabsContent>
       </Tabs>
     </div>
