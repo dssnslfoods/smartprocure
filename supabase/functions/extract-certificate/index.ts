@@ -35,7 +35,7 @@ Type rules:
 
 If the document is clearly NOT a certificate, return all fields null with confidence "low" and a note.`;
 
-const MODEL = "gemini-2.0-flash";  // fast, cheap, supports vision + PDF
+const MODEL = "gemini-2.5-flash";  // free tier, supports vision + PDF
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
