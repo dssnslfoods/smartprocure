@@ -129,18 +129,25 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
 
     setExtracting(true);
 
-    // 1) Try AI extraction (Claude vision via Supabase Edge Function)
+    // 1) Try AI extraction (Gemini vision via Supabase Edge Function)
+    let aiErrorMsg = '';
     try {
       const file_base64 = await fileToBase64(f);
+      console.log('[AI] invoking extract-certificate, mime=', f.type, 'b64 size=', file_base64.length);
       const { data, error } = await supabase.functions.invoke('extract-certificate', {
         body: { file_base64, mime_type: f.type },
       });
 
-      if (!error && data && !data.error) {
+      console.log('[AI] response:', { data, error });
+
+      if (error) {
+        aiErrorMsg = `ไม่สามารถเรียก AI ได้: ${error.message || JSON.stringify(error)}`;
+      } else if (data?.error) {
+        aiErrorMsg = `AI ตอบ error: ${data.error}${data.detail ? ` (${data.detail})` : ''}`;
+      } else if (data) {
         const r = data as AIExtractResult;
         setAiResult(r);
 
-        // Auto-fill — but never overwrite a field the user already typed
         setForm(prev => ({
           ...prev,
           certificate_type: prev.certificate_type || r.certificate_type || prev.certificate_type,
@@ -154,19 +161,31 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
           .filter(k => (r as any)[k]).length;
 
         toast({
-          title: `✨ AI กรอกข้อมูลให้ ${filledCount} ช่อง`,
-          description: r.confidence === 'low'
-            ? 'ความมั่นใจต่ำ — กรุณาตรวจสอบและแก้ไขก่อนบันทึก'
-            : 'กรุณาตรวจสอบความถูกต้องก่อนบันทึก',
+          title: filledCount > 0 ? `✨ AI กรอกข้อมูลให้ ${filledCount} ช่อง` : '✨ AI อ่านได้แล้ว แต่ไม่พบข้อมูล',
+          description: filledCount === 0
+            ? 'ลองภาพที่ชัดกว่านี้ หรือกรอกข้อมูลด้วยตนเอง'
+            : r.confidence === 'low'
+              ? 'ความมั่นใจต่ำ — กรุณาตรวจสอบและแก้ไขก่อนบันทึก'
+              : 'กรุณาตรวจสอบความถูกต้องก่อนบันทึก',
         });
         setExtracting(false);
         return;
+      } else {
+        aiErrorMsg = 'AI ไม่ตอบกลับ (response ว่าง)';
       }
+    } catch (err: any) {
+      aiErrorMsg = `AI exception: ${err?.message || String(err)}`;
+      console.error('[AI] exception:', err);
+    }
 
-      // AI failed — fall back to PDF text extraction (legacy path)
-      console.warn('AI extract failed, falling back:', error || data?.error);
-    } catch (err) {
-      console.warn('AI extract threw:', err);
+    // Show the actual error to the user so we can debug
+    if (aiErrorMsg) {
+      console.error('[AI] error:', aiErrorMsg);
+      toast({
+        title: '⚠️ AI ไม่สามารถอ่านได้',
+        description: aiErrorMsg.slice(0, 200),
+        variant: 'destructive',
+      });
     }
 
     // 2) Fallback: client-side PDF text extraction (legacy)
