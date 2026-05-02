@@ -96,6 +96,7 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [aiResult, setAiResult] = useState<AIExtractResult | null>(null);
+  const [aiDebug, setAiDebug] = useState<string>('');
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -128,17 +129,20 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
     if (!isPdf && !isImage) return;
 
     setExtracting(true);
+    setAiDebug(`📤 กำลังเรียก AI... (ขนาดไฟล์ ${(f.size / 1024).toFixed(0)} KB, ประเภท ${f.type})`);
 
     // 1) Try AI extraction (Gemini vision via Supabase Edge Function)
     let aiErrorMsg = '';
     try {
       const file_base64 = await fileToBase64(f);
       console.log('[AI] invoking extract-certificate, mime=', f.type, 'b64 size=', file_base64.length);
+      setAiDebug(`📤 ส่งไฟล์ไป AI แล้ว (base64 ${(file_base64.length / 1024).toFixed(0)} KB)... รอ response`);
       const { data, error } = await supabase.functions.invoke('extract-certificate', {
         body: { file_base64, mime_type: f.type },
       });
 
       console.log('[AI] response:', { data, error });
+      setAiDebug(`📥 ได้ response แล้ว: ${JSON.stringify({ data, error }).slice(0, 500)}`);
 
       if (error) {
         aiErrorMsg = `ไม่สามารถเรียก AI ได้: ${error.message || JSON.stringify(error)}`;
@@ -321,7 +325,7 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
             <FileBadge className="h-4 w-4" />
             ใบรับรอง ({certs.length})
           </CardTitle>
-          <Button size="sm" onClick={() => { setForm(defaultForm); setFile(null); setAiResult(null); setOpen(true); }}>
+          <Button size="sm" onClick={() => { setForm(defaultForm); setFile(null); setAiResult(null); setAiDebug(''); setOpen(true); }}>
             <Upload className="h-4 w-4 mr-1" /> เพิ่มใบรับรอง
           </Button>
         </CardHeader>
@@ -443,6 +447,14 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
             )}
             <input ref={fileRef} type="file" accept=".pdf,image/*" className="hidden" onChange={handleFileChange} />
           </div>
+
+          {/* AI debug box — visible status of AI call */}
+          {aiDebug && (
+            <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-700 break-all">
+              <div className="font-sans font-medium text-slate-500 mb-1">AI Status:</div>
+              {aiDebug}
+            </div>
+          )}
 
           {/* AI extraction result banner */}
           {aiResult && !extracting && (
