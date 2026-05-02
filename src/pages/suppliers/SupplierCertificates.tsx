@@ -131,23 +131,40 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
     setExtracting(true);
     setAiDebug(`📤 กำลังเรียก AI... (ขนาดไฟล์ ${(f.size / 1024).toFixed(0)} KB, ประเภท ${f.type})`);
 
-    // 1) Try AI extraction (Gemini vision via Supabase Edge Function)
+    // 1) Try AI extraction (Gemini vision via Supabase Edge Function) — direct fetch
     let aiErrorMsg = '';
     try {
       const file_base64 = await fileToBase64(f);
       console.log('[AI] invoking extract-certificate, mime=', f.type, 'b64 size=', file_base64.length);
       setAiDebug(`📤 ส่งไฟล์ไป AI แล้ว (base64 ${(file_base64.length / 1024).toFixed(0)} KB)... รอ response`);
-      const { data, error } = await supabase.functions.invoke('extract-certificate', {
-        body: { file_base64, mime_type: f.type },
+
+      // Direct fetch so we can see the actual error response body
+      const supaUrl  = import.meta.env.VITE_SUPABASE_URL as string;
+      const supaAnon = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+      const sess = (await supabase.auth.getSession()).data.session;
+      const token = sess?.access_token || supaAnon;
+
+      const resp = await fetch(`${supaUrl}/functions/v1/extract-certificate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'apikey': supaAnon,
+        },
+        body: JSON.stringify({ file_base64, mime_type: f.type }),
       });
 
-      console.log('[AI] response:', { data, error });
-      setAiDebug(`📥 ได้ response แล้ว: ${JSON.stringify({ data, error }).slice(0, 500)}`);
+      const respText = await resp.text();
+      console.log('[AI] HTTP', resp.status, respText);
+      setAiDebug(`📥 HTTP ${resp.status}: ${respText.slice(0, 600)}`);
 
-      if (error) {
-        aiErrorMsg = `ไม่สามารถเรียก AI ได้: ${error.message || JSON.stringify(error)}`;
+      let data: any = null;
+      try { data = JSON.parse(respText); } catch { /* keep raw */ }
+
+      if (!resp.ok) {
+        aiErrorMsg = `AI HTTP ${resp.status}: ${data?.error || data?.detail || respText.slice(0, 200)}`;
       } else if (data?.error) {
-        aiErrorMsg = `AI ตอบ error: ${data.error}${data.detail ? ` (${data.detail})` : ''}`;
+        aiErrorMsg = `AI ตอบ error: ${data.error}${data.detail ? ` — ${String(data.detail).slice(0, 200)}` : ''}`;
       } else if (data) {
         const r = data as AIExtractResult;
         setAiResult(r);
