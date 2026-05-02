@@ -8,8 +8,30 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, FileBadge, Trash2, ExternalLink, AlertTriangle, CheckCircle, Clock, Star, StarOff, Loader2 } from 'lucide-react';
+import { Upload, FileBadge, Trash2, ExternalLink, AlertTriangle, CheckCircle, Clock, Star, StarOff, Loader2, Sparkles } from 'lucide-react';
 import { extractTextFromPDF, extractExpiryDate, certStatus, certStatusLabel, certStatusColor } from '@/lib/pdfExtract';
+
+// File → base64 (no data: prefix)
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+interface AIExtractResult {
+  certificate_type: string | null;
+  certificate_no:   string | null;
+  issued_by:        string | null;
+  issued_date:      string | null;
+  expiry_date:      string | null;
+  confidence:       'high' | 'medium' | 'low';
+  notes:            string;
+}
 
 interface Certificate {
   id: string;
@@ -73,6 +95,7 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [aiResult, setAiResult] = useState<AIExtractResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -98,34 +121,83 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
     const f = e.target.files?.[0];
     if (!f) return;
     setFile(f);
+    setAiResult(null);
 
-    if (f.type === 'application/pdf') {
-      setExtracting(true);
+    const isPdf   = f.type === 'application/pdf';
+    const isImage = f.type.startsWith('image/');
+    if (!isPdf && !isImage) return;
+
+    setExtracting(true);
+
+    // 1) Try AI extraction (Claude vision via Supabase Edge Function)
+    try {
+      const file_base64 = await fileToBase64(f);
+      const { data, error } = await supabase.functions.invoke('extract-certificate', {
+        body: { file_base64, mime_type: f.type },
+      });
+
+      if (!error && data && !data.error) {
+        const r = data as AIExtractResult;
+        setAiResult(r);
+
+        // Auto-fill — but never overwrite a field the user already typed
+        setForm(prev => ({
+          ...prev,
+          certificate_type: prev.certificate_type || r.certificate_type || prev.certificate_type,
+          certificate_no:   prev.certificate_no   || r.certificate_no   || prev.certificate_no,
+          issued_by:        prev.issued_by        || r.issued_by        || prev.issued_by,
+          issued_date:      prev.issued_date      || r.issued_date      || prev.issued_date,
+          expiry_date:      prev.expiry_date      || r.expiry_date      || prev.expiry_date,
+        }));
+
+        const filledCount = ['certificate_type','certificate_no','issued_by','issued_date','expiry_date']
+          .filter(k => (r as any)[k]).length;
+
+        toast({
+          title: `✨ AI กรอกข้อมูลให้ ${filledCount} ช่อง`,
+          description: r.confidence === 'low'
+            ? 'ความมั่นใจต่ำ — กรุณาตรวจสอบและแก้ไขก่อนบันทึก'
+            : 'กรุณาตรวจสอบความถูกต้องก่อนบันทึก',
+        });
+        setExtracting(false);
+        return;
+      }
+
+      // AI failed — fall back to PDF text extraction (legacy path)
+      console.warn('AI extract failed, falling back:', error || data?.error);
+    } catch (err) {
+      console.warn('AI extract threw:', err);
+    }
+
+    // 2) Fallback: client-side PDF text extraction (legacy)
+    if (isPdf) {
       try {
         const text = await extractTextFromPDF(f);
         const date = extractExpiryDate(text);
         if (date) {
           const iso = date.toISOString().split('T')[0];
-          setForm(prev => ({ ...prev, expiry_date: iso }));
-          toast({ title: 'พบวันหมดอายุ', description: `อ่านได้ ${date.toLocaleDateString('th-TH')} — กรุณาตรวจสอบความถูกต้อง` });
+          setForm(prev => ({ ...prev, expiry_date: prev.expiry_date || iso }));
+          toast({ title: 'พบวันหมดอายุ (fallback)', description: `อ่านได้ ${date.toLocaleDateString('th-TH')}` });
         } else {
-          toast({ title: 'ไม่พบวันหมดอายุในเอกสาร', description: 'กรุณากรอกวันหมดอายุด้วยตนเอง', variant: 'destructive' });
+          toast({ title: 'ไม่สามารถอ่านข้อมูลจากเอกสาร', description: 'กรุณากรอกข้อมูลด้วยตนเอง', variant: 'destructive' });
         }
       } catch {
-        toast({ title: 'ไม่สามารถอ่าน PDF ได้', description: 'กรุณากรอกวันหมดอายุด้วยตนเอง', variant: 'destructive' });
-      } finally {
-        setExtracting(false);
+        toast({ title: 'ไม่สามารถอ่านเอกสาร', description: 'กรุณากรอกด้วยตนเอง', variant: 'destructive' });
       }
+    } else {
+      toast({ title: 'ไม่สามารถอ่านข้อมูลจากภาพ', description: 'กรุณากรอกด้วยตนเอง', variant: 'destructive' });
     }
 
-    // Pre-fill name from filename
+    // Filename hint for cert type
     if (!form.certificate_type) {
       const name = f.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ');
       CERT_TYPES.forEach(t => {
         if (name.toUpperCase().includes(t.toUpperCase()))
-          setForm(prev => ({ ...prev, certificate_type: t }));
+          setForm(prev => ({ ...prev, certificate_type: prev.certificate_type || t }));
       });
     }
+
+    setExtracting(false);
   };
 
   const handleSave = async () => {
@@ -230,7 +302,7 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
             <FileBadge className="h-4 w-4" />
             ใบรับรอง ({certs.length})
           </CardTitle>
-          <Button size="sm" onClick={() => { setForm(defaultForm); setFile(null); setOpen(true); }}>
+          <Button size="sm" onClick={() => { setForm(defaultForm); setFile(null); setAiResult(null); setOpen(true); }}>
             <Upload className="h-4 w-4 mr-1" /> เพิ่มใบรับรอง
           </Button>
         </CardHeader>
@@ -331,7 +403,8 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
             {extracting ? (
               <>
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="text-sm text-muted-foreground">กำลังอ่านวันหมดอายุจาก PDF...</p>
+                <p className="text-sm font-medium text-primary">✨ AI กำลังอ่านใบรับรอง...</p>
+                <p className="text-xs text-muted-foreground">กำลังดึงประเภท เลขที่ ผู้ออก และวันหมดอายุ</p>
               </>
             ) : file ? (
               <>
@@ -343,11 +416,32 @@ export default function SupplierCertificates({ supplierId }: { supplierId: strin
               <>
                 <Upload className="h-8 w-8 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">คลิกเพื่ออัปโหลดไฟล์ PDF หรือรูปภาพ</p>
-                <p className="text-xs text-muted-foreground">ระบบจะอ่านวันหมดอายุจาก PDF โดยอัตโนมัติ</p>
+                <p className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-primary" />
+                  AI จะอ่านข้อมูลจากใบรับรองและกรอกฟอร์มให้อัตโนมัติ
+                </p>
               </>
             )}
             <input ref={fileRef} type="file" accept=".pdf,image/*" className="hidden" onChange={handleFileChange} />
           </div>
+
+          {/* AI extraction result banner */}
+          {aiResult && !extracting && (
+            <div className={`rounded-lg border px-3 py-2 text-xs flex items-start gap-2 ${
+              aiResult.confidence === 'high'   ? 'border-emerald-200 bg-emerald-50 text-emerald-800' :
+              aiResult.confidence === 'medium' ? 'border-blue-200 bg-blue-50 text-blue-800' :
+                                                  'border-amber-200 bg-amber-50 text-amber-800'
+            }`}>
+              <Sparkles className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-medium">AI กรอกให้แล้ว</span>
+                <span className="ml-1 text-[10px] uppercase tracking-wide opacity-70">
+                  ความมั่นใจ: {aiResult.confidence === 'high' ? 'สูง' : aiResult.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'}
+                </span>
+                <p className="mt-0.5 opacity-80">กรุณาตรวจสอบทุกช่องและแก้ไขให้ถูกต้องก่อนกดบันทึก{aiResult.notes ? ` — ${aiResult.notes}` : ''}</p>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             {/* Certificate type */}
