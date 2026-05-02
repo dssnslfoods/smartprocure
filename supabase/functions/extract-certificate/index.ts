@@ -1,6 +1,6 @@
-// Extract certificate fields from an uploaded file (PDF or image) using Claude.
+// Extract certificate fields from an uploaded file (PDF or image) using Google Gemini.
 // Body: { file_base64: string, mime_type: string }
-// Returns: { certificate_type, certificate_no, issued_by, issued_date, expiry_date, confidence, raw }
+// Returns: { certificate_type, certificate_no, issued_by, issued_date, expiry_date, confidence, notes }
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
@@ -35,13 +35,15 @@ Type rules:
 
 If the document is clearly NOT a certificate, return all fields null with confidence "low" and a note.`;
 
+const MODEL = "gemini-2.0-flash";  // fast, cheap, supports vision + PDF
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const apiKey = Deno.env.get("GEMINI_API_KEY");
     if (!apiKey) {
-      return json({ error: "ANTHROPIC_API_KEY not configured" }, 500);
+      return json({ error: "GEMINI_API_KEY not configured" }, 500);
     }
 
     const { file_base64, mime_type } = await req.json();
@@ -55,50 +57,40 @@ Deno.serve(async (req) => {
       return json({ error: `unsupported mime_type: ${mime_type}` }, 400);
     }
 
-    // Build content block — Claude accepts both image and document source.base64
-    const contentBlock = isPdf
-      ? {
-          type: "document",
-          source: { type: "base64", media_type: "application/pdf", data: file_base64 },
-        }
-      : {
-          type: "image",
-          source: { type: "base64", media_type: mime_type, data: file_base64 },
-        };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
 
-    const anthRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [
-              contentBlock,
-              { type: "text", text: "Extract the certificate fields. Return ONLY the JSON object." },
-            ],
-          },
+    const reqBody = {
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: mime_type, data: file_base64 } },
+          { text: "Extract the certificate fields. Return ONLY the JSON object." },
         ],
-      }),
+      }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json",
+        maxOutputTokens: 1024,
+      },
+    };
+
+    const gemRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reqBody),
     });
 
-    if (!anthRes.ok) {
-      const errText = await anthRes.text();
-      console.error("Anthropic error:", errText);
+    if (!gemRes.ok) {
+      const errText = await gemRes.text();
+      console.error("Gemini error:", errText);
       return json({ error: "AI extraction failed", detail: errText }, 502);
     }
 
-    const data = await anthRes.json();
-    const text = data?.content?.[0]?.text ?? "";
+    const data = await gemRes.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
-    // Strip any code fences if Claude added them
+    // Strip any code fences if present
     const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
 
     let parsed: Record<string, unknown>;
