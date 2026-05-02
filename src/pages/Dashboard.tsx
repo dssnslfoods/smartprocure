@@ -1,14 +1,27 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import {
   Building2, FileText, Gavel, Award, Clock, Activity,
   ShieldAlert, ShieldX, AlertTriangle, Trophy, BarChart2, TrendingDown,
+  ExternalLink, FileBadge,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from '@/i18n';
+
+interface ExpiredCertRow {
+  cert_id:          string;
+  supplier_id:      string;
+  company_name:     string;
+  certificate_type: string;
+  certificate_no:   string | null;
+  expiry_date:      string;
+  daysOverdue:      number;
+}
 
 interface KPIData {
   totalSuppliers: number;
@@ -17,6 +30,7 @@ interface KPIData {
   highRiskSuppliers: number;
   criticalRiskSuppliers: number;
   expiredCerts: number;
+  expiredCertList: ExpiredCertRow[];
   openRfqs: number;
   draftRfqs: number;
   pendingBidReview: number;
@@ -37,6 +51,7 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const [kpi, setKpi] = useState<KPIData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expiredOpen, setExpiredOpen] = useState(false);
 
   useEffect(() => {
     const fetchKPIs = async () => {
@@ -61,6 +76,28 @@ export default function Dashboard() {
           supabase.from('quotations').select('discount').not('discount', 'is', null).gt('discount', 0),
         ]);
 
+        // Pull expired certificates with supplier names — joins supplier_certificates with suppliers
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const expiredCertsRes = await supabase
+          .from('supplier_certificates')
+          .select('id, supplier_id, certificate_type, certificate_no, expiry_date, suppliers(company_name)')
+          .lt('expiry_date', todayIso)
+          .order('expiry_date', { ascending: true });
+
+        const expiredCertList: ExpiredCertRow[] = (expiredCertsRes.data || []).map((c: any) => {
+          const expiry = new Date(c.expiry_date);
+          const daysOverdue = Math.floor((Date.now() - expiry.getTime()) / 86400000);
+          return {
+            cert_id:          c.id,
+            supplier_id:      c.supplier_id,
+            company_name:     c.suppliers?.company_name || '(ไม่ระบุชื่อบริษัท)',
+            certificate_type: c.certificate_type,
+            certificate_no:   c.certificate_no,
+            expiry_date:      c.expiry_date,
+            daysOverdue,
+          };
+        });
+
         const suppliers = suppliersRes.data || [];
         const rfqs = rfqRes.data || [];
         const bids = biddingRes.data || [];
@@ -72,7 +109,9 @@ export default function Dashboard() {
         const now = new Date().toISOString();
         const highRiskSuppliers = suppliers.filter((s: any) => s.risk_level === 'high').length;
         const criticalRiskSuppliers = suppliers.filter((s: any) => s.risk_level === 'critical').length;
-        const expiredCerts = suppliers.filter((s: any) => s.certificate_expiry_date && s.certificate_expiry_date < now).length;
+        // Count unique suppliers that have at least one expired cert (more meaningful than total certs)
+        const expiredSupplierIds = new Set(expiredCertList.map(c => c.supplier_id));
+        const expiredCerts = expiredSupplierIds.size;
 
         // Awards to high/critical risk — computed from awards data
         const awardsToHighRisk = awards.filter((a: any) => {
@@ -112,6 +151,7 @@ export default function Dashboard() {
           highRiskSuppliers,
           criticalRiskSuppliers,
           expiredCerts,
+          expiredCertList,
           openRfqs: rfqs.filter((r: any) => r.status === 'published').length,
           draftRfqs: rfqs.filter((r: any) => r.status === 'draft').length,
           pendingBidReview: rfqs.filter((r: any) => r.status === 'closed' || r.workflow_status === 'under_evaluation').length,
@@ -251,14 +291,21 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="cursor-pointer hover:shadow-md transition-shadow border-amber-200" onClick={() => navigate('/suppliers')}>
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow border-amber-200"
+          onClick={() => setExpiredOpen(true)}
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">{t('dashboard.expiredCerts')}</CardTitle>
             <AlertTriangle className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{stat(kpi?.expiredCerts)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{t('dashboard.expiredSub')}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {kpi && kpi.expiredCertList.length > 0
+                ? `${kpi.expiredCertList.length} ใบรับรอง · คลิกเพื่อดูรายการ`
+                : t('dashboard.expiredSub')}
+            </p>
           </CardContent>
         </Card>
 
@@ -362,6 +409,86 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Expired Certificates Dialog */}
+      <Dialog open={expiredOpen} onOpenChange={setExpiredOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              ใบรับรองที่หมดอายุ
+            </DialogTitle>
+            <DialogDescription>
+              {kpi && kpi.expiredCertList.length > 0
+                ? `พบ ${kpi.expiredCertList.length} ใบรับรองจาก ${kpi.expiredCerts} บริษัท ที่หมดอายุแล้ว — ต้องดำเนินการต่ออายุก่อนทำธุรกรรม`
+                : 'ไม่พบใบรับรองที่หมดอายุ'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {kpi && kpi.expiredCertList.length > 0 ? (
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background border-b z-10">
+                  <tr className="text-muted-foreground text-xs">
+                    <th className="text-left p-2 font-medium">บริษัท</th>
+                    <th className="text-left p-2 font-medium">ประเภท</th>
+                    <th className="text-left p-2 font-medium">เลขที่</th>
+                    <th className="text-left p-2 font-medium">หมดอายุ</th>
+                    <th className="text-right p-2 font-medium">เกินกำหนด</th>
+                    <th className="p-2 font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kpi.expiredCertList.map((c) => (
+                    <tr key={c.cert_id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="p-2 font-medium">{c.company_name}</td>
+                      <td className="p-2">
+                        <Badge variant="secondary" className="font-mono text-[10px]">
+                          {c.certificate_type}
+                        </Badge>
+                      </td>
+                      <td className="p-2 text-muted-foreground font-mono text-xs">
+                        {c.certificate_no || '—'}
+                      </td>
+                      <td className="p-2 text-red-700 font-medium">
+                        {new Date(c.expiry_date).toLocaleDateString('th-TH')}
+                      </td>
+                      <td className="p-2 text-right">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          c.daysOverdue > 90 ? 'bg-red-100 text-red-700' :
+                          c.daysOverdue > 30 ? 'bg-amber-100 text-amber-700' :
+                                               'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {c.daysOverdue} วัน
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setExpiredOpen(false);
+                            navigate(`/suppliers/${c.supplier_id}`);
+                          }}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          เปิด
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <FileBadge className="h-10 w-10 mb-2 opacity-30" />
+              <p className="text-sm">ไม่พบใบรับรองที่หมดอายุ</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
