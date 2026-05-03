@@ -382,19 +382,17 @@ export default function PriceListDetail() {
     try {
       const result = await importQuotationFromExcel(file);
 
-      // GUARD 1: supplier role can only import their own checklist
-      if (isSupplier && result.meta.supplierId && mySupplierId &&
-          result.meta.supplierId !== mySupplierId) {
+      // GUARD 0: file must contain machine-readable Supplier ID (newer export format)
+      if (!result.meta.supplierId) {
         toast.error(
-          `ไม่สามารถ import ไฟล์นี้ได้ — ไฟล์ออกให้ "${result.meta.supplierName || 'supplier อื่น'}" ` +
-          `แต่บัญชีที่ login เป็นของ supplier อื่น กรุณาใช้ไฟล์ที่ออกให้บัญชีของท่านเอง`,
+          'ไฟล์นี้เป็นรูปแบบเก่าที่ไม่มี Supplier ID — กรุณา Export Checklist ใหม่จากระบบล่าสุด',
           { duration: 8000 }
         );
         setImportPreview(null);
         return;
       }
 
-      // GUARD 2: catalog ID must match the catalog being viewed
+      // GUARD 1: catalog ID must match the catalog being viewed
       if (result.meta.catalogId && id && result.meta.catalogId !== id) {
         toast.error(
           `ไฟล์นี้ออกให้ catalog อื่น — กรุณาเปิด catalog ที่ตรงกันก่อน import`,
@@ -404,18 +402,62 @@ export default function PriceListDetail() {
         return;
       }
 
-      // GUARD 3 (warning only): if procurement chose a target supplier and file is for someone else
-      if (!isSupplier && targetSupplierId && result.meta.supplierId &&
-          targetSupplierId !== result.meta.supplierId) {
+      // GUARD 2: lookup supplier in DB by ID — verifies the supplier still exists and gets the
+      // *authoritative* name. The visible "Supplier" cell may have been hand-edited; the hidden
+      // Supplier ID is harder to tamper with by accident.
+      const { data: dbSupplier, error: lookupErr } = await supabase
+        .from('suppliers')
+        .select('id, company_name, status')
+        .eq('id', result.meta.supplierId)
+        .maybeSingle();
+
+      if (lookupErr || !dbSupplier) {
+        toast.error(
+          `ไม่พบ supplier ในระบบ — Supplier ID ในไฟล์ไม่ตรงกับฐานข้อมูล (อาจถูกแก้ไขหรือถูกลบ)`,
+          { duration: 8000 }
+        );
+        setImportPreview(null);
+        return;
+      }
+
+      // GUARD 3: name in file must match name in DB — catches tampering with the visible name cell
+      if (result.meta.supplierName &&
+          result.meta.supplierName.trim() !== dbSupplier.company_name.trim()) {
+        toast.error(
+          `ไฟล์ถูกแก้ไข — ชื่อ supplier ในไฟล์ ("${result.meta.supplierName}") ` +
+          `ไม่ตรงกับชื่อจริงในระบบ ("${dbSupplier.company_name}") ` +
+          `กรุณาใช้ไฟล์ต้นฉบับโดยไม่แก้ไข`,
+          { duration: 10000 }
+        );
+        setImportPreview(null);
+        return;
+      }
+
+      // GUARD 4: supplier role can only import their own checklist
+      if (isSupplier && mySupplierId && result.meta.supplierId !== mySupplierId) {
+        toast.error(
+          `ไม่สามารถ import ไฟล์นี้ได้ — ไฟล์ออกให้ "${dbSupplier.company_name}" ` +
+          `แต่บัญชีที่ login เป็นของ supplier อื่น กรุณาใช้ไฟล์ที่ออกให้บัญชีของท่านเอง`,
+          { duration: 8000 }
+        );
+        setImportPreview(null);
+        return;
+      }
+
+      // GUARD 5 (warning only): procurement picked dropdown supplier ≠ file supplier
+      if (!isSupplier && targetSupplierId && targetSupplierId !== result.meta.supplierId) {
         toast.warning(
-          `ไฟล์นี้ออกให้ "${result.meta.supplierName}" — ระบบจะ import เข้า supplier นี้แทน supplier ที่เลือกไว้ใน dropdown`,
+          `ไฟล์นี้ออกให้ "${dbSupplier.company_name}" — ระบบจะ import เข้า supplier นี้แทน supplier ที่เลือกไว้ใน dropdown`,
           { duration: 6000 }
         );
       }
 
+      // Use DB name as authoritative for downstream display
+      result.meta.supplierName = dbSupplier.company_name;
+
       setImportPreview(result);
       if (result.errors.length > 0) toast.warning(`พบ ${result.errors.length} ข้อผิดพลาด`);
-      else toast.success(`อ่านไฟล์สำเร็จ ${result.rows.length} รายการ — ${result.meta.supplierName || 'ไม่ระบุ supplier'}`);
+      else toast.success(`อ่านไฟล์สำเร็จ ${result.rows.length} รายการ — ${dbSupplier.company_name}`);
     } catch (e: any) {
       toast.error('อ่านไฟล์ไม่สำเร็จ: ' + (e.message || e));
     }
