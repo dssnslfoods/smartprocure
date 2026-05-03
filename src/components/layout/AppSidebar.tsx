@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, FileText, Send, Gavel, ClipboardList,
   Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
-  UserCheck, Briefcase, ShieldAlert, Languages,
+  UserCheck, Briefcase, ShieldAlert, Languages, AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState } from 'react';
@@ -20,6 +20,7 @@ export default function AppSidebar() {
     { icon: Briefcase,       label: t('nav.supplierPortal'),    path: '/supplier-portal',          roles: ['supplier'] },
     { icon: Building2,       label: t('nav.suppliers'),         path: '/suppliers',                roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
     { icon: ShieldAlert,     label: t('nav.vendorRisk'),        path: '/vendor-risk',              roles: ['admin', 'procurement_officer', 'approver'] },
+    { icon: AlertTriangle,   label: 'NCR',                       path: '/ncrs',                     roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'] },
     { icon: FileText,        label: t('nav.priceLists'),        path: '/price-lists',              roles: ['admin', 'procurement_officer', 'supplier'] },
     { icon: Send,            label: t('nav.rfq'),               path: '/rfq',                     roles: ['admin', 'procurement_officer', 'supplier'] },
     { icon: Gavel,           label: t('nav.eBidding'),          path: '/bidding',                 roles: ['admin', 'procurement_officer', 'supplier'] },

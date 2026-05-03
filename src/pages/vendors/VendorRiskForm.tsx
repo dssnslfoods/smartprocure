@@ -41,7 +41,7 @@ export default function VendorRiskForm() {
   useEffect(() => {
     const fetch = async () => {
       if (!supplierId) return;
-      const [supRes, asmRes] = await Promise.all([
+      const [supRes, asmRes, ncrScoreRes] = await Promise.all([
         supabase.from('suppliers').select('*').eq('id', supplierId).single(),
         supabase.from('supplier_risk_assessments')
           .select('*')
@@ -49,6 +49,8 @@ export default function VendorRiskForm() {
           .order('assessed_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
+        // Auto-compute NCR risk from actual NCR history (RPC bypasses RLS)
+        supabase.rpc('compute_ncr_risk_score', { p_supplier_id: supplierId }),
       ]);
       if (supRes.data) setSupplier(supRes.data);
       if (asmRes.data) {
@@ -57,8 +59,16 @@ export default function VendorRiskForm() {
         for (const f of RISK_FACTORS) {
           s[f.key] = (asmRes.data as any)[f.key] ?? 0;
         }
+        // Always overwrite ncr_history_risk with the live computed value —
+        // it's data-driven, not a manual judgment.
+        const ncrScore = Number(ncrScoreRes.data ?? 0);
+        s.ncr_history_risk = ncrScore;
         setScores(s);
         setNotes(asmRes.data.notes ?? '');
+      } else {
+        // Even on a fresh assessment, pre-fill NCR from history.
+        const ncrScore = Number(ncrScoreRes.data ?? 0);
+        setScores(prev => ({ ...prev, ncr_history_risk: ncrScore }));
       }
       setLoading(false);
     };

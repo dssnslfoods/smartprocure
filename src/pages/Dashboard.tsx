@@ -30,6 +30,9 @@ interface KPIData {
   highRiskSuppliers: number;
   criticalRiskSuppliers: number;
   expiredCerts: number;
+  openNcrs: number;
+  overdueNcrs: number;
+  criticalNcrs: number;
   expiredCertList: ExpiredCertRow[];
   openRfqs: number;
   draftRfqs: number;
@@ -79,6 +82,14 @@ export default function Dashboard() {
           supabase.from('bidding_events').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(3),
           supabase.from('quotations').select('discount').not('discount', 'is', null).gt('discount', 0),
         ]);
+
+        // Pull NCR aggregate stats — supplier risk-history signal
+        const cutoff30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+        const ncrRes = await supabase.from('supplier_ncrs').select('id, status, severity, detected_date');
+        const ncrRows = ncrRes.data || [];
+        const openNcrs     = ncrRows.filter((r: any) => r.status === 'open' || r.status === 'in_progress').length;
+        const overdueNcrs  = ncrRows.filter((r: any) => (r.status === 'open' || r.status === 'in_progress') && r.detected_date < cutoff30).length;
+        const criticalNcrs = ncrRows.filter((r: any) => r.severity === 'critical' && (r.status === 'open' || r.status === 'in_progress')).length;
 
         // Pull expired certificates with supplier names — joins supplier_certificates with suppliers
         const todayIso = new Date().toISOString().slice(0, 10);
@@ -156,6 +167,9 @@ export default function Dashboard() {
           criticalRiskSuppliers,
           expiredCerts,
           expiredCertList,
+          openNcrs,
+          overdueNcrs,
+          criticalNcrs,
           openRfqs: rfqs.filter((r: any) => r.status === 'published').length,
           draftRfqs: rfqs.filter((r: any) => r.status === 'draft').length,
           pendingBidReview: rfqs.filter((r: any) => r.status === 'closed' || r.workflow_status === 'under_evaluation').length,
@@ -326,6 +340,40 @@ export default function Dashboard() {
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">{stat(kpi?.awardsToHighRisk)}</div>
             <p className="text-xs text-muted-foreground mt-1">{t('dashboard.awardsHighRiskSub')}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* NCR row — non-conformance signal */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-blue-200" onClick={() => navigate('/ncrs')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">NCR ที่เปิดอยู่</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-blue-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{stat(kpi?.openNcrs)}</div>
+            <p className="text-xs text-muted-foreground mt-1">รวมที่ยังไม่ปิด CAPA</p>
+          </CardContent>
+        </Card>
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-amber-200" onClick={() => navigate('/ncrs')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">NCR ค้างเกิน 30 วัน</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-600">{stat(kpi?.overdueNcrs)}</div>
+            <p className="text-xs text-muted-foreground mt-1">CAPA ยังไม่ปิดเกินกำหนด</p>
+          </CardContent>
+        </Card>
+        <Card className="cursor-pointer hover:shadow-md transition-shadow border-red-200" onClick={() => navigate('/ncrs')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">NCR ระดับ Critical</CardTitle>
+            <ShieldX className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{stat(kpi?.criticalNcrs)}</div>
+            <p className="text-xs text-muted-foreground mt-1">ต้องตอบสนองทันที</p>
           </CardContent>
         </Card>
       </div>

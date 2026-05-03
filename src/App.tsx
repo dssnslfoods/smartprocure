@@ -28,6 +28,8 @@ import BiddingDetail from "@/pages/bidding/BiddingDetail";
 import FinalQuotationsPage from "@/pages/quotations/FinalQuotationsPage";
 import AwardsPage from "@/pages/awards/AwardsPage";
 import ReportsPage from "@/pages/reports/ReportsPage";
+import NCRListPage from "@/pages/ncrs/NCRListPage";
+import NCRDetailPage from "@/pages/ncrs/NCRDetailPage";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import SupplierApprovalPage from "@/pages/admin/SupplierApprovalPage";
 import VendorRiskPage from "@/pages/vendors/VendorRiskPage";
@@ -96,6 +98,8 @@ const App = () => (
               <Route path="/bidding/:id" element={<BiddingDetail />} />
               <Route path="/final-quotations" element={<FinalQuotationsPage />} />
               <Route path="/awards" element={<AwardsPage />} />
+              <Route path="/ncrs" element={<NCRListPage />} />
+              <Route path="/ncrs/:id" element={<NCRDetailPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/admin" element={
                 <ProtectedRoute allowedRoles={['admin']}>
