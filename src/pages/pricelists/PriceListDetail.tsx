@@ -402,6 +402,24 @@ export default function PriceListDetail() {
         return;
       }
 
+      // Helper: tamper check across BOTH visible and hidden supplier name cells
+      const checkTamper = (canonicalName: string): string | null => {
+        const hidden  = (result.meta.supplierName        || '').trim();
+        const visible = (result.meta.supplierNameVisible || '').trim();
+        const ref     = canonicalName.trim();
+        if (hidden && hidden !== ref) {
+          return `ชื่อใน hidden row ("${hidden}") ไม่ตรงกับชื่อจริง ("${ref}")`;
+        }
+        if (visible && visible !== ref) {
+          return `ช่อง Supplier ในไฟล์ ("${visible}") ถูกแก้ไข — ของจริงคือ "${ref}"`;
+        }
+        // Both must agree if both present
+        if (hidden && visible && hidden !== visible) {
+          return `ค่าในไฟล์ไม่สอดคล้องกัน (hidden="${hidden}", visible="${visible}")`;
+        }
+        return null;
+      };
+
       // SUPPLIER ROLE PATH: validate using mySupplierId from profile (suppliers table RLS
       // blocks read for supplier role, so we cannot fetch the row directly).
       if (isSupplier) {
@@ -419,16 +437,14 @@ export default function PriceListDetail() {
           setImportPreview(null);
           return;
         }
-        // Supplier name in file should match the supplier's own profile name (loose check)
-        if (profile?.full_name && result.meta.supplierName &&
-            result.meta.supplierName.trim() !== profile.full_name.trim()) {
-          toast.error(
-            `ไฟล์ถูกแก้ไข — ชื่อในไฟล์ ("${result.meta.supplierName}") ` +
-            `ไม่ตรงกับชื่อบัญชีของท่าน ("${profile.full_name}") กรุณาใช้ไฟล์ต้นฉบับ`,
-            { duration: 10000 }
-          );
-          setImportPreview(null);
-          return;
+        // Tamper check using the supplier's own profile name as reference
+        if (profile?.full_name) {
+          const err = checkTamper(profile.full_name);
+          if (err) {
+            toast.error(`ไฟล์ถูกแก้ไข — ${err} กรุณาใช้ไฟล์ต้นฉบับ`, { duration: 10000 });
+            setImportPreview(null);
+            return;
+          }
         }
 
         setImportPreview(result);
@@ -453,15 +469,10 @@ export default function PriceListDetail() {
         return;
       }
 
-      // Name in file must match DB — catches tampering with the visible name cell
-      if (result.meta.supplierName &&
-          result.meta.supplierName.trim() !== dbSupplier.company_name.trim()) {
-        toast.error(
-          `ไฟล์ถูกแก้ไข — ชื่อ supplier ในไฟล์ ("${result.meta.supplierName}") ` +
-          `ไม่ตรงกับชื่อจริงในระบบ ("${dbSupplier.company_name}") ` +
-          `กรุณาใช้ไฟล์ต้นฉบับโดยไม่แก้ไข`,
-          { duration: 10000 }
-        );
+      // Tamper check: BOTH visible and hidden cells must match DB company_name
+      const tamperErr = checkTamper(dbSupplier.company_name);
+      if (tamperErr) {
+        toast.error(`ไฟล์ถูกแก้ไข — ${tamperErr} กรุณาใช้ไฟล์ต้นฉบับโดยไม่แก้ไข`, { duration: 10000 });
         setImportPreview(null);
         return;
       }

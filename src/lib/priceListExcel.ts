@@ -475,10 +475,11 @@ export interface ImportResult {
   rows:   ImportedQuoteRow[];
   errors: { row: number; message: string }[];
   meta:   {
-    catalogId?:    string;
-    rfqNumber?:    string;
-    supplierId?:   string;
-    supplierName?: string;
+    catalogId?:           string;
+    rfqNumber?:           string;
+    supplierId?:          string;
+    supplierName?:        string;  // canonical (prefers hidden Supplier Name)
+    supplierNameVisible?: string;  // raw value from visible "Supplier" cell — for tamper check
   };
 }
 
@@ -487,19 +488,25 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
   const wb  = XLSX.read(buf);
   const result: ImportResult = { rows: [], errors: [], meta: {} };
 
-  // Pull metadata from Cover sheet (catalog/supplier IDs are in hidden rows for validation)
+  // Pull metadata from Cover sheet (catalog/supplier IDs are in hidden rows for validation).
+  // We capture BOTH the visible "Supplier" cell AND the hidden "Supplier Name" cell so
+  // tampering with either can be detected downstream.
   const cover = wb.Sheets['Cover'];
   if (cover) {
     const grid = XLSX.utils.sheet_to_json<unknown[]>(cover, { header: 1, blankrows: false }) as unknown[][];
     grid.forEach(r => {
       const k = String(r?.[0] || '').trim();
       const v = String(r?.[1] || '').trim();
-      if (k === 'Catalog ID')    result.meta.catalogId    = v;
-      if (k === 'RFQ No.')       result.meta.rfqNumber    = v === '—' ? '' : v;
-      if (k === 'Supplier ID')   result.meta.supplierId   = v;
-      if (k === 'Supplier Name') result.meta.supplierName = v;
-      if (k === 'Supplier' && !result.meta.supplierName) result.meta.supplierName = v;
+      if (k === 'Catalog ID')    result.meta.catalogId           = v;
+      if (k === 'RFQ No.')       result.meta.rfqNumber           = v === '—' ? '' : v;
+      if (k === 'Supplier ID')   result.meta.supplierId          = v;
+      if (k === 'Supplier Name') result.meta.supplierName        = v; // hidden, canonical
+      if (k === 'Supplier')      result.meta.supplierNameVisible = v; // visible, user-edited risk
     });
+    // Fallback: if hidden row missing (very old export), use visible
+    if (!result.meta.supplierName && result.meta.supplierNameVisible) {
+      result.meta.supplierName = result.meta.supplierNameVisible;
+    }
   }
 
   const ws = wb.Sheets['Checklist'];
