@@ -222,49 +222,80 @@ export default function PriceListDetail() {
         return next;
       }
 
-      // Block selecting a nominated item whose supplier conflicts with already-selected nominated items
-      if (it.is_nominated && it.designated_supplier_id) {
-        for (const other of items) {
-          if (
-            next.has(other.id) &&
-            other.is_nominated &&
-            other.designated_supplier_id &&
-            other.designated_supplier_id !== it.designated_supplier_id
-          ) {
-            toast.error(
-              `ไม่สามารถเลือกพร้อมกันได้ — รายการนี้ Nominated ให้ "${it.designated_supplier_name}" ` +
-              `แต่มีรายการที่ Nominated ให้ "${other.designated_supplier_name}" ถูกเลือกอยู่`
-            );
-            return prev;
-          }
+      // Identify supplier-lock state of CURRENT selection (before adding `it`)
+      let lockedNomSupplierId: string | null = null;
+      let lockedNomSupplierName = '';
+      let hasOpenSelected = false;
+      for (const other of items) {
+        if (!next.has(other.id)) continue;
+        if (other.is_nominated && other.designated_supplier_id) {
+          lockedNomSupplierId   = other.designated_supplier_id;
+          lockedNomSupplierName = other.designated_supplier_name || '';
+        } else {
+          hasOpenSelected = true;
         }
       }
+
+      // Case 1: incoming item is Nominated
+      if (it.is_nominated && it.designated_supplier_id) {
+        // Cannot mix with Open items
+        if (hasOpenSelected) {
+          toast.error(
+            `ไม่สามารถเลือกพร้อมกันได้ — รายการ Nominated "${it.designated_supplier_name}" ` +
+            `ต้องส่งแยกจากรายการ Open (กรุณายกเลิกการเลือกรายการ Open ก่อน)`
+          );
+          return prev;
+        }
+        // Cannot mix with Nominated of a DIFFERENT supplier
+        if (lockedNomSupplierId && lockedNomSupplierId !== it.designated_supplier_id) {
+          toast.error(
+            `ไม่สามารถเลือกพร้อมกันได้ — รายการนี้ Nominated ให้ "${it.designated_supplier_name}" ` +
+            `แต่มีรายการที่ Nominated ให้ "${lockedNomSupplierName}" ถูกเลือกอยู่`
+          );
+          return prev;
+        }
+      }
+      // Case 2: incoming item is Open — cannot mix with any Nominated
+      else {
+        if (lockedNomSupplierId) {
+          toast.error(
+            `ไม่สามารถเลือกพร้อมกันได้ — มีรายการ Nominated ที่เลือกอยู่ ` +
+            `(ส่งให้ "${lockedNomSupplierName}") ต้องส่งแยกจากรายการ Open`
+          );
+          return prev;
+        }
+      }
+
       next.add(itId);
       return next;
     });
   };
 
   const toggleAll = () => {
-    // Determine current locked supplier from already-selected items so toggle-all stays consistent
-    let lockedId: string | null = null;
+    // Determine current selection mode: locked-nominated, open-only, or empty
+    let lockedNomId: string | null = null;
+    let hasOpenSelected = false;
     for (const it of items) {
-      if (selected.has(it.id) && it.is_nominated && it.designated_supplier_id) {
-        if (lockedId && lockedId !== it.designated_supplier_id) { lockedId = null; break; }
-        lockedId = it.designated_supplier_id;
-      }
+      if (!selected.has(it.id)) continue;
+      if (it.is_nominated && it.designated_supplier_id) lockedNomId = it.designated_supplier_id;
+      else hasOpenSelected = true;
     }
 
-    // Eligible = canSelect AND (not nominated OR designated to lockedId/the first nominated supplier we encounter)
     const candidates = visibleItems.filter(canSelect);
-    let pivotId = lockedId;
-    const eligible: string[] = [];
-    for (const it of candidates) {
-      if (!it.is_nominated || !it.designated_supplier_id) {
-        eligible.push(it.id);
-        continue;
-      }
-      if (!pivotId) pivotId = it.designated_supplier_id;
-      if (it.designated_supplier_id === pivotId) eligible.push(it.id);
+    let eligible: string[] = [];
+
+    if (lockedNomId) {
+      // Locked to a nominated supplier — only items nominated to that same supplier
+      eligible = candidates
+        .filter(it => it.is_nominated && it.designated_supplier_id === lockedNomId)
+        .map(it => it.id);
+    } else if (hasOpenSelected) {
+      // Open mode — only non-nominated items
+      eligible = candidates.filter(it => !it.is_nominated).map(it => it.id);
+    } else {
+      // Empty selection — default to selecting all OPEN items
+      // (User must explicitly tick a Nominated item to switch into nominated mode.)
+      eligible = candidates.filter(it => !it.is_nominated).map(it => it.id);
     }
 
     if (eligible.every(eid => selected.has(eid))) {
