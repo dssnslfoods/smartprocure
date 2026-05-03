@@ -18,6 +18,7 @@ import SupplierDetail from "@/pages/suppliers/SupplierDetail";
 import SupplierEdit from "@/pages/suppliers/SupplierEdit";
 import PriceListPage from "@/pages/pricelists/PriceListPage";
 import PriceListDetail from "@/pages/pricelists/PriceListDetail";
+import QuotationSearch from "@/pages/pricelists/QuotationSearch";
 import RFQList from "@/pages/rfq/RFQList";
 import RFQForm from "@/pages/rfq/RFQForm";
 import RFQDetail from "@/pages/rfq/RFQDetail";
@@ -83,6 +84,7 @@ const App = () => (
               <Route path="/suppliers/:id" element={<SupplierDetail />} />
               <Route path="/suppliers/:id/edit" element={<SupplierEdit />} />
               <Route path="/price-lists" element={<PriceListPage />} />
+              <Route path="/price-lists/quotation-history" element={<QuotationSearch />} />
               <Route path="/price-lists/:id" element={<PriceListDetail />} />
               <Route path="/rfq" element={<RFQList />} />
               <Route path="/rfq/new" element={<RFQForm />} />

@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   ArrowLeft, Search, Pin, FileSpreadsheet, Upload, Lock, AlertCircle,
   CheckCircle2, Download, ChevronDown, ChevronRight, Gavel, Save, Calculator,
-  Clock, AlertTriangle,
+  Clock, AlertTriangle, History,
 } from 'lucide-react';
+import QuotationHistoryDialog from '@/components/QuotationHistoryDialog';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
 import { supabase } from '@/integrations/supabase/client';
@@ -93,6 +94,7 @@ export default function PriceListDetail() {
   const [filterMode, setFilterMode] = useState<'all' | 'nominated' | 'open' | 'mine' | 'no_offers'>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [historyItem, setHistoryItem] = useState<{ id: string; name: string; code: string | null; unit: string | null } | null>(null);
 
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [targetSupplierId, setTargetSupplierId] = useState<string>('');
@@ -695,6 +697,18 @@ export default function PriceListDetail() {
                             <span className="font-mono text-xs text-muted-foreground">{it.item_code || '—'}</span>
                             {it.is_nominated && <Lock className="h-3 w-3 text-amber-700" />}
                             <span className="font-medium">{it.item_name}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setHistoryItem({ id: it.id, name: it.item_name, code: it.item_code, unit: it.unit });
+                              }}
+                              title="ดูประวัติราคาและกราฟ trend"
+                              className="ml-1 inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-colors"
+                            >
+                              <History className="h-3 w-3" />
+                              ประวัติ
+                            </button>
                           </div>
                           {it.description && <div className="text-xs text-muted-foreground line-clamp-1">{it.description}</div>}
                         </td>
@@ -951,6 +965,18 @@ export default function PriceListDetail() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Quotation history dialog */}
+      {historyItem && (
+        <QuotationHistoryDialog
+          open={!!historyItem}
+          onClose={() => setHistoryItem(null)}
+          itemId={historyItem.id}
+          itemName={historyItem.name}
+          itemCode={historyItem.code}
+          unit={historyItem.unit}
+        />
       )}
     </div>
   );

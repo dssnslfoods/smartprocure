@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin } from 'lucide-react';
+import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { CATEGORY_LABELS, CATEGORY_COLORS, type PriceListCategory } from '@/lib/priceListConstants';
 import { useAuth } from '@/contexts/AuthContext';
@@ -89,13 +89,21 @@ export default function PriceListPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Master Catalog</h1>
           <p className="text-sm text-muted-foreground">
             Catalog กลางของ NSL Foods PLC — แยกตามหมวดสินค้า ใช้สำหรับสร้าง Checklist เพื่อขอใบเสนอราคา
           </p>
         </div>
+        {!isSupplier && (
+          <Link to="/price-lists/quotation-history">
+            <Button variant="outline" className="shrink-0">
+              <History className="h-4 w-4 mr-2" />
+              ประวัติใบเสนอราคา
+            </Button>
+          </Link>
+        )}
       </div>
 
       {loading ? (
