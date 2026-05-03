@@ -238,33 +238,38 @@ export default function PriceListDetail() {
         }
       }
 
-      // Case 1: incoming item is Nominated
-      if (it.is_nominated && it.designated_supplier_id) {
-        // Cannot mix with Open items
-        if (hasOpenSelected) {
-          toast.error(
-            `ไม่สามารถเลือกพร้อมกันได้ — รายการ Nominated "${it.designated_supplier_name}" ` +
-            `ต้องส่งแยกจากรายการ Open (กรุณายกเลิกการเลือกรายการ Open ก่อน)`
-          );
-          return prev;
+      // Supplier role: everything in the selection ultimately goes to the logged-in
+      // supplier (themselves). Allow free mixing of nominated-to-me items with open items
+      // in a single Excel checklist. canSelect() already blocks items nominated to OTHER suppliers.
+      if (!isSupplier) {
+        // Case 1: incoming item is Nominated
+        if (it.is_nominated && it.designated_supplier_id) {
+          // Cannot mix with Open items
+          if (hasOpenSelected) {
+            toast.error(
+              `ไม่สามารถเลือกพร้อมกันได้ — รายการ Nominated "${it.designated_supplier_name}" ` +
+              `ต้องส่งแยกจากรายการ Open (กรุณายกเลิกการเลือกรายการ Open ก่อน)`
+            );
+            return prev;
+          }
+          // Cannot mix with Nominated of a DIFFERENT supplier
+          if (lockedNomSupplierId && lockedNomSupplierId !== it.designated_supplier_id) {
+            toast.error(
+              `ไม่สามารถเลือกพร้อมกันได้ — รายการนี้ Nominated ให้ "${it.designated_supplier_name}" ` +
+              `แต่มีรายการที่ Nominated ให้ "${lockedNomSupplierName}" ถูกเลือกอยู่`
+            );
+            return prev;
+          }
         }
-        // Cannot mix with Nominated of a DIFFERENT supplier
-        if (lockedNomSupplierId && lockedNomSupplierId !== it.designated_supplier_id) {
-          toast.error(
-            `ไม่สามารถเลือกพร้อมกันได้ — รายการนี้ Nominated ให้ "${it.designated_supplier_name}" ` +
-            `แต่มีรายการที่ Nominated ให้ "${lockedNomSupplierName}" ถูกเลือกอยู่`
-          );
-          return prev;
-        }
-      }
-      // Case 2: incoming item is Open — cannot mix with any Nominated
-      else {
-        if (lockedNomSupplierId) {
-          toast.error(
-            `ไม่สามารถเลือกพร้อมกันได้ — มีรายการ Nominated ที่เลือกอยู่ ` +
-            `(ส่งให้ "${lockedNomSupplierName}") ต้องส่งแยกจากรายการ Open`
-          );
-          return prev;
+        // Case 2: incoming item is Open — cannot mix with any Nominated
+        else {
+          if (lockedNomSupplierId) {
+            toast.error(
+              `ไม่สามารถเลือกพร้อมกันได้ — มีรายการ Nominated ที่เลือกอยู่ ` +
+              `(ส่งให้ "${lockedNomSupplierName}") ต้องส่งแยกจากรายการ Open`
+            );
+            return prev;
+          }
         }
       }
 
@@ -286,7 +291,11 @@ export default function PriceListDetail() {
     const candidates = visibleItems.filter(canSelect);
     let eligible: string[] = [];
 
-    if (lockedNomId) {
+    if (isSupplier) {
+      // Supplier role: one supplier (themselves) is the recipient. They can mix
+      // nominated-to-me items with open items in a single checklist.
+      eligible = candidates.map(it => it.id);
+    } else if (lockedNomId) {
       // Locked to a nominated supplier — only items nominated to that same supplier
       eligible = candidates
         .filter(it => it.is_nominated && it.designated_supplier_id === lockedNomId)
