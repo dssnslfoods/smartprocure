@@ -381,9 +381,41 @@ export default function PriceListDetail() {
   const handleImport = async (file: File) => {
     try {
       const result = await importQuotationFromExcel(file);
+
+      // GUARD 1: supplier role can only import their own checklist
+      if (isSupplier && result.meta.supplierId && mySupplierId &&
+          result.meta.supplierId !== mySupplierId) {
+        toast.error(
+          `ไม่สามารถ import ไฟล์นี้ได้ — ไฟล์ออกให้ "${result.meta.supplierName || 'supplier อื่น'}" ` +
+          `แต่บัญชีที่ login เป็นของ supplier อื่น กรุณาใช้ไฟล์ที่ออกให้บัญชีของท่านเอง`,
+          { duration: 8000 }
+        );
+        setImportPreview(null);
+        return;
+      }
+
+      // GUARD 2: catalog ID must match the catalog being viewed
+      if (result.meta.catalogId && id && result.meta.catalogId !== id) {
+        toast.error(
+          `ไฟล์นี้ออกให้ catalog อื่น — กรุณาเปิด catalog ที่ตรงกันก่อน import`,
+          { duration: 8000 }
+        );
+        setImportPreview(null);
+        return;
+      }
+
+      // GUARD 3 (warning only): if procurement chose a target supplier and file is for someone else
+      if (!isSupplier && targetSupplierId && result.meta.supplierId &&
+          targetSupplierId !== result.meta.supplierId) {
+        toast.warning(
+          `ไฟล์นี้ออกให้ "${result.meta.supplierName}" — ระบบจะ import เข้า supplier นี้แทน supplier ที่เลือกไว้ใน dropdown`,
+          { duration: 6000 }
+        );
+      }
+
       setImportPreview(result);
       if (result.errors.length > 0) toast.warning(`พบ ${result.errors.length} ข้อผิดพลาด`);
-      else toast.success(`อ่านไฟล์สำเร็จ ${result.rows.length} รายการ`);
+      else toast.success(`อ่านไฟล์สำเร็จ ${result.rows.length} รายการ — ${result.meta.supplierName || 'ไม่ระบุ supplier'}`);
     } catch (e: any) {
       toast.error('อ่านไฟล์ไม่สำเร็จ: ' + (e.message || e));
     }
@@ -391,8 +423,17 @@ export default function PriceListDetail() {
 
   const confirmImport = async () => {
     if (!importPreview || importPreview.rows.length === 0) return;
-    const supplierId = isSupplier ? mySupplierId : targetSupplierId;
+    // Resolution: supplier role → own id, otherwise file's supplierId, fallback dropdown
+    const supplierId = isSupplier
+      ? mySupplierId
+      : (importPreview.meta.supplierId || targetSupplierId);
     if (!supplierId) { toast.error('กรุณาเลือก supplier ก่อนบันทึก'); return; }
+
+    // Final identity check for supplier role (defense in depth)
+    if (isSupplier && importPreview.meta.supplierId && importPreview.meta.supplierId !== mySupplierId) {
+      toast.error('ไม่สามารถบันทึก — supplier ในไฟล์ไม่ตรงกับบัญชีที่ login');
+      return;
+    }
 
     const { data: itemsData } = await supabase
       .from('price_list_items')
@@ -841,6 +882,15 @@ export default function PriceListDetail() {
               </h3>
               <Button variant="ghost" size="sm" onClick={() => setImportPreview(null)}>ปิด</Button>
             </div>
+            {importPreview.meta.supplierName && (
+              <div className="mb-3 p-2.5 bg-blue-50 border border-blue-200 rounded text-xs flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-blue-700 shrink-0" />
+                <span>
+                  ไฟล์นี้ออกให้ <strong className="text-blue-900">{importPreview.meta.supplierName}</strong>
+                  {importPreview.meta.rfqNumber && <> — RFQ: <span className="font-mono">{importPreview.meta.rfqNumber}</span></>}
+                </span>
+              </div>
+            )}
             {importPreview.errors.length > 0 && (
               <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-xs space-y-1">
                 <div className="flex items-center gap-1 font-semibold text-red-700">

@@ -167,10 +167,22 @@ function buildCoverSheet(wb: ExcelJS.Workbook, meta: ChecklistMeta) {
     r++;
   }
 
-  // ── Hidden catalog ID (for import) ──
+  // ── Hidden machine-readable IDs (for import validation) ──
   ws.getRow(r).height = 1;
   ws.getCell(`A${r}`).value = 'Catalog ID';
   ws.getCell(`B${r}`).value = meta.catalogId;
+  ws.getRow(r).hidden = true;
+  r++;
+
+  ws.getRow(r).height = 1;
+  ws.getCell(`A${r}`).value = 'Supplier ID';
+  ws.getCell(`B${r}`).value = meta.supplierId || '';
+  ws.getRow(r).hidden = true;
+  r++;
+
+  ws.getRow(r).height = 1;
+  ws.getCell(`A${r}`).value = 'Supplier Name';
+  ws.getCell(`B${r}`).value = meta.supplierName || '';
   ws.getRow(r).hidden = true;
   r += 2;
 
@@ -462,7 +474,12 @@ export interface ImportedQuoteRow {
 export interface ImportResult {
   rows:   ImportedQuoteRow[];
   errors: { row: number; message: string }[];
-  meta:   { catalogId?: string; rfqNumber?: string };
+  meta:   {
+    catalogId?:    string;
+    rfqNumber?:    string;
+    supplierId?:   string;
+    supplierName?: string;
+  };
 }
 
 export async function importQuotationFromExcel(file: File): Promise<ImportResult> {
@@ -470,15 +487,18 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
   const wb  = XLSX.read(buf);
   const result: ImportResult = { rows: [], errors: [], meta: {} };
 
-  // Pull catalog ID from Cover sheet
+  // Pull metadata from Cover sheet (catalog/supplier IDs are in hidden rows for validation)
   const cover = wb.Sheets['Cover'];
   if (cover) {
     const grid = XLSX.utils.sheet_to_json<unknown[]>(cover, { header: 1, blankrows: false }) as unknown[][];
     grid.forEach(r => {
       const k = String(r?.[0] || '').trim();
       const v = String(r?.[1] || '').trim();
-      if (k === 'Catalog ID') result.meta.catalogId = v;
-      if (k === 'RFQ No.')    result.meta.rfqNumber  = v;
+      if (k === 'Catalog ID')    result.meta.catalogId    = v;
+      if (k === 'RFQ No.')       result.meta.rfqNumber    = v === '—' ? '' : v;
+      if (k === 'Supplier ID')   result.meta.supplierId   = v;
+      if (k === 'Supplier Name') result.meta.supplierName = v;
+      if (k === 'Supplier' && !result.meta.supplierName) result.meta.supplierName = v;
     });
   }
 
