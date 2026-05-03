@@ -17,13 +17,13 @@ import RiskBadge from '@/components/RiskBadge';
 import type { RiskLevel } from '@/types/procurement';
 import { useTranslation } from '@/i18n';
 
+// Maps DB enum award_lifecycle_status_enum → display config.
+// Valid DB values: 'draft','pending_approval','awarded','cancelled'
 const lifecycleConfig: Record<string, { color: string; label: string }> = {
+  draft:            { color: 'bg-muted text-muted-foreground', label: 'Draft' },
   pending_approval: { color: 'bg-amber-500/10 text-amber-600', label: 'Pending Approval' },
-  approved:         { color: 'bg-emerald-500/10 text-emerald-600', label: 'Approved' },
-  rejected:         { color: 'bg-destructive/10 text-destructive', label: 'Rejected' },
-  po_issued:        { color: 'bg-blue-500/10 text-blue-600', label: 'PO Issued' },
-  completed:        { color: 'bg-emerald-700/10 text-emerald-700', label: 'Completed' },
-  cancelled:        { color: 'bg-muted text-muted-foreground', label: 'Cancelled' },
+  awarded:          { color: 'bg-emerald-500/10 text-emerald-600', label: 'Approved' },
+  cancelled:        { color: 'bg-destructive/10 text-destructive', label: 'Rejected' },
 };
 
 const legacyStatusConfig: Record<string, { color: string; label: string }> = {
@@ -55,8 +55,8 @@ export default function AwardsPage() {
     ] = await Promise.all([
       supabase.from('awards').select('*', { count: 'exact', head: true }),
       supabase.from('awards').select('*', { count: 'exact', head: true }).or('status.eq.pending,award_lifecycle_status.eq.pending_approval'),
-      supabase.from('awards').select('*', { count: 'exact', head: true }).or('status.eq.approved,award_lifecycle_status.eq.approved'),
-      supabase.from('awards').select('*', { count: 'exact', head: true }).or('ready_for_po.eq.true,award_lifecycle_status.eq.po_issued'),
+      supabase.from('awards').select('*', { count: 'exact', head: true }).or('status.eq.approved,award_lifecycle_status.eq.awarded'),
+      supabase.from('awards').select('*', { count: 'exact', head: true }).or('ready_for_po.eq.true,award_lifecycle_status.eq.awarded'),
     ]);
     setStats({
       total: total || 0,
@@ -86,11 +86,14 @@ export default function AwardsPage() {
   const handleStatusChange = async (id: string, status: string) => {
     const updates: any = { status, updated_at: new Date().toISOString() };
     if (decisionReason) updates.decision_reason = decisionReason;
+    // award_lifecycle_status_enum values: 'draft','pending_approval','awarded','cancelled'
+    // Map button actions → valid enum values:
+    //   approve → awarded   reject → cancelled
     if (status === 'approved') {
       updates.ready_for_po = true;
-      updates.award_lifecycle_status = 'approved';
+      updates.award_lifecycle_status = 'awarded';
     }
-    if (status === 'rejected') updates.award_lifecycle_status = 'rejected';
+    if (status === 'rejected') updates.award_lifecycle_status = 'cancelled';
 
     const { error } = await supabase.from('awards').update(updates).eq('id', id);
     if (error) {
