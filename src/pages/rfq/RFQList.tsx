@@ -77,15 +77,16 @@ export default function RFQList() {
               <tr className="border-b bg-muted/50">
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.rfqNumber')}</th>
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.rfqTitle')}</th>
+                <th className="text-left p-3 font-medium text-muted-foreground">วันที่เผยแพร่</th>
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.deadline')}</th>
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.status')}</th>
               </tr>
             </thead>
             <tbody>
               {pagination.loading ? (
-                <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">{t('common.loading')}</td></tr>
+                <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">{t('common.loading')}</td></tr>
               ) : pagination.items.length === 0 ? (
-                <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">{t('common.noData')}</td></tr>
+                <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">{t('common.noData')}</td></tr>
               ) : (
                 pagination.items.map((r) => (
                   <tr key={r.id} className="border-b hover:bg-muted/30">
@@ -93,7 +94,10 @@ export default function RFQList() {
                       <Link to={`/rfq/${r.id}`} className="text-primary hover:underline">{r.rfq_number || '—'}</Link>
                     </td>
                     <td className="p-3">{r.title}</td>
-                    <td className="p-3 text-muted-foreground">{r.deadline ? new Date(r.deadline).toLocaleDateString() : '—'}</td>
+                    <td className="p-3 text-muted-foreground">
+                      {r.published_at ? new Date(r.published_at).toLocaleDateString('th-TH') : '—'}
+                    </td>
+                    <td className="p-3 text-muted-foreground">{r.deadline ? new Date(r.deadline).toLocaleDateString('th-TH') : '—'}</td>
                     <td className="p-3"><Badge variant="secondary" className={statusColors[r.status] || ''}>{r.status}</Badge></td>
                   </tr>
                 ))
