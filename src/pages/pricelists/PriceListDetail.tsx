@@ -345,18 +345,20 @@ export default function PriceListDetail() {
     if (selected.size === 0) { toast.error('กรุณาเลือกอย่างน้อย 1 รายการ'); return; }
     const rows = items.filter(i => selected.has(i.id));
 
-    // Resolve supplier — priority: explicitly chosen > locked-by-nominated > supplier role > none
+    // Resolve supplier — priority: supplier role > locked-by-nominated (most reliable name) > explicit dropdown
+    // Always prefer lockedSupplier when nominated items are selected, since nominated suppliers
+    // may not be in the approved-only `suppliers` list and the join-derived name is authoritative.
     let supplierName = '';
     let supplierId: string | undefined;
     if (isSupplier) {
       supplierName = profile?.full_name || '';
       supplierId   = mySupplierId || undefined;
-    } else if (targetSupplierId) {
-      supplierName = suppliers.find(s => s.id === targetSupplierId)?.company_name || '';
-      supplierId   = targetSupplierId;
     } else if (lockedSupplier) {
       supplierName = lockedSupplier.name;
       supplierId   = lockedSupplier.id;
+    } else if (targetSupplierId) {
+      supplierName = suppliers.find(s => s.id === targetSupplierId)?.company_name || '';
+      supplierId   = targetSupplierId;
     }
 
     exportChecklistToExcel(rows, {
