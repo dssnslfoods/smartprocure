@@ -49,11 +49,15 @@ export default function Dashboard() {
   const { profile, roles } = useAuth();
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const isSupplier = roles.includes('supplier');
+  const mySupplierId = profile?.supplier_id ?? null;
   const [kpi, setKpi] = useState<KPIData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expiredOpen, setExpiredOpen] = useState(false);
 
   useEffect(() => {
+    // Supplier role: skip global fetch — supplier data is rendered by <SupplierDashboard/>
+    if (isSupplier) { setLoading(false); return; }
     const fetchKPIs = async () => {
       try {
         const [
@@ -183,7 +187,12 @@ export default function Dashboard() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [isSupplier]);
+
+  // After hooks: render supplier-scoped dashboard for supplier role.
+  if (isSupplier) {
+    return <SupplierDashboard supplierId={mySupplierId} fullName={profile?.full_name || ''} />;
+  }
 
   const getActivityIcon = (icon: string) => {
     switch (icon) {
@@ -490,6 +499,282 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+    </div>
+  );
+}
+
+// ───────────────────────── Supplier-scoped dashboard ─────────────────────────
+// Suppliers only see their OWN data. No cross-supplier visibility.
+interface SupplierKPI {
+  myStatus:           string;
+  myRiskLevel:        string | null;
+  myCompanyName:      string;
+  invitesOpen:        number;
+  invitesPending:     number;
+  invitesSubmitted:   number;
+  myQuotations:       number;
+  myAwards:           number;
+  myAwardedValue:     number;
+  myExpiredCerts:     ExpiredCertRow[];
+  myExpiringCerts:    ExpiredCertRow[];   // ≤30 days
+  recentInvites:      { id: string; title: string; status: string; due_date: string | null; created_at: string }[];
+  recentQuotations:   { id: string; total: number | null; status: string; created_at: string; rfq_title?: string }[];
+}
+
+function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null; fullName: string }) {
+  const navigate = useNavigate();
+  const [kpi, setKpi] = useState<SupplierKPI | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supplierId) { setLoading(false); return; }
+    (async () => {
+      try {
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const in30Iso  = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+        const [meRes, invRes, qRes, awardsRes, certsRes] = await Promise.all([
+          supabase.from('suppliers').select('id, company_name, status, risk_level').eq('id', supplierId).maybeSingle(),
+          supabase.from('rfq_suppliers')
+            .select('id, status, invited_at, rfqs(id, title, status, due_date, created_at)')
+            .eq('supplier_id', supplierId),
+          supabase.from('quotations')
+            .select('id, total_amount, status, created_at, rfq_id, rfqs(title)')
+            .eq('supplier_id', supplierId)
+            .order('created_at', { ascending: false })
+            .limit(5),
+          supabase.from('awards')
+            .select('id, status, final_amount, amount')
+            .eq('supplier_id', supplierId),
+          supabase.from('supplier_certificates')
+            .select('id, supplier_id, certificate_type, certificate_no, expiry_date')
+            .eq('supplier_id', supplierId),
+        ]);
+
+        const me      = meRes.data || { company_name: '', status: 'unknown', risk_level: null };
+        const invites = invRes.data || [];
+        const quotes  = qRes.data || [];
+        const awards  = awardsRes.data || [];
+        const certs   = certsRes.data || [];
+
+        const expired:  ExpiredCertRow[] = [];
+        const expiring: ExpiredCertRow[] = [];
+        certs.forEach((c: any) => {
+          if (!c.expiry_date) return;
+          const row: ExpiredCertRow = {
+            cert_id:          c.id,
+            supplier_id:      c.supplier_id,
+            company_name:     me.company_name || '',
+            certificate_type: c.certificate_type,
+            certificate_no:   c.certificate_no,
+            expiry_date:      c.expiry_date,
+            daysOverdue:      Math.floor((Date.now() - new Date(c.expiry_date).getTime()) / 86400000),
+          };
+          if (c.expiry_date < todayIso) expired.push(row);
+          else if (c.expiry_date <= in30Iso) expiring.push(row);
+        });
+
+        const recentInvites = invites
+          .filter((i: any) => i.rfqs)
+          .sort((a: any, b: any) => (b.invited_at || '').localeCompare(a.invited_at || ''))
+          .slice(0, 5)
+          .map((i: any) => ({
+            id: i.rfqs.id,
+            title: i.rfqs.title,
+            status: i.status,
+            due_date: i.rfqs.due_date,
+            created_at: i.invited_at || i.rfqs.created_at,
+          }));
+
+        setKpi({
+          myStatus:        me.status || 'unknown',
+          myRiskLevel:     me.risk_level || null,
+          myCompanyName:   me.company_name || fullName,
+          invitesOpen:     invites.filter((i: any) => i.rfqs?.status === 'published' && i.status !== 'submitted').length,
+          invitesPending:  invites.filter((i: any) => i.status === 'pending' || i.status === 'invited').length,
+          invitesSubmitted:invites.filter((i: any) => i.status === 'submitted').length,
+          myQuotations:    quotes.length,
+          myAwards:        awards.filter((a: any) => a.status === 'awarded' || a.status === 'accepted').length,
+          myAwardedValue:  awards.reduce((s: number, a: any) => s + (Number(a.final_amount) || Number(a.amount) || 0), 0),
+          myExpiredCerts:  expired,
+          myExpiringCerts: expiring,
+          recentInvites,
+          recentQuotations: quotes.map((q: any) => ({
+            id: q.id, total: q.total_amount, status: q.status, created_at: q.created_at,
+            rfq_title: q.rfqs?.title || '',
+          })),
+        });
+      } catch (e) {
+        console.error('SupplierDashboard fetch error:', e);
+      } finally { setLoading(false); }
+    })();
+  }, [supplierId, fullName]);
+
+  const stat = (v: number | null | undefined) => loading ? '...' : (v ?? 0);
+
+  const statusBadge: Record<string, string> = {
+    approved:  'bg-green-100 text-green-800',
+    submitted: 'bg-blue-100 text-blue-800',
+    review:    'bg-yellow-100 text-yellow-800',
+    rejected:  'bg-destructive/10 text-destructive',
+    suspended: 'bg-orange-100 text-orange-800',
+    draft:     'bg-muted text-muted-foreground',
+    unknown:   'bg-muted text-muted-foreground',
+  };
+  const riskBadge: Record<string, string> = {
+    low:      'bg-green-100 text-green-800',
+    medium:   'bg-yellow-100 text-yellow-800',
+    high:     'bg-orange-100 text-orange-800',
+    critical: 'bg-red-100 text-red-800',
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">
+          ยินดีต้อนรับ{kpi?.myCompanyName ? `, ${kpi.myCompanyName}` : (fullName ? `, ${fullName}` : '')}
+        </h1>
+        <p className="text-muted-foreground text-sm mt-1">ภาพรวมข้อมูลของคุณในระบบ NSL Foods Procurement</p>
+      </div>
+
+      {/* Personal status row */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">สถานะของฉัน</CardTitle>
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <Badge className={statusBadge[kpi?.myStatus || 'unknown']} variant="secondary">
+              {kpi?.myStatus || '...'}
+            </Badge>
+            {kpi?.myRiskLevel && (
+              <Badge className={`ml-2 ${riskBadge[kpi.myRiskLevel] || 'bg-muted'}`} variant="secondary">
+                ความเสี่ยง: {kpi.myRiskLevel}
+              </Badge>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/rfq')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">คำเชิญ RFQ ที่เปิดอยู่</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stat(kpi?.invitesOpen)}</div>
+            <p className="text-xs text-muted-foreground mt-1">รอเสนอราคา {kpi?.invitesPending ?? 0} ใบ</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/rfq')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">ใบเสนอราคาที่ส่งแล้ว</CardTitle>
+            <BarChart2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stat(kpi?.invitesSubmitted)}</div>
+            <p className="text-xs text-muted-foreground mt-1">รวม {kpi?.myQuotations ?? 0} ใบในระบบ</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/awards')}>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">งานที่ได้รับ</CardTitle>
+            <Award className="h-4 w-4 text-emerald-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-emerald-600">{stat(kpi?.myAwards)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              มูลค่ารวม ${(kpi?.myAwardedValue || 0).toLocaleString()}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Certificates row */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="border-amber-200">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">ใบรับรองที่หมดอายุ</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{stat(kpi?.myExpiredCerts.length)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {(kpi?.myExpiredCerts.length ?? 0) > 0 ? 'ต้องต่ออายุก่อนเสนอราคา' : 'ใบรับรองทั้งหมดอยู่ในเกณฑ์'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-yellow-200">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">ใบรับรองใกล้หมดอายุ (≤30 วัน)</CardTitle>
+            <FileBadge className="h-4 w-4 text-yellow-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-yellow-600">{stat(kpi?.myExpiringCerts.length)}</div>
+            <p className="text-xs text-muted-foreground mt-1">เตรียมต่ออายุล่วงหน้า</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Recent activity — supplier scope */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle className="text-base">คำเชิญ RFQ ล่าสุด</CardTitle></CardHeader>
+          <CardContent>
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : kpi && kpi.recentInvites.length > 0 ? (
+              <div className="space-y-3">
+                {kpi.recentInvites.map(r => (
+                  <div key={r.id} className="flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0">
+                    <div className="mt-0.5 w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                      <FileText className="w-4 h-4 text-blue-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{r.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {r.status} · {r.due_date ? `ครบกำหนด ${new Date(r.due_date).toLocaleDateString('th-TH')}` : 'ไม่ระบุกำหนด'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">ยังไม่มีคำเชิญ RFQ</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">ใบเสนอราคาล่าสุดของฉัน</CardTitle></CardHeader>
+          <CardContent>
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : kpi && kpi.recentQuotations.length > 0 ? (
+              <div className="space-y-3">
+                {kpi.recentQuotations.map(q => (
+                  <div key={q.id} className="flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0">
+                    <div className="mt-0.5 w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                      <BarChart2 className="w-4 h-4 text-emerald-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{q.rfq_title || `Quotation ${q.id.slice(0, 8)}`}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {q.status} · ${(q.total || 0).toLocaleString()} · {new Date(q.created_at).toLocaleDateString('th-TH')}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">ยังไม่ได้ส่งใบเสนอราคา</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
