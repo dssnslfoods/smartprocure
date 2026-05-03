@@ -13,8 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Building2, User, FileText, Landmark, Save, Upload, Download, Trash2, Plus,
-  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X,
+  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X, FileBadge,
 } from 'lucide-react';
+import SupplierCertificates from './SupplierCertificates';
 
 const DOC_TYPES = [
   { value: 'company_certificate', label: 'หนังสือรับรองบริษัท' },
@@ -275,6 +276,7 @@ export default function SupplierPortal() {
         <TabsList>
           <TabsTrigger value="company" className="gap-1.5"><Building2 className="w-4 h-4" /> ข้อมูลบริษัท</TabsTrigger>
           <TabsTrigger value="contacts" className="gap-1.5"><User className="w-4 h-4" /> ผู้ติดต่อ</TabsTrigger>
+          <TabsTrigger value="certificates" className="gap-1.5"><FileBadge className="w-4 h-4" /> ใบรับรอง</TabsTrigger>
           <TabsTrigger value="documents" className="gap-1.5"><FileText className="w-4 h-4" /> เอกสาร</TabsTrigger>
         </TabsList>
 
@@ -377,6 +379,11 @@ export default function SupplierPortal() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Certificates Tab — full-featured cert management with AI extraction */}
+        <TabsContent value="certificates">
+          <SupplierCertificates supplierId={supplier.id} />
         </TabsContent>
 
         {/* Documents Tab */}
