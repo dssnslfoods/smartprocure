@@ -193,22 +193,95 @@ export default function PriceListDetail() {
     return it.designated_supplier_id === mySupplierId;
   };
 
+  // Compute the "implied supplier" from currently selected nominated items.
+  // Returns null if no nominated items selected, or if there's a mix of suppliers.
+  const lockedSupplier = useMemo(() => {
+    const nomIds = new Set<string>();
+    let nomName = '';
+    for (const it of items) {
+      if (selected.has(it.id) && it.is_nominated && it.designated_supplier_id) {
+        nomIds.add(it.designated_supplier_id);
+        nomName = it.designated_supplier_name || '';
+      }
+    }
+    if (nomIds.size === 1) {
+      const id = Array.from(nomIds)[0];
+      return { id, name: nomName };
+    }
+    return null;
+  }, [selected, items]);
+
   const toggle = (itId: string) => {
+    const it = items.find(i => i.id === itId);
+    if (!it) return;
+
     setSelected(prev => {
       const next = new Set(prev);
-      if (next.has(itId)) next.delete(itId); else next.add(itId);
+      if (next.has(itId)) {
+        next.delete(itId);
+        return next;
+      }
+
+      // Block selecting a nominated item whose supplier conflicts with already-selected nominated items
+      if (it.is_nominated && it.designated_supplier_id) {
+        for (const other of items) {
+          if (
+            next.has(other.id) &&
+            other.is_nominated &&
+            other.designated_supplier_id &&
+            other.designated_supplier_id !== it.designated_supplier_id
+          ) {
+            toast.error(
+              `ไม่สามารถเลือกพร้อมกันได้ — รายการนี้ Nominated ให้ "${it.designated_supplier_name}" ` +
+              `แต่มีรายการที่ Nominated ให้ "${other.designated_supplier_name}" ถูกเลือกอยู่`
+            );
+            return prev;
+          }
+        }
+      }
+      next.add(itId);
       return next;
     });
   };
 
   const toggleAll = () => {
-    const eligible = visibleItems.filter(canSelect).map(i => i.id);
+    // Determine current locked supplier from already-selected items so toggle-all stays consistent
+    let lockedId: string | null = null;
+    for (const it of items) {
+      if (selected.has(it.id) && it.is_nominated && it.designated_supplier_id) {
+        if (lockedId && lockedId !== it.designated_supplier_id) { lockedId = null; break; }
+        lockedId = it.designated_supplier_id;
+      }
+    }
+
+    // Eligible = canSelect AND (not nominated OR designated to lockedId/the first nominated supplier we encounter)
+    const candidates = visibleItems.filter(canSelect);
+    let pivotId = lockedId;
+    const eligible: string[] = [];
+    for (const it of candidates) {
+      if (!it.is_nominated || !it.designated_supplier_id) {
+        eligible.push(it.id);
+        continue;
+      }
+      if (!pivotId) pivotId = it.designated_supplier_id;
+      if (it.designated_supplier_id === pivotId) eligible.push(it.id);
+    }
+
     if (eligible.every(eid => selected.has(eid))) {
       setSelected(prev => { const n = new Set(prev); eligible.forEach(eid => n.delete(eid)); return n; });
     } else {
       setSelected(prev => { const n = new Set(prev); eligible.forEach(eid => n.add(eid)); return n; });
     }
   };
+
+  // Auto-sync targetSupplierId with the locked supplier from nominated selections
+  useEffect(() => {
+    if (isSupplier) return;
+    if (lockedSupplier && lockedSupplier.id !== targetSupplierId) {
+      setTargetSupplierId(lockedSupplier.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedSupplier?.id, isSupplier]);
 
   const toggleExpand = (itId: string) => {
     setExpanded(prev => {
@@ -240,19 +313,34 @@ export default function PriceListDetail() {
     if (!header) return;
     if (selected.size === 0) { toast.error('กรุณาเลือกอย่างน้อย 1 รายการ'); return; }
     const rows = items.filter(i => selected.has(i.id));
-    const supplierName = isSupplier
-      ? (profile?.full_name || '')
-      : (suppliers.find(s => s.id === targetSupplierId)?.company_name || '');
+
+    // Resolve supplier — priority: explicitly chosen > locked-by-nominated > supplier role > none
+    let supplierName = '';
+    let supplierId: string | undefined;
+    if (isSupplier) {
+      supplierName = profile?.full_name || '';
+      supplierId   = mySupplierId || undefined;
+    } else if (targetSupplierId) {
+      supplierName = suppliers.find(s => s.id === targetSupplierId)?.company_name || '';
+      supplierId   = targetSupplierId;
+    } else if (lockedSupplier) {
+      supplierName = lockedSupplier.name;
+      supplierId   = lockedSupplier.id;
+    }
+
     exportChecklistToExcel(rows, {
       catalogTitle: header.title,
       catalogId:    header.id,
       category:     CATEGORY_LABELS[header.category] || header.category,
       supplierName,
-      supplierId:   isSupplier ? (mySupplierId || undefined) : (targetSupplierId || undefined),
+      supplierId,
       rfqNumber:    rfqNumber || undefined,
       validUntil:   header.valid_until || undefined,
     });
-    toast.success(`Export ${selected.size} รายการสำเร็จ`);
+    toast.success(
+      `Export ${selected.size} รายการสำเร็จ` +
+      (supplierName ? ` — ส่งให้ ${supplierName}` : '')
+    );
   };
 
   const handleImport = async (file: File) => {
@@ -474,15 +562,30 @@ export default function PriceListDetail() {
           {isProcurement && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t">
               <div>
-                <Label className="text-xs">ส่ง Checklist ให้ Supplier (เลือกได้)</Label>
-                <Select value={targetSupplierId || '__open__'}
-                  onValueChange={v => setTargetSupplierId(v === '__open__' ? '' : v)}>
+                <Label className="text-xs flex items-center gap-1">
+                  ส่ง Checklist ให้ Supplier {lockedSupplier ? '' : '(เลือกได้)'}
+                  {lockedSupplier && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800">
+                      <Lock className="w-2.5 h-2.5" /> ล็อกโดย Nominated
+                    </span>
+                  )}
+                </Label>
+                <Select
+                  value={targetSupplierId || '__open__'}
+                  onValueChange={v => setTargetSupplierId(v === '__open__' ? '' : v)}
+                  disabled={!!lockedSupplier}
+                >
                   <SelectTrigger className="mt-1"><SelectValue placeholder="— เปิดให้ทุกราย —" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__open__">— เปิดให้ทุกราย —</SelectItem>
                     {suppliers.map(s => (<SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>))}
                   </SelectContent>
                 </Select>
+                {lockedSupplier && (
+                  <p className="text-[11px] text-amber-700 mt-1">
+                    มีรายการ Nominated ที่เลือก — ส่งให้ <strong>{lockedSupplier.name}</strong> เท่านั้น
+                  </p>
+                )}
               </div>
               <div>
                 <Label className="text-xs">เลขที่ RFQ (เลือกได้)</Label>
