@@ -54,24 +54,14 @@ export default function SupplierPortal() {
 
   const fetchData = async () => {
     // Resolve the supplier row for the logged-in user. Prefer profile.supplier_id,
-    // but fall back to (a) suppliers.created_by = auth.uid(), or (b) email match.
-    // Also auto-link profile.supplier_id when the fallback succeeds, so future
-    // lookups are O(1).
+    // otherwise call the SECURITY DEFINER RPC link_my_supplier_account() which
+    // bypasses RLS to find the row by created_by or email match and persists
+    // the link to profiles.supplier_id for next time.
     let sid: string | null = profile?.supplier_id ?? null;
 
-    if (!sid && user?.id) {
-      const byCreated = await supabase
-        .from('suppliers').select('id').eq('created_by', user.id).maybeSingle();
-      if (byCreated.data?.id) sid = byCreated.data.id;
-    }
-    if (!sid && profile?.email) {
-      const byEmail = await supabase
-        .from('suppliers').select('id').eq('email', profile.email).maybeSingle();
-      if (byEmail.data?.id) sid = byEmail.data.id;
-    }
-    if (sid && !profile?.supplier_id && user?.id) {
-      // Persist the link so the dashboard / portal find it instantly next time.
-      await supabase.from('profiles').update({ supplier_id: sid }).eq('id', user.id);
+    if (!sid) {
+      const { data: rpcSid } = await supabase.rpc('link_my_supplier_account');
+      if (rpcSid) sid = rpcSid as string;
     }
 
     if (!sid) { setLoading(false); return; }
