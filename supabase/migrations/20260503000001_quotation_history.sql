@@ -61,7 +61,11 @@ CREATE POLICY "qh_insert" ON public.price_list_quotation_history
     )
   );
 
--- History is immutable — no UPDATE / DELETE policies.
+-- History is immutable for everyone except admin.
+DROP POLICY IF EXISTS "qh_delete_admin" ON public.price_list_quotation_history;
+CREATE POLICY "qh_delete_admin" ON public.price_list_quotation_history
+  FOR DELETE TO authenticated
+  USING (public.has_role(auth.uid(), 'admin'));
 
 -- ── Auto-history trigger on price_list_item_suppliers ────────────────────────
 -- Whenever a supplier offer is upserted, snapshot it into the history table.

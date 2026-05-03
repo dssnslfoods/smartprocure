@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, TrendingDown, TrendingUp, Minus, History } from 'lucide-react';
+import { Loader2, TrendingDown, TrendingUp, Minus, History, Trash2 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Legend,
@@ -43,28 +48,68 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export default function QuotationHistoryDialog({ open, onClose, itemId, itemName, itemCode, unit }: Props) {
+  const { hasRole } = useAuth();
+  const { toast } = useToast();
+  const isAdmin = hasRole('admin');
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState<string>('all');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!open || !itemId) return;
     setLoading(true);
-    supabase
-      .from('price_list_quotation_history')
-      .select('id, price_list_item_id, supplier_id, unit_price, moq, lead_time_days, reference_quotation_no, notes, source, submitted_at, supplier:suppliers(id, company_name)')
-      .eq('price_list_item_id', itemId)
-      .order('submitted_at', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error(error);
-          setRows([]);
-        } else {
-          setRows((data as any) || []);
-        }
+    (async () => {
+      // Step 1: fetch history rows
+      const { data: histRows, error: histErr } = await supabase
+        .from('price_list_quotation_history')
+        .select('id, price_list_item_id, supplier_id, unit_price, moq, lead_time_days, reference_quotation_no, notes, source, submitted_at')
+        .eq('price_list_item_id', itemId)
+        .order('submitted_at', { ascending: true });
+
+      if (histErr || !histRows) {
+        console.error(histErr);
+        setRows([]);
         setLoading(false);
-      });
-  }, [open, itemId]);
+        return;
+      }
+
+      // Step 2: fetch supplier names separately (avoids relationship cache issues)
+      const supplierIds = Array.from(new Set(histRows.map(r => r.supplier_id).filter(Boolean)));
+      const supplierMap = new Map<string, { id: string; company_name: string }>();
+      if (supplierIds.length > 0) {
+        const { data: supps } = await supabase
+          .from('suppliers')
+          .select('id, company_name')
+          .in('id', supplierIds);
+        (supps || []).forEach(s => supplierMap.set(s.id, s));
+      }
+
+      const enriched = histRows.map(r => ({
+        ...r,
+        supplier: supplierMap.get(r.supplier_id),
+      })) as HistoryRow[];
+
+      setRows(enriched);
+      setLoading(false);
+    })();
+  }, [open, itemId, reloadKey]);
+
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    const { error } = await supabase
+      .from('price_list_quotation_history')
+      .delete()
+      .eq('id', deleteId);
+    if (error) {
+      toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'ลบประวัติแล้ว' });
+      setReloadKey(k => k + 1);
+    }
+    setDeleteId(null);
+  };
 
   // Distinct suppliers in this item's history
   const suppliers = useMemo(() => {
@@ -241,6 +286,7 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
                     <th className="p-2 font-medium text-right">Lead</th>
                     <th className="p-2 font-medium">เลขใบเสนอราคา</th>
                     <th className="p-2 font-medium">แหล่งที่มา</th>
+                    {isAdmin && <th className="p-2 font-medium w-8"></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -273,6 +319,19 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
                             {SOURCE_LABEL[r.source] || r.source}
                           </Badge>
                         </td>
+                        {isAdmin && (
+                          <td className="p-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive hover:bg-red-50"
+                              onClick={() => setDeleteId(r.id)}
+                              title="ลบประวัตินี้"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -281,6 +340,24 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
             </div>
           </div>
         )}
+
+        {/* Confirm delete */}
+        <AlertDialog open={!!deleteId} onOpenChange={v => !v && setDeleteId(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบประวัติราคานี้?</AlertDialogTitle>
+              <AlertDialogDescription>
+                การลบจะนำรายการนี้ออกจากประวัติและกราฟ trend อย่างถาวร — ใช้สำหรับลบข้อมูลที่ผิดพลาดเท่านั้น
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDelete} className="bg-destructive hover:bg-destructive/90">
+                ลบ
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
