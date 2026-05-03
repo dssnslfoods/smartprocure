@@ -488,16 +488,36 @@ export async function importQuotationFromExcel(file: File): Promise<ImportResult
     return result;
   }
 
-  // Header is row 5 (index 4); data starts at row 6 (index 5)
+  // Locate header row dynamically — Excel may strip empty rows on save
+  // (e.g. the spacer row 4 in our export becomes invisible after round-trip),
+  // so we cannot hard-code the header row index.
   // Columns (0-indexed): A=0(ID) B=1(#) C=2(code) D=3(name) E=4(desc) F=5(unit)
   //                      G=6(qty) H=7(divider)
   //                      I=8(price) J=9(moq) K=10(lead) L=11(quoteno) M=12(notes)
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false }) as unknown[][];
 
-  for (let i = 5; i < grid.length; i++) {   // skip rows 0-4 (banner + header)
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(grid.length, 12); i++) {
+    const row = grid[i] || [];
+    const a = String(row[0] || '').trim().toUpperCase();
+    const c = String(row[2] || '').trim();
+    // Header row: A == "ID" and C is the code label
+    if (a === 'ID' && (c.includes('รหัส') || c.toLowerCase().includes('code'))) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+  if (headerRowIdx < 0) {
+    result.errors.push({ row: 0, message: 'ไม่พบ header row ที่คาดไว้ใน sheet "Checklist"' });
+    return result;
+  }
+
+  // Data starts at the row after the header
+  for (let i = headerRowIdx + 1; i < grid.length; i++) {
     const row = grid[i];
     const id  = String(row?.[0] || '').trim();
-    if (!id || id.length < 10) continue;     // skip non-UUID rows
+    // UUID is 36 chars (8-4-4-4-12). Skip summary rows (e.g. "รวม X รายการ")
+    if (!id || id.length < 30 || !/^[0-9a-f-]+$/i.test(id)) continue;
 
     const bidPriceRaw = row[8];              // col I
     if (bidPriceRaw === undefined || bidPriceRaw === '' || bidPriceRaw === null) continue;
