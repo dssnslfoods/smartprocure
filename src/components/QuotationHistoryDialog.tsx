@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, TrendingDown, TrendingUp, Minus, History, Trash2 } from 'lucide-react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Legend,
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  Legend, ReferenceLine,
 } from 'recharts';
 
 interface HistoryRow {
@@ -39,6 +39,16 @@ interface Props {
 
 // Distinct colors for up to 8 suppliers
 const COLORS = ['#2563EB', '#16A34A', '#DC2626', '#D97706', '#9333EA', '#0891B2', '#DB2777', '#65A30D'];
+
+const formatThaiDate = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+};
+
+const formatThaiDateLong = (iso: string) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+};
 
 const SOURCE_LABEL: Record<string, string> = {
   excel:   'Excel',
@@ -111,11 +121,16 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
     setDeleteId(null);
   };
 
-  // Distinct suppliers in this item's history
+  // Distinct suppliers in this item's history (group by ID, fallback name when missing)
   const suppliers = useMemo(() => {
     const map = new Map<string, string>();
+    let unnamedCounter = 0;
     rows.forEach(r => {
-      if (r.supplier?.id) map.set(r.supplier.id, r.supplier.company_name);
+      if (!r.supplier_id) return;
+      if (!map.has(r.supplier_id)) {
+        const name = r.supplier?.company_name || `ผู้เสนอราคา #${++unnamedCounter}`;
+        map.set(r.supplier_id, name);
+      }
     });
     return Array.from(map, ([id, name]) => ({ id, name }));
   }, [rows]);
@@ -125,18 +140,29 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
     [rows, supplierFilter]
   );
 
-  // Build chart data — pivot rows into one row per date, columns = suppliers
+  // Build chart data — pivot rows into one row per date, columns keyed by supplier_id
+  // We use supplier_id (not name) as the key so the chart works even when names fail to load.
   const chartData = useMemo(() => {
     const dateMap = new Map<string, Record<string, any>>();
     rows.forEach(r => {
+      if (!r.submitted_at) return;
       const day = r.submitted_at.slice(0, 10);
-      if (!dateMap.has(day)) dateMap.set(day, { date: day });
+      if (!dateMap.has(day)) dateMap.set(day, { date: day, _ts: new Date(r.submitted_at).getTime() });
       const slot = dateMap.get(day)!;
-      const key = r.supplier?.company_name || 'Unknown';
-      // If multiple submissions same day, keep the latest
-      slot[key] = Number(r.unit_price);
+      slot[r.supplier_id] = Number(r.unit_price);  // last entry of the day wins
     });
-    return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    return Array.from(dateMap.values()).sort((a, b) => (a._ts as number) - (b._ts as number));
+  }, [rows]);
+
+  // Compute Y-axis domain with padding so points aren't clipped
+  const priceRange = useMemo(() => {
+    if (rows.length === 0) return { min: 0, max: 100, avg: 0 };
+    const prices = rows.map(r => Number(r.unit_price));
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+    const pad = Math.max(1, (max - min) * 0.15);
+    return { min: Math.max(0, min - pad), max: max + pad, avg };
   }, [rows]);
 
   // Stats per supplier — first, last, change %
@@ -226,34 +252,125 @@ export default function QuotationHistoryDialog({ open, onClose, itemId, itemName
               })}
             </div>
 
-            {/* Trend chart */}
-            {chartData.length >= 2 && (
-              <div className="rounded-lg border p-3">
-                <p className="text-xs font-medium text-muted-foreground mb-2">📈 แนวโน้มราคาตามเวลา</p>
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }}
-                      tickFormatter={d => new Date(d).toLocaleDateString('th-TH', { month: 'short', day: 'numeric' })} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      formatter={(v: any) => [Number(v).toLocaleString('th-TH', { minimumFractionDigits: 2 }) + (unit ? ` /${unit}` : ''), '']}
-                      labelFormatter={(d) => new Date(d as string).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}
+            {/* Trend chart — refined design with area fill, average reference, smooth lines */}
+            {chartData.length >= 1 && suppliers.length > 0 && (
+              <div className="rounded-xl border bg-gradient-to-br from-slate-50 to-white p-4 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">📈 แนวโน้มราคา</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      เฉลี่ย {priceRange.avg.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      {unit ? ` /${unit}` : ''}
+                      {' · '}ต่ำสุด {Math.min(...rows.map(r => Number(r.unit_price))).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      {' · '}สูงสุด {Math.max(...rows.map(r => Number(r.unit_price))).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {chartData.length} จุดข้อมูล · {suppliers.length} ผู้เสนอ
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={300}>
+                  <ComposedChart data={chartData} margin={{ top: 12, right: 24, left: 4, bottom: 8 }}>
+                    <defs>
+                      {suppliers.map((s, idx) => {
+                        const color = COLORS[idx % COLORS.length];
+                        return (
+                          <linearGradient key={s.id} id={`grad-${s.id}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stopColor={color} stopOpacity={0.25} />
+                            <stop offset="100%" stopColor={color} stopOpacity={0} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 6" stroke="#E2E8F0" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 11, fill: '#64748B' }}
+                      tickFormatter={formatThaiDate}
+                      axisLine={{ stroke: '#CBD5E1' }}
+                      tickLine={false}
+                      padding={{ left: 12, right: 12 }}
                     />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    {suppliers.map((s, idx) => (
-                      <Line
-                        key={s.id}
-                        type="monotone"
-                        dataKey={s.name}
-                        stroke={COLORS[idx % COLORS.length]}
-                        strokeWidth={2}
-                        dot={{ r: 3 }}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#64748B' }}
+                      axisLine={false}
+                      tickLine={false}
+                      domain={[priceRange.min, priceRange.max]}
+                      tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}k` : v.toFixed(0)}
+                      width={48}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'white',
+                        border: '1px solid #E2E8F0',
+                        borderRadius: 8,
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                        fontSize: 12,
+                      }}
+                      formatter={(v: any, name: any) => {
+                        const supplier = suppliers.find(s => s.id === name);
+                        return [
+                          Number(v).toLocaleString('th-TH', { minimumFractionDigits: 2 }) + (unit ? ` /${unit}` : ''),
+                          supplier?.name || name,
+                        ];
+                      }}
+                      labelFormatter={(d) => formatThaiDateLong(d as string)}
+                    />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      iconType="circle"
+                      formatter={(value) => {
+                        const supplier = suppliers.find(s => s.id === value);
+                        return <span className="text-slate-700">{supplier?.name || value}</span>;
+                      }}
+                    />
+                    <ReferenceLine
+                      y={priceRange.avg}
+                      stroke="#94A3B8"
+                      strokeDasharray="4 4"
+                      label={{ value: 'เฉลี่ย', position: 'right', fill: '#64748B', fontSize: 10 }}
+                    />
+                    {suppliers.map((s, idx) => {
+                      const color = COLORS[idx % COLORS.length];
+                      return (
+                        <Area
+                          key={`area-${s.id}`}
+                          type="monotone"
+                          dataKey={s.id}
+                          stroke="none"
+                          fill={`url(#grad-${s.id})`}
+                          connectNulls
+                          isAnimationActive={true}
+                          legendType="none"
+                        />
+                      );
+                    })}
+                    {suppliers.map((s, idx) => {
+                      const color = COLORS[idx % COLORS.length];
+                      return (
+                        <Line
+                          key={`line-${s.id}`}
+                          type="monotone"
+                          dataKey={s.id}
+                          name={s.id}
+                          stroke={color}
+                          strokeWidth={2.5}
+                          dot={{ r: 4, fill: color, strokeWidth: 2, stroke: 'white' }}
+                          activeDot={{ r: 6, fill: color, strokeWidth: 2, stroke: 'white' }}
+                          connectNulls
+                          isAnimationActive={true}
+                        />
+                      );
+                    })}
+                  </ComposedChart>
                 </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Empty state when no chart data */}
+            {chartData.length === 0 && (
+              <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground text-sm">
+                ยังไม่มีข้อมูลเพียงพอสำหรับสร้างกราฟ
               </div>
             )}
 
