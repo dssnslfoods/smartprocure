@@ -53,11 +53,31 @@ export default function SupplierPortal() {
   const [contactDialogOpen, setContactDialogOpen] = useState(false);
 
   const fetchData = async () => {
-    if (!profile?.supplier_id) { setLoading(false); return; }
-    const sid = profile.supplier_id;
+    // Resolve the supplier row for the logged-in user. Prefer profile.supplier_id,
+    // but fall back to (a) suppliers.created_by = auth.uid(), or (b) email match.
+    // Also auto-link profile.supplier_id when the fallback succeeds, so future
+    // lookups are O(1).
+    let sid: string | null = profile?.supplier_id ?? null;
+
+    if (!sid && user?.id) {
+      const byCreated = await supabase
+        .from('suppliers').select('id').eq('created_by', user.id).maybeSingle();
+      if (byCreated.data?.id) sid = byCreated.data.id;
+    }
+    if (!sid && profile?.email) {
+      const byEmail = await supabase
+        .from('suppliers').select('id').eq('email', profile.email).maybeSingle();
+      if (byEmail.data?.id) sid = byEmail.data.id;
+    }
+    if (sid && !profile?.supplier_id && user?.id) {
+      // Persist the link so the dashboard / portal find it instantly next time.
+      await supabase.from('profiles').update({ supplier_id: sid }).eq('id', user.id);
+    }
+
+    if (!sid) { setLoading(false); return; }
 
     const [supRes, conRes, docRes] = await Promise.all([
-      supabase.from('suppliers').select('*').eq('id', sid).single(),
+      supabase.from('suppliers').select('*').eq('id', sid).maybeSingle(),
       supabase.from('supplier_contacts').select('*').eq('supplier_id', sid).order('is_primary', { ascending: false }),
       supabase.from('supplier_documents').select('*').eq('supplier_id', sid).order('created_at', { ascending: false }),
     ]);
@@ -81,7 +101,7 @@ export default function SupplierPortal() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [profile?.supplier_id]);
+  useEffect(() => { fetchData(); }, [profile?.supplier_id, user?.id, profile?.email]);
 
   const handleSaveCompany = async () => {
     if (!supplier?.id) return;
