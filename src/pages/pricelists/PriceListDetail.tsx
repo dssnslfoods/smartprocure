@@ -402,9 +402,42 @@ export default function PriceListDetail() {
         return;
       }
 
-      // GUARD 2: lookup supplier in DB by ID — verifies the supplier still exists and gets the
-      // *authoritative* name. The visible "Supplier" cell may have been hand-edited; the hidden
-      // Supplier ID is harder to tamper with by accident.
+      // SUPPLIER ROLE PATH: validate using mySupplierId from profile (suppliers table RLS
+      // blocks read for supplier role, so we cannot fetch the row directly).
+      if (isSupplier) {
+        if (!mySupplierId) {
+          toast.error('บัญชีของท่านยังไม่ผูกกับ supplier — กรุณาติดต่อ admin', { duration: 8000 });
+          setImportPreview(null);
+          return;
+        }
+        if (result.meta.supplierId !== mySupplierId) {
+          toast.error(
+            `ไม่สามารถ import ไฟล์นี้ได้ — ไฟล์ออกให้ "${result.meta.supplierName || 'supplier อื่น'}" ` +
+            `แต่บัญชีที่ login เป็นของ supplier อื่น กรุณาใช้ไฟล์ที่ออกให้บัญชีของท่านเอง`,
+            { duration: 8000 }
+          );
+          setImportPreview(null);
+          return;
+        }
+        // Supplier name in file should match the supplier's own profile name (loose check)
+        if (profile?.full_name && result.meta.supplierName &&
+            result.meta.supplierName.trim() !== profile.full_name.trim()) {
+          toast.error(
+            `ไฟล์ถูกแก้ไข — ชื่อในไฟล์ ("${result.meta.supplierName}") ` +
+            `ไม่ตรงกับชื่อบัญชีของท่าน ("${profile.full_name}") กรุณาใช้ไฟล์ต้นฉบับ`,
+            { duration: 10000 }
+          );
+          setImportPreview(null);
+          return;
+        }
+
+        setImportPreview(result);
+        if (result.errors.length > 0) toast.warning(`พบ ${result.errors.length} ข้อผิดพลาด`);
+        else toast.success(`อ่านไฟล์สำเร็จ ${result.rows.length} รายการ — ${result.meta.supplierName || ''}`);
+        return;
+      }
+
+      // PROCUREMENT/ADMIN PATH: lookup supplier in DB to get authoritative name
       const { data: dbSupplier, error: lookupErr } = await supabase
         .from('suppliers')
         .select('id, company_name, status')
@@ -420,7 +453,7 @@ export default function PriceListDetail() {
         return;
       }
 
-      // GUARD 3: name in file must match name in DB — catches tampering with the visible name cell
+      // Name in file must match DB — catches tampering with the visible name cell
       if (result.meta.supplierName &&
           result.meta.supplierName.trim() !== dbSupplier.company_name.trim()) {
         toast.error(
@@ -433,26 +466,14 @@ export default function PriceListDetail() {
         return;
       }
 
-      // GUARD 4: supplier role can only import their own checklist
-      if (isSupplier && mySupplierId && result.meta.supplierId !== mySupplierId) {
-        toast.error(
-          `ไม่สามารถ import ไฟล์นี้ได้ — ไฟล์ออกให้ "${dbSupplier.company_name}" ` +
-          `แต่บัญชีที่ login เป็นของ supplier อื่น กรุณาใช้ไฟล์ที่ออกให้บัญชีของท่านเอง`,
-          { duration: 8000 }
-        );
-        setImportPreview(null);
-        return;
-      }
-
-      // GUARD 5 (warning only): procurement picked dropdown supplier ≠ file supplier
-      if (!isSupplier && targetSupplierId && targetSupplierId !== result.meta.supplierId) {
+      // Procurement chose dropdown ≠ file supplier — warn but allow (file is authoritative)
+      if (targetSupplierId && targetSupplierId !== result.meta.supplierId) {
         toast.warning(
           `ไฟล์นี้ออกให้ "${dbSupplier.company_name}" — ระบบจะ import เข้า supplier นี้แทน supplier ที่เลือกไว้ใน dropdown`,
           { duration: 6000 }
         );
       }
 
-      // Use DB name as authoritative for downstream display
       result.meta.supplierName = dbSupplier.company_name;
 
       setImportPreview(result);
