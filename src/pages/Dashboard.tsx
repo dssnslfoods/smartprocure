@@ -518,13 +518,14 @@ interface SupplierKPI {
   myExpiredCerts:     ExpiredCertRow[];
   myExpiringCerts:    ExpiredCertRow[];   // ≤30 days
   recentInvites:      { id: string; title: string; status: string; due_date: string | null; created_at: string }[];
-  recentQuotations:   { id: string; total: number | null; status: string; created_at: string; rfq_title?: string }[];
+  recentQuotations:   { id: string; rfq_id: string | null; total: number | null; status: string; created_at: string; rfq_title?: string }[];
 }
 
 function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null; fullName: string }) {
   const navigate = useNavigate();
   const [kpi, setKpi] = useState<SupplierKPI | null>(null);
   const [loading, setLoading] = useState(true);
+  const [certDialogMode, setCertDialogMode] = useState<'expired' | 'expiring' | null>(null);
 
   useEffect(() => {
     if (!supplierId) { setLoading(false); return; }
@@ -600,7 +601,7 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
           myExpiringCerts: expiring,
           recentInvites,
           recentQuotations: quotes.map((q: any) => ({
-            id: q.id, total: q.total_amount, status: q.status, created_at: q.created_at,
+            id: q.id, rfq_id: q.rfq_id || null, total: q.total_amount, status: q.status, created_at: q.created_at,
             rfq_title: q.rfqs?.title || '',
           })),
         });
@@ -639,7 +640,10 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
 
       {/* Personal status row */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate('/supplier-portal')}
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">สถานะของฉัน</CardTitle>
             <Building2 className="h-4 w-4 text-muted-foreground" />
@@ -653,6 +657,7 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
                 ความเสี่ยง: {kpi.myRiskLevel}
               </Badge>
             )}
+            <p className="text-xs text-muted-foreground mt-2">คลิกเพื่อดู Supplier Portal</p>
           </CardContent>
         </Card>
 
@@ -694,7 +699,10 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
 
       {/* Certificates row */}
       <div className="grid gap-4 md:grid-cols-2">
-        <Card className="border-amber-200">
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow border-amber-200"
+          onClick={() => setCertDialogMode('expired')}
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">ใบรับรองที่หมดอายุ</CardTitle>
             <AlertTriangle className="h-4 w-4 text-red-500" />
@@ -702,19 +710,24 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{stat(kpi?.myExpiredCerts.length)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {(kpi?.myExpiredCerts.length ?? 0) > 0 ? 'ต้องต่ออายุก่อนเสนอราคา' : 'ใบรับรองทั้งหมดอยู่ในเกณฑ์'}
+              {(kpi?.myExpiredCerts.length ?? 0) > 0 ? 'คลิกเพื่อดูรายการ — ต้องต่ออายุก่อนเสนอราคา' : 'ใบรับรองทั้งหมดอยู่ในเกณฑ์'}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border-yellow-200">
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow border-yellow-200"
+          onClick={() => setCertDialogMode('expiring')}
+        >
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">ใบรับรองใกล้หมดอายุ (≤30 วัน)</CardTitle>
             <FileBadge className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-yellow-600">{stat(kpi?.myExpiringCerts.length)}</div>
-            <p className="text-xs text-muted-foreground mt-1">เตรียมต่ออายุล่วงหน้า</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {(kpi?.myExpiringCerts.length ?? 0) > 0 ? 'คลิกเพื่อดูรายการ' : 'เตรียมต่ออายุล่วงหน้า'}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -729,7 +742,11 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
             ) : kpi && kpi.recentInvites.length > 0 ? (
               <div className="space-y-3">
                 {kpi.recentInvites.map(r => (
-                  <div key={r.id} className="flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0">
+                  <button
+                    key={r.id}
+                    onClick={() => navigate(`/rfq/${r.id}`)}
+                    className="w-full flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0 text-left hover:bg-muted/40 rounded-md px-2 -mx-2 py-1 transition-colors"
+                  >
                     <div className="mt-0.5 w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
                       <FileText className="w-4 h-4 text-blue-500" />
                     </div>
@@ -739,7 +756,8 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
                         {r.status} · {r.due_date ? `ครบกำหนด ${new Date(r.due_date).toLocaleDateString('th-TH')}` : 'ไม่ระบุกำหนด'}
                       </p>
                     </div>
-                  </div>
+                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-2" />
+                  </button>
                 ))}
               </div>
             ) : (
@@ -756,7 +774,12 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
             ) : kpi && kpi.recentQuotations.length > 0 ? (
               <div className="space-y-3">
                 {kpi.recentQuotations.map(q => (
-                  <div key={q.id} className="flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0">
+                  <button
+                    key={q.id}
+                    onClick={() => q.rfq_id && navigate(`/rfq/${q.rfq_id}`)}
+                    disabled={!q.rfq_id}
+                    className="w-full flex items-start gap-3 pb-3 border-b last:border-0 last:pb-0 text-left hover:bg-muted/40 rounded-md px-2 -mx-2 py-1 transition-colors disabled:hover:bg-transparent disabled:cursor-default"
+                  >
                     <div className="mt-0.5 w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
                       <BarChart2 className="w-4 h-4 text-emerald-500" />
                     </div>
@@ -766,7 +789,8 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
                         {q.status} · ${(q.total || 0).toLocaleString()} · {new Date(q.created_at).toLocaleDateString('th-TH')}
                       </p>
                     </div>
-                  </div>
+                    {q.rfq_id && <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-2" />}
+                  </button>
                 ))}
               </div>
             ) : (
@@ -775,6 +799,96 @@ function SupplierDashboard({ supplierId, fullName }: { supplierId: string | null
           </CardContent>
         </Card>
       </div>
+
+      {/* Certificate dialog — supplier sees only their own certs */}
+      <Dialog open={certDialogMode !== null} onOpenChange={(o) => !o && setCertDialogMode(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {certDialogMode === 'expired'
+                ? <AlertTriangle className="h-5 w-5 text-red-500" />
+                : <FileBadge className="h-5 w-5 text-yellow-500" />}
+              {certDialogMode === 'expired' ? 'ใบรับรองที่หมดอายุ' : 'ใบรับรองใกล้หมดอายุ (≤30 วัน)'}
+            </DialogTitle>
+            <DialogDescription>
+              {certDialogMode === 'expired'
+                ? 'ต้องดำเนินการต่ออายุก่อนเสนอราคาในระบบ'
+                : 'เตรียมต่ออายุล่วงหน้าเพื่อหลีกเลี่ยงผลกระทบต่อการเสนอราคา'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const list = certDialogMode === 'expired'
+              ? (kpi?.myExpiredCerts || [])
+              : (kpi?.myExpiringCerts || []);
+            if (list.length === 0) {
+              return (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <FileBadge className="h-10 w-10 mb-2 opacity-30" />
+                  <p className="text-sm">ไม่พบใบรับรองในรายการนี้</p>
+                </div>
+              );
+            }
+            return (
+              <div className="overflow-y-auto flex-1 -mx-6 px-6">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-background border-b z-10">
+                    <tr className="text-muted-foreground text-xs">
+                      <th className="text-left p-2 font-medium">ประเภท</th>
+                      <th className="text-left p-2 font-medium">เลขที่</th>
+                      <th className="text-left p-2 font-medium">หมดอายุ</th>
+                      <th className="text-right p-2 font-medium">
+                        {certDialogMode === 'expired' ? 'เกินกำหนด' : 'เหลือ'}
+                      </th>
+                      <th className="p-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {list.map(c => {
+                      const days = certDialogMode === 'expired' ? c.daysOverdue : -c.daysOverdue;
+                      return (
+                        <tr key={c.cert_id} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="p-2">
+                            <Badge variant="secondary" className="font-mono text-[10px]">
+                              {c.certificate_type}
+                            </Badge>
+                          </td>
+                          <td className="p-2 text-muted-foreground font-mono text-xs">
+                            {c.certificate_no || '—'}
+                          </td>
+                          <td className={`p-2 font-medium ${certDialogMode === 'expired' ? 'text-red-700' : 'text-yellow-700'}`}>
+                            {new Date(c.expiry_date).toLocaleDateString('th-TH')}
+                          </td>
+                          <td className="p-2 text-right">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              certDialogMode === 'expired'
+                                ? (days > 90 ? 'bg-red-100 text-red-700' : days > 30 ? 'bg-amber-100 text-amber-700' : 'bg-yellow-100 text-yellow-700')
+                                : 'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              {days} วัน
+                            </span>
+                          </td>
+                          <td className="p-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => { setCertDialogMode(null); navigate('/supplier-portal'); }}
+                            >
+                              <ExternalLink className="h-3 w-3 mr-1" />
+                              จัดการ
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
