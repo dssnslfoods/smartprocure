@@ -5,15 +5,30 @@ import {
   UserCheck, Briefcase, ShieldAlert, Languages, AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
+import { supabase } from '@/integrations/supabase/client';
 
 export default function AppSidebar() {
   const { roles, profile, signOut } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { t, i18n } = useTranslation();
+
+  // For supplier role, show the company name from suppliers (not profile.full_name
+  // which is typically the contact person).
+  const isSupplier = roles.includes('supplier');
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isSupplier || !profile?.supplier_id) { setCompanyName(null); return; }
+    supabase.from('suppliers').select('company_name').eq('id', profile.supplier_id).maybeSingle()
+      .then(({ data }) => setCompanyName(data?.company_name ?? null));
+  }, [isSupplier, profile?.supplier_id]);
+
+  const displayName = isSupplier
+    ? (companyName || profile?.full_name || profile?.email)
+    : (profile?.full_name || profile?.email);
 
   const menuItems = [
     { icon: LayoutDashboard, label: t('nav.dashboard'),         path: '/',                        roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'] },
@@ -90,7 +105,7 @@ export default function AppSidebar() {
         {!collapsed && profile && (
           <div className="px-3 py-2">
             <p className="text-xs font-medium text-sidebar-accent-foreground truncate">
-              {profile.full_name || profile.email}
+              {displayName}
             </p>
             <p className="text-[10px] text-sidebar-foreground truncate capitalize">
               {roles.join(', ')}
