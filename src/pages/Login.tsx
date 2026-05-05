@@ -46,21 +46,45 @@ export default function Login() {
       const isSupplier = roles?.some(r => r.role === 'supplier');
 
       if (isSupplier) {
-        // Check supplier approval status
+        // Gate by supplier status — but allow 'rejected' through so the user
+        // can see the rejection banner inside the portal and resubmit.
         const { data: profile } = await supabase.from('profiles').select('supplier_id').eq('id', user.id).single();
         if (profile?.supplier_id) {
           const { data: supplier } = await supabase.from('suppliers').select('status').eq('id', profile.supplier_id).single();
-          if (supplier && supplier.status !== 'approved') {
-            await supabase.auth.signOut();
-            setLoading(false);
-            setError('บัญชีของท่านอยู่ระหว่างการตรวจสอบ กรุณารอการอนุมัติจากผู้ดูแลระบบ');
-            return;
+          if (supplier) {
+            // Suspended → fully blocked
+            if (supplier.status === 'suspended') {
+              await supabase.auth.signOut();
+              setLoading(false);
+              setError('บัญชีของท่านถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
+              return;
+            }
+            // Submitted / review / draft → still pending, block login
+            if (supplier.status === 'submitted' || supplier.status === 'review' || supplier.status === 'draft') {
+              await supabase.auth.signOut();
+              setLoading(false);
+              setError('บัญชีของท่านอยู่ระหว่างการตรวจสอบ กรุณารอการอนุมัติจากผู้ดูแลระบบ');
+              return;
+            }
+            // 'rejected' falls through — allowed to login so they can read the
+            // rejection reason and resubmit from /supplier-portal.
+            // 'approved' falls through normally.
           }
         }
       }
     }
 
     setLoading(false);
+    // Send rejected suppliers straight to their portal so the banner is the
+    // first thing they see.
+    const { data: { user: u2 } } = await supabase.auth.getUser();
+    if (u2) {
+      const { data: prof } = await supabase.from('profiles').select('supplier_id').eq('id', u2.id).maybeSingle();
+      if (prof?.supplier_id) {
+        const { data: sup } = await supabase.from('suppliers').select('status').eq('id', prof.supplier_id).maybeSingle();
+        if (sup?.status === 'rejected') { navigate('/supplier-portal'); return; }
+      }
+    }
     navigate('/');
   };
 
