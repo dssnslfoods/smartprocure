@@ -114,8 +114,10 @@ export default function SupplierApprovalPage() {
   const handleReject = async (id: string) => {
     const { error } = await supabase.from('suppliers').update({
       status: 'rejected',
+      rejection_reason: rejectReason || null,
+      rejected_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }).eq('id', id);
+    } as any).eq('id', id);
 
     if (!error) {
       const sup = suppliers.find(s => s.id === id);

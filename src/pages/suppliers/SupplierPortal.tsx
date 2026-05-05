@@ -223,6 +223,74 @@ export default function SupplierPortal() {
         </Badge>
       </div>
 
+      {/* Rejection banner — shown when admin rejected the registration */}
+      {supplier.status === 'rejected' && (
+        <Card className="border-red-300 bg-red-50">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <X className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="font-semibold text-red-800">การลงทะเบียนของท่านไม่ผ่านการพิจารณา</p>
+                {supplier.rejected_at && (
+                  <p className="text-xs text-red-700 mt-0.5">
+                    วันที่ปฏิเสธ: {new Date(supplier.rejected_at).toLocaleString('th-TH')}
+                  </p>
+                )}
+                {supplier.rejection_reason ? (
+                  <div className="mt-2 p-3 rounded-md bg-white border border-red-200 text-sm text-red-900">
+                    <p className="text-xs font-semibold text-red-700 mb-1">เหตุผลจากผู้ดูแลระบบ:</p>
+                    {supplier.rejection_reason}
+                  </div>
+                ) : (
+                  <p className="text-sm text-red-700 mt-2">ผู้ดูแลระบบไม่ได้ระบุเหตุผล กรุณาติดต่อทีมจัดซื้อ</p>
+                )}
+                <div className="mt-3 p-3 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-900">
+                  <p className="font-semibold mb-1">📝 ขั้นตอนถัดไป</p>
+                  <ol className="list-decimal list-inside space-y-1 text-xs">
+                    <li>แก้ไขข้อมูลในแท็บ "ข้อมูลบริษัท" / "ผู้ติดต่อ" / "เอกสาร" ตามเหตุผลข้างต้น</li>
+                    <li>เมื่อพร้อมแล้ว กดปุ่ม "ส่งข้อมูลใหม่อีกครั้ง" ด้านล่าง</li>
+                    <li>ระบบจะแจ้งผู้ดูแลตรวจสอบใหม่ — ท่านจะได้รับแจ้งผลทาง email/notification</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button
+                onClick={async () => {
+                  if (!confirm('ยืนยันส่งข้อมูลใหม่อีกครั้ง? ผู้ดูแลจะตรวจสอบและแจ้งผลกลับ')) return;
+                  const { error } = await supabase.rpc('supplier_resubmit_registration');
+                  if (error) {
+                    toast({ title: 'ส่งใหม่ไม่สำเร็จ', description: error.message, variant: 'destructive' });
+                  } else {
+                    toast({ title: 'ส่งข้อมูลใหม่เรียบร้อย', description: 'ผู้ดูแลจะตรวจสอบและแจ้งผลกลับเร็วที่สุด' });
+                    fetchData();
+                  }
+                }}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                <Upload className="w-4 h-4 mr-2" /> ส่งข้อมูลใหม่อีกครั้ง
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Resubmitted banner — confirmation after they hit resubmit */}
+      {supplier.status === 'submitted' && supplier.resubmitted_at && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="p-4 flex items-start gap-3">
+            <Clock className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold text-blue-800">ส่งข้อมูลใหม่แล้ว — กำลังรอผู้ดูแลตรวจสอบ</p>
+              <p className="text-xs text-blue-700 mt-1">
+                ส่งเมื่อ: {new Date(supplier.resubmitted_at).toLocaleString('th-TH')} —
+                ท่านจะได้รับแจ้งผลผ่าน email และ notification
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Quick Stats */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card>
