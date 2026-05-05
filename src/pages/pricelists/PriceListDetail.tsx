@@ -10,8 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   ArrowLeft, Search, Pin, FileSpreadsheet, Upload, Lock, AlertCircle,
   CheckCircle2, Download, ChevronDown, ChevronRight, Gavel, Save, Calculator,
-  Clock, AlertTriangle, History,
+  Clock, AlertTriangle, History, Plus, Edit2, Trash2,
 } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import QuotationHistoryDialog from '@/components/QuotationHistoryDialog';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
@@ -95,6 +97,15 @@ export default function PriceListDetail() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [historyItem, setHistoryItem] = useState<{ id: string; name: string; code: string | null; unit: string | null } | null>(null);
+
+  // Item create/edit dialog (admin/procurement only)
+  const [itemDlgOpen, setItemDlgOpen] = useState(false);
+  const [itemDlgSaving, setItemDlgSaving] = useState(false);
+  const [itemForm, setItemForm] = useState({
+    id: '', item_code: '', item_name: '', description: '', unit: '',
+    reference_price: '', moq: '', lead_time_days: '',
+    is_nominated: false, designated_supplier_id: '',
+  });
 
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [targetSupplierId, setTargetSupplierId] = useState<string>('');
@@ -349,6 +360,73 @@ export default function PriceListDetail() {
     setItems(prev => prev.map(i => i.id === itemId ? { ...i, target_quantity: value } : i));
     setQtyDraft(prev => { const n = { ...prev }; delete n[itemId]; return n; });
     toast.success('บันทึกปริมาณแล้ว');
+  };
+
+  // ── Item CRUD (admin/procurement) ──────────────────────────────────────
+  const openNewItem = () => {
+    setItemForm({
+      id: '', item_code: '', item_name: '', description: '', unit: '',
+      reference_price: '', moq: '', lead_time_days: '',
+      is_nominated: false, designated_supplier_id: '',
+    });
+    setItemDlgOpen(true);
+  };
+  const openEditItem = (it: ItemRow) => {
+    setItemForm({
+      id: it.id,
+      item_code: it.item_code || '',
+      item_name: it.item_name || '',
+      description: (it as any).description || '',
+      unit: it.unit || '',
+      reference_price: (it.reference_price ?? '').toString(),
+      moq: (it.moq ?? '').toString(),
+      lead_time_days: (it.lead_time_days ?? '').toString(),
+      is_nominated: !!it.is_nominated,
+      designated_supplier_id: it.designated_supplier_id || '',
+    });
+    setItemDlgOpen(true);
+  };
+  const saveItem = async () => {
+    if (!header) return;
+    if (!itemForm.item_name) { toast.error('กรุณากรอกชื่อสินค้า'); return; }
+    if (itemForm.is_nominated && !itemForm.designated_supplier_id) {
+      toast.error('สินค้า Nominated ต้องระบุ supplier');
+      return;
+    }
+    setItemDlgSaving(true);
+    const payload: any = {
+      item_code: itemForm.item_code || null,
+      item_name: itemForm.item_name,
+      description: itemForm.description || null,
+      unit: itemForm.unit || null,
+      reference_price: itemForm.reference_price ? Number(itemForm.reference_price) : null,
+      moq: itemForm.moq ? Number(itemForm.moq) : null,
+      lead_time_days: itemForm.lead_time_days ? Number(itemForm.lead_time_days) : null,
+      is_nominated: itemForm.is_nominated,
+      designated_supplier_id: itemForm.is_nominated ? (itemForm.designated_supplier_id || null) : null,
+      nomination_status: itemForm.is_nominated ? 'nominated' : null,
+    };
+    let error;
+    if (itemForm.id) {
+      ({ error } = await supabase.from('price_list_items').update(payload).eq('id', itemForm.id));
+    } else {
+      payload.price_list_id = header.id;
+      ({ error } = await supabase.from('price_list_items').insert(payload));
+    }
+    setItemDlgSaving(false);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success(itemForm.id ? 'อัปเดตสินค้าแล้ว' : 'เพิ่มสินค้าแล้ว');
+      setItemDlgOpen(false);
+      reload();
+    }
+  };
+  const deleteItem = async (it: ItemRow) => {
+    if (!confirm(`ลบรายการ "${it.item_name}" ถาวร?\n\nคำเตือน: ราคาที่เคยเสนอจาก supplier ทั้งหมดจะถูกลบด้วย`)) return;
+    const { error } = await supabase.from('price_list_items').delete().eq('id', it.id);
+    if (error) toast.error(error.message);
+    else { toast.success('ลบรายการแล้ว'); reload(); }
   };
 
   const handleExport = async () => {
@@ -709,6 +787,11 @@ export default function PriceListDetail() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {isProcurement && (
+                <Button variant="outline" onClick={openNewItem}>
+                  <Plus className="h-4 w-4 mr-2" />เพิ่มรายการ
+                </Button>
+              )}
               <Button onClick={handleExport} disabled={selected.size === 0}>
                 <Download className="h-4 w-4 mr-2" />Export Checklist (.xlsx)
               </Button>
@@ -895,6 +978,20 @@ export default function PriceListDetail() {
                               <span className="text-xs text-muted-foreground line-clamp-1">{it.designated_supplier_name || '—'}</span>
                             </div>
                           ) : (<span className="text-xs text-muted-foreground">เปิดเสนอ</span>)}
+                          {isProcurement && (
+                            <div className="flex gap-1 mt-1">
+                              <Button variant="ghost" size="icon" className="h-6 w-6"
+                                      onClick={(e) => { e.stopPropagation(); openEditItem(it); }}
+                                      title="แก้ไข">
+                                <Edit2 className="h-3 w-3" />
+                              </Button>
+                              <Button variant="ghost" size="icon" className="h-6 w-6 text-red-600"
+                                      onClick={(e) => { e.stopPropagation(); deleteItem(it); }}
+                                      title="ลบ">
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
                         </td>
                       </tr>
 
@@ -1107,6 +1204,82 @@ export default function PriceListDetail() {
           </Card>
         </div>
       )}
+
+      {/* Item create/edit dialog (admin/procurement) */}
+      <Dialog open={itemDlgOpen} onOpenChange={setItemDlgOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{itemForm.id ? 'แก้ไขรายการ' : 'เพิ่มรายการสินค้าใหม่'}</DialogTitle>
+            <DialogDescription>
+              {header?.title}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>รหัสสินค้า</Label>
+              <Input value={itemForm.item_code}
+                     onChange={e => setItemForm(p => ({ ...p, item_code: e.target.value }))}
+                     placeholder="เช่น RM-001" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>หน่วย</Label>
+              <Input value={itemForm.unit}
+                     onChange={e => setItemForm(p => ({ ...p, unit: e.target.value }))}
+                     placeholder="เช่น กก., ฟอง, ชิ้น" />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>ชื่อสินค้า *</Label>
+              <Input value={itemForm.item_name}
+                     onChange={e => setItemForm(p => ({ ...p, item_name: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>คำอธิบาย</Label>
+              <Textarea rows={2} value={itemForm.description}
+                        onChange={e => setItemForm(p => ({ ...p, description: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>ราคากลาง / Reference Price</Label>
+              <Input type="number" step="0.01" value={itemForm.reference_price}
+                     onChange={e => setItemForm(p => ({ ...p, reference_price: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>MOQ (ขั้นต่ำ)</Label>
+              <Input type="number" value={itemForm.moq}
+                     onChange={e => setItemForm(p => ({ ...p, moq: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Lead Time (วัน)</Label>
+              <Input type="number" value={itemForm.lead_time_days}
+                     onChange={e => setItemForm(p => ({ ...p, lead_time_days: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5 flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <Checkbox checked={itemForm.is_nominated}
+                  onCheckedChange={(v) => setItemForm(p => ({ ...p, is_nominated: !!v }))} />
+                <span className="text-sm">★ Nominated (กำหนด supplier เฉพาะ)</span>
+              </label>
+            </div>
+            {itemForm.is_nominated && (
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>Designated Supplier *</Label>
+                <Select value={itemForm.designated_supplier_id}
+                        onValueChange={v => setItemForm(p => ({ ...p, designated_supplier_id: v }))}>
+                  <SelectTrigger><SelectValue placeholder="เลือก supplier" /></SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setItemDlgOpen(false)}>ยกเลิก</Button>
+            <Button onClick={saveItem} disabled={itemDlgSaving}>
+              {itemDlgSaving ? 'กำลังบันทึก...' : 'บันทึก'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Quotation history dialog */}
       {historyItem && (
