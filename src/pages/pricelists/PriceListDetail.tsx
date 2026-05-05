@@ -351,7 +351,7 @@ export default function PriceListDetail() {
     toast.success('บันทึกปริมาณแล้ว');
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!header) return;
     if (selected.size === 0) { toast.error('กรุณาเลือกอย่างน้อย 1 รายการ'); return; }
     const rows = items.filter(i => selected.has(i.id));
@@ -362,7 +362,15 @@ export default function PriceListDetail() {
     let supplierName = '';
     let supplierId: string | undefined;
     if (isSupplier) {
-      supplierName = profile?.full_name || '';
+      // Always use the company_name from the suppliers row, not profile.full_name
+      // (which is typically the contact person, e.g. "อานนท์").
+      if (mySupplierId) {
+        const { data: mySup } = await supabase
+          .from('suppliers').select('company_name').eq('id', mySupplierId).maybeSingle();
+        supplierName = mySup?.company_name || profile?.full_name || '';
+      } else {
+        supplierName = profile?.full_name || '';
+      }
       supplierId   = mySupplierId || undefined;
     } else if (lockedSupplier) {
       supplierName = lockedSupplier.name;
