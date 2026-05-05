@@ -70,10 +70,23 @@ export default function PriceListPage() {
 
   const fetchCatalogs = async () => {
     setLoading(true);
-    const { data: lists } = await supabase
+
+    // Authoritative visibility: ask the server which catalogs the current
+    // user is allowed to see. This sidesteps any RLS / PostgREST cache
+    // edge cases that could leak hidden catalogs to suppliers.
+    const { data: visibleIds } = await supabase.rpc('my_visible_catalog_ids');
+    const ids = ((visibleIds as any[]) || []).map((r: any) => typeof r === 'string' ? r : r.my_visible_catalog_ids).filter(Boolean);
+
+    let query = supabase
       .from('price_lists')
-      .select('id, title, category, status, valid_until, notes, price_list_items(id, is_nominated), price_list_visible_suppliers(id)')
-      .order('category');
+      .select('id, title, category, status, valid_until, notes, price_list_items(id, is_nominated), price_list_visible_suppliers(id)');
+    if (Array.isArray(ids) && ids.length > 0) {
+      query = query.in('id', ids);
+    } else if (isSupplier) {
+      // Supplier with no visible catalogs — return empty
+      setCatalogs([]); setLoading(false); return;
+    }
+    const { data: lists } = await query.order('category');
 
     let mySubmissionsByCatalog: Record<string, string> = {};
     if (isSupplier && mySupplierId && lists?.length) {
