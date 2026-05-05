@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
-import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, Landmark, KeyRound } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, Landmark, KeyRound, Pause, Play, Trash2, Edit2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -164,6 +165,45 @@ export default function SupplierApprovalPage() {
     }
   };
 
+  const navigate = useNavigate();
+
+  const handleSuspend = async (s: any) => {
+    const reason = prompt(`ระงับ supplier "${s.company_name}"\nกรุณาระบุเหตุผล (optional):`);
+    if (reason === null) return; // cancel
+    const { error } = await supabase.rpc('admin_suspend_supplier', {
+      p_supplier_id: s.id,
+      p_reason: reason || null,
+    });
+    if (error) {
+      toast({ title: 'ระงับไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'ระงับ supplier เรียบร้อย', description: s.company_name });
+      fetchSuppliers();
+    }
+  };
+
+  const handleReactivate = async (s: any) => {
+    if (!confirm(`เปิดใช้งาน supplier "${s.company_name}" อีกครั้ง?`)) return;
+    const { error } = await supabase.rpc('admin_reactivate_supplier', { p_supplier_id: s.id });
+    if (error) {
+      toast({ title: 'เปิดใช้งานไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'เปิดใช้งาน supplier เรียบร้อย', description: s.company_name });
+      fetchSuppliers();
+    }
+  };
+
+  const handleDelete = async (s: any) => {
+    if (!confirm(`ลบ supplier "${s.company_name}" ถาวร?\n\nคำเตือน: การกระทำนี้ลบข้อมูลทั้งหมดที่เกี่ยวข้อง (RFQ, NCR, certificates) และย้อนกลับไม่ได้`)) return;
+    const { error } = await supabase.rpc('admin_delete_supplier', { p_supplier_id: s.id });
+    if (error) {
+      toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'ลบ supplier เรียบร้อย' });
+      fetchSuppliers();
+    }
+  };
+
   const handleResetPassword = async () => {
     if (!newPassword || newPassword.length < 6) {
       toast({ title: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', variant: 'destructive' });
@@ -278,20 +318,36 @@ export default function SupplierApprovalPage() {
                       </td>
                       <td className="p-3 text-muted-foreground">{new Date(s.created_at).toLocaleDateString('th-TH')}</td>
                       <td className="p-3 text-right">
-                        <div className="flex gap-1 justify-end">
-                          <Button variant="ghost" size="sm" onClick={() => openDetail(s)}>
+                        <div className="flex gap-1 justify-end flex-wrap">
+                          <Button variant="ghost" size="sm" onClick={() => openDetail(s)} title="ตรวจสอบรายละเอียด">
                             <Eye className="w-3 h-3 mr-1" /> ตรวจสอบ
                           </Button>
+                          <Button variant="ghost" size="sm" onClick={() => navigate(`/suppliers/${s.id}/edit`)} title="แก้ไขข้อมูล">
+                            <Edit2 className="w-3 h-3 mr-1" /> แก้ไข
+                          </Button>
                           {s.created_by && (
-                            <Button variant="ghost" size="sm" className="text-blue-600" onClick={() => { setResetTarget(s); setNewPassword(''); setResetOpen(true); }}>
+                            <Button variant="ghost" size="sm" className="text-blue-600" onClick={() => { setResetTarget(s); setNewPassword(''); setResetOpen(true); }} title="รีเซ็ตรหัสผ่านบัญชี supplier">
                               <KeyRound className="w-3 h-3 mr-1" /> รีเซ็ตรหัสผ่าน
                             </Button>
                           )}
                           {(s.status === 'submitted' || s.status === 'review') && (
-                            <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleApprove(s.id)}>
+                            <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleApprove(s.id)} title="อนุมัติ supplier">
                               <CheckCircle2 className="w-3 h-3 mr-1" /> อนุมัติ
                             </Button>
                           )}
+                          {s.status === 'approved' && (
+                            <Button variant="ghost" size="sm" className="text-amber-600" onClick={() => handleSuspend(s)} title="ระงับการใช้งาน">
+                              <Pause className="w-3 h-3 mr-1" /> ระงับ
+                            </Button>
+                          )}
+                          {s.status === 'suspended' && (
+                            <Button variant="ghost" size="sm" className="text-emerald-600" onClick={() => handleReactivate(s)} title="เปิดใช้งานอีกครั้ง">
+                              <Play className="w-3 h-3 mr-1" /> เปิดใช้
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDelete(s)} title="ลบถาวร">
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
                       </td>
                     </tr>
