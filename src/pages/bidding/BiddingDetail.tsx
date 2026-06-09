@@ -9,7 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { ArrowLeft, Play, Square, SkipForward, Trophy, Clock, Users, TrendingDown } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { ArrowLeft, Play, Square, SkipForward, Trophy, Clock, Users, TrendingDown, Send, CheckCircle } from 'lucide-react';
 
 const statusColor: Record<string, string> = {
   scheduled: 'bg-blue-100 text-blue-800',
@@ -28,6 +29,10 @@ export default function BiddingDetail() {
   const [bidForm, setBidForm] = useState({ supplier_id: '', bid_amount: '' });
   const [submitting, setSubmitting] = useState(false);
   const [timeLeft, setTimeLeft] = useState('');
+  const [sentToFQ, setSentToFQ] = useState(false);
+  const [sendingFQ, setSendingFQ] = useState(false);
+  const { user, hasRole } = useAuth();
+  const canManage = hasRole('admin') || hasRole('procurement_officer');
 
   const fetchData = useCallback(async () => {
     const [evRes, bidRes, supRes] = await Promise.all([
@@ -38,6 +43,15 @@ export default function BiddingDetail() {
     if (evRes.data) setEvent(evRes.data);
     if (bidRes.data) setBids(bidRes.data);
     if (supRes.data) setSuppliers(supRes.data);
+
+    // Check if winner already sent to Final Quotation
+    const { data: fqData } = await supabase
+      .from('final_quotations')
+      .select('id')
+      .eq('bidding_event_id', id!)
+      .maybeSingle();
+    setSentToFQ(!!fqData);
+
     setLoading(false);
   }, [id]);
 
@@ -118,6 +132,38 @@ export default function BiddingDetail() {
     if (!existing || b.bid_amount < existing.bid_amount) bestBidBySupplier.set(b.supplier_id, b);
   });
   const ranked = Array.from(bestBidBySupplier.values()).sort((a, b) => a.bid_amount - b.bid_amount);
+  const winner = ranked[0] || null;
+
+  const sendWinnerToFQ = async () => {
+    if (!user || !winner || !event) return;
+    setSendingFQ(true);
+    try {
+      const { data: existing } = await supabase
+        .from('final_quotations')
+        .select('id')
+        .eq('bidding_event_id', event.id)
+        .maybeSingle();
+      if (existing) { setSentToFQ(true); setSendingFQ(false); return; }
+
+      const { error } = await supabase.from('final_quotations').insert({
+        rfq_id: event.rfq_id || null,
+        supplier_id: winner.supplier_id,
+        bidding_event_id: event.id,
+        quotation_id: null,
+        total_amount: winner.bid_amount,
+        currency: 'THB',
+        notes: `จากการประมูล "${event.title}"${event.rfqs ? ` — ${event.rfqs.rfq_number}` : ''} | รอบสุดท้าย R${currentRound} | ผู้ชนะ: ${winner.suppliers?.company_name}`,
+        status: 'pending',
+        created_by: user.id,
+      });
+      if (error) throw error;
+      setSentToFQ(true);
+      toast.success(`ส่งผู้ชนะ ${winner.suppliers?.company_name} ไป Final Quotation แล้ว`);
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+    setSendingFQ(false);
+  };
 
   if (loading) return <div className="p-8 text-center text-muted-foreground">Loading...</div>;
   if (!event) return <div className="p-8 text-center text-muted-foreground">Event not found</div>;
@@ -191,6 +237,37 @@ export default function BiddingDetail() {
             </>
           )}
         </div>
+      )}
+
+      {/* Winner banner — show when closed with a winner */}
+      {event.status === 'closed' && winner && (
+        <Card className="border-emerald-200 bg-emerald-50/50">
+          <CardContent className="p-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-emerald-500/10 rounded-lg">
+                <Trophy className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">ผู้ชนะการประมูล</p>
+                <p className="text-lg font-bold">{winner.suppliers?.company_name || '—'}</p>
+                <p className="text-sm text-emerald-700">
+                  ราคาประมูล: <span className="font-bold font-mono">{winner.bid_amount.toLocaleString()}</span> · รอบ {currentRound}
+                </p>
+              </div>
+            </div>
+            {canManage && (
+              sentToFQ ? (
+                <span className="inline-flex items-center gap-1.5 text-sm text-emerald-600 shrink-0">
+                  <CheckCircle className="w-4 h-4" /> ส่งไป Final Quotation แล้ว
+                </span>
+              ) : (
+                <Button className="bg-emerald-600 hover:bg-emerald-700 shrink-0" disabled={sendingFQ} onClick={sendWinnerToFQ}>
+                  <Send className="w-4 h-4 mr-2" />{sendingFQ ? 'กำลังส่ง...' : 'ส่ง Final Quotation'}
+                </Button>
+              )
+            )}
+          </CardContent>
+        </Card>
       )}
 
       <Tabs defaultValue="ranking">

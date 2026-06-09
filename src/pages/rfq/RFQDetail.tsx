@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
@@ -183,6 +183,9 @@ export default function RFQDetail() {
           <TabsTrigger value="comparison" className="flex items-center gap-1">
             <BarChart2 className="w-3.5 h-3.5" />Bid Comparison
           </TabsTrigger>
+          <TabsTrigger value="ebidding" className="flex items-center gap-1">
+            <Gavel className="w-3.5 h-3.5" />E-Bidding
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="details">
@@ -238,6 +241,10 @@ export default function RFQDetail() {
             </Link>
           </div>
           <RFQComparisonInline rfqId={id!} />
+        </TabsContent>
+
+        <TabsContent value="ebidding">
+          <RFQBiddingResults rfqId={id!} />
         </TabsContent>
       </Tabs>
     </div>
@@ -374,6 +381,152 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// E-Bidding results for this RFQ — shows winner of each linked bidding event
+function RFQBiddingResults({ rfqId }: { rfqId: string }) {
+  const [events, setEvents] = useSt<any[]>([]);
+  const [loading, setLoading] = useSt(true);
+  const [rfqData, setRfqData] = useSt<any>(null);
+  const [sentEvents, setSentEvents] = useSt<Set<string>>(new Set());
+  const [sending, setSending] = useSt<string | null>(null);
+  const { user, hasRole: hr } = useAuth();
+  const { toast: t } = useToast();
+  const canMng = hr('admin') || hr('procurement_officer');
+
+  const load = async () => {
+    const [evRes, rfqRes, fqRes] = await Promise.all([
+      sb.from('bidding_events').select('*').eq('rfq_id', rfqId).order('created_at', { ascending: false }),
+      sb.from('rfqs').select('rfq_number, title').eq('id', rfqId).single(),
+      sb.from('final_quotations').select('bidding_event_id').eq('rfq_id', rfqId).not('bidding_event_id', 'is', null),
+    ]);
+    if (rfqRes.data) setRfqData(rfqRes.data);
+    if (fqRes.data) setSentEvents(new Set(fqRes.data.map((d: any) => d.bidding_event_id)));
+
+    if (evRes.data && evRes.data.length > 0) {
+      const eventIds = evRes.data.map((e: any) => e.id);
+      const { data: bids } = await sb
+        .from('bid_entries')
+        .select('*, suppliers(id, company_name)')
+        .in('bidding_event_id', eventIds);
+
+      const enriched = evRes.data.map((ev: any) => {
+        const evBids = (bids || []).filter((b: any) => b.bidding_event_id === ev.id);
+        // Winner = lowest bid in the highest round that has bids
+        const maxRound = evBids.reduce((m: number, b: any) => Math.max(m, b.round_number || 1), 0);
+        const finalRoundBids = evBids.filter((b: any) => (b.round_number || 1) === maxRound);
+        const bestBySupplier = new Map<string, any>();
+        finalRoundBids.forEach((b: any) => {
+          const ex = bestBySupplier.get(b.supplier_id);
+          if (!ex || b.bid_amount < ex.bid_amount) bestBySupplier.set(b.supplier_id, b);
+        });
+        const ranked = Array.from(bestBySupplier.values()).sort((a, b) => a.bid_amount - b.bid_amount);
+        return { ...ev, winner: ranked[0] || null, totalBids: evBids.length, maxRound };
+      });
+      setEvents(enriched);
+    }
+    setLoading(false);
+  };
+
+  useEff(() => { load(); }, [rfqId]);
+
+  const handleSendWinner = async (ev: any) => {
+    if (!user || !ev.winner) return;
+    setSending(ev.id);
+    try {
+      const { data: existing } = await sb.from('final_quotations').select('id').eq('rfq_id', rfqId).eq('bidding_event_id', ev.id).maybeSingle();
+      if (existing) { setSentEvents(prev => new Set(prev).add(ev.id)); setSending(null); return; }
+      const { error } = await sb.from('final_quotations').insert({
+        rfq_id: rfqId,
+        supplier_id: ev.winner.supplier_id,
+        bidding_event_id: ev.id,
+        quotation_id: null,
+        total_amount: ev.winner.bid_amount,
+        currency: 'THB',
+        notes: `จากการประมูล "${ev.title}" — RFQ ${rfqData?.rfq_number || ''} | รอบสุดท้าย R${ev.maxRound} | ผู้ชนะ: ${ev.winner.suppliers?.company_name}`,
+        status: 'pending',
+        created_by: user.id,
+      });
+      if (error) throw error;
+      setSentEvents(prev => new Set(prev).add(ev.id));
+      t({ title: 'ส่งผู้ชนะการประมูลไป Final Quotation แล้ว', description: `${ev.winner.suppliers?.company_name} — ไปจัดการต่อที่เมนู "ใบเสนอราคาสุดท้าย"` });
+    } catch (err: any) {
+      t({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setSending(null);
+  };
+
+  if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>;
+  if (events.length === 0) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <Gavel className="w-10 h-10 mx-auto mb-3 opacity-30" />
+        <p className="text-sm">ยังไม่มีการประมูล (E-Bidding) ที่เชื่อมกับ RFQ นี้</p>
+        <p className="text-xs mt-1">สร้างการประมูลที่เมนู "การประมูล" แล้วเลือก Linked RFQ เป็น RFQ นี้</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {events.map((ev) => {
+        const closed = ev.status === 'closed';
+        const sent = sentEvents.has(ev.id);
+        return (
+          <Card key={ev.id} className={closed && ev.winner ? 'border-emerald-200' : ''}>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold">{ev.title}</h3>
+                    <Badge variant="secondary" className={
+                      ev.status === 'active' ? 'bg-green-100 text-green-800' :
+                      ev.status === 'closed' ? 'bg-muted text-muted-foreground' :
+                      ev.status === 'scheduled' ? 'bg-blue-100 text-blue-800' : ''
+                    }>{ev.status}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {ev.totalBids} bids · รอบสุดท้าย R{ev.maxRound} / {ev.max_rounds || '∞'}
+                  </p>
+
+                  {ev.winner ? (
+                    <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
+                      <Trophy className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">ผู้ชนะการประมูล</p>
+                        <p className="font-bold">{ev.winner.suppliers?.company_name || '—'}</p>
+                        <p className="text-sm text-emerald-700">
+                          ราคาประมูล: <span className="font-bold font-mono">{ev.winner.bid_amount.toLocaleString()}</span>
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-muted-foreground">ยังไม่มีผู้เสนอราคา</p>
+                  )}
+                </div>
+
+                {canMng && ev.winner && (
+                  <div className="shrink-0">
+                    {sent ? (
+                      <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
+                        <CheckCircle className="w-4 h-4" /> ส่งแล้ว
+                      </span>
+                    ) : !closed ? (
+                      <span className="text-xs text-muted-foreground">ปิดการประมูลก่อนจึงส่งได้</span>
+                    ) : (
+                      <Button size="sm" disabled={sending === ev.id} onClick={() => handleSendWinner(ev)}>
+                        <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'ส่ง Final'}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
