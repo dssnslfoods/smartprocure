@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -285,9 +286,8 @@ export default function FinalQuotationsPage() {
                                         <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent className="max-w-[220px]">
-                                      เลือกใบเสนอราคานี้เป็นผู้ชนะของ RFQ นี้<br />
-                                      <span className="text-muted-foreground">ถัดไป: ยืนยันพร้อมออก PO</span>
+                                    <TooltipContent side="left" className="p-3">
+                                      <WorkflowProgressTooltip currentStep={1} action="เลือกใบเสนอราคานี้เป็นผู้ชนะของ RFQ" />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -300,9 +300,8 @@ export default function FinalQuotationsPage() {
                                         <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent className="max-w-[220px]">
-                                      ยืนยันว่าใบนี้พร้อมจัดทำใบสั่งซื้อ (PO)<br />
-                                      <span className="text-muted-foreground">ถัดไป: สร้างใบมอบงาน</span>
+                                    <TooltipContent side="left" className="p-3">
+                                      <WorkflowProgressTooltip currentStep={2} action="ยืนยันว่าใบนี้พร้อมจัดทำใบสั่งซื้อ (PO)" />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -315,9 +314,8 @@ export default function FinalQuotationsPage() {
                                         <ArrowRight className="w-3 h-3 ml-1" />
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent className="max-w-[240px]">
-                                      สร้าง Award เข้ากระบวนการอนุมัติ<br />
-                                      <span className="text-muted-foreground">แล้วพาไปที่หน้า "การมอบงาน"</span>
+                                    <TooltipContent side="left" className="p-3">
+                                      <WorkflowProgressTooltip currentStep={3} action="สร้าง Award เข้ากระบวนการอนุมัติ" />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -539,5 +537,63 @@ function CompareRow({ label, values, highlight, rawValues }: { label: string; va
         <td key={i} className={`p-3 text-center ${i === minIdx ? 'font-bold text-emerald-600 bg-emerald-500/5' : ''}`}>{v}</td>
       ))}
     </tr>
+  );
+}
+
+const WORKFLOW_STEPS = [
+  { label: 'รอเลือก' },
+  { label: 'เลือกผู้ชนะ' },
+  { label: 'พร้อม PO' },
+  { label: 'มอบงาน' },
+];
+
+function WorkflowProgressTooltip({ currentStep, action }: { currentStep: 1 | 2 | 3; action: string }) {
+  const toStep = currentStep + 1;
+  return (
+    <div className="space-y-2 py-0.5" style={{ minWidth: 220 }}>
+      <p className="text-xs font-medium leading-tight">{action}</p>
+      <div className="flex items-start">
+        {WORKFLOW_STEPS.map((s, i) => {
+          const n = i + 1;
+          const done = n < currentStep;
+          const current = n === currentStep;
+          const next = n === toStep;
+          return (
+            <div key={i} className="flex items-center">
+              <div className="flex flex-col items-center" style={{ minWidth: 48 }}>
+                <div className={cn(
+                  'w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold',
+                  done    && 'bg-emerald-500 text-white',
+                  current && 'bg-amber-400 text-white ring-2 ring-amber-300/50',
+                  next    && 'bg-blue-500 text-white ring-2 ring-blue-300/50',
+                  !done && !current && !next && 'bg-muted-foreground/20 text-muted-foreground',
+                )}>
+                  {done ? '✓' : n}
+                </div>
+                <span className={cn(
+                  'text-[9px] text-center mt-0.5 leading-tight whitespace-nowrap',
+                  done    && 'text-emerald-400',
+                  current && 'text-amber-400 font-bold',
+                  next    && 'text-blue-400 font-bold',
+                  !done && !current && !next && 'text-muted-foreground/50',
+                )}>
+                  {s.label}
+                </span>
+              </div>
+              {i < WORKFLOW_STEPS.length - 1 && (
+                <div className={cn(
+                  'h-px w-3 mb-[18px] flex-shrink-0',
+                  n < currentStep ? 'bg-emerald-500' :
+                  n === currentStep ? 'bg-blue-400' : 'bg-muted-foreground/20',
+                )} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-blue-400 font-medium">
+        ↳ กดเพื่อไปยัง: {WORKFLOW_STEPS[toStep - 1]?.label}
+      </p>
+    </div>
   );
 }
