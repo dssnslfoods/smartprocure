@@ -1,13 +1,15 @@
-import { Navigate } from 'react-router-dom';
-import { useAuth, AppRole } from '@/contexts/AuthContext';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuth, AppRole, ModuleKey } from '@/contexts/AuthContext';
 
 interface Props {
   children: React.ReactNode;
   allowedRoles?: AppRole[];
+  requiredModule?: ModuleKey | string;
 }
 
-export default function ProtectedRoute({ children, allowedRoles }: Props) {
-  const { user, roles, loading } = useAuth();
+export default function ProtectedRoute({ children, allowedRoles, requiredModule }: Props) {
+  const { user, roles, loading, canAccessModule, isSuperAdmin } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -19,7 +21,22 @@ export default function ProtectedRoute({ children, allowedRoles }: Props) {
 
   if (!user) return <Navigate to="/login" replace />;
 
+  // Super admin accessing super-admin routes — allow through
+  if (isSuperAdmin && location.pathname.startsWith('/super-admin')) {
+    return <>{children}</>;
+  }
+
+  // Super admin accessing regular app routes — redirect to super-admin dashboard
+  if (isSuperAdmin && !allowedRoles?.includes('super_admin')) {
+    return <Navigate to="/super-admin" replace />;
+  }
+
   if (allowedRoles && !allowedRoles.some((r) => roles.includes(r))) {
+    return <Navigate to="/" replace />;
+  }
+
+  // Check module access (tenant-level)
+  if (requiredModule && !canAccessModule(requiredModule)) {
     return <Navigate to="/" replace />;
   }
 

@@ -39,11 +39,12 @@ export default function Login() {
       return;
     }
 
-    // Check if supplier user is approved
+    // Check user roles and redirect accordingly
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
       const isSupplier = roles?.some(r => r.role === 'supplier');
+      const isSuperAdmin = roles?.some(r => r.role === 'super_admin');
 
       if (isSupplier) {
         // Check supplier approval status
@@ -58,6 +59,10 @@ export default function Login() {
           }
         }
       }
+
+      setLoading(false);
+      navigate(isSuperAdmin ? '/super-admin' : '/');
+      return;
     }
 
     setLoading(false);

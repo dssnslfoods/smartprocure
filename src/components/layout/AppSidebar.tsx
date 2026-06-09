@@ -5,33 +5,37 @@ import {
   UserCheck, Briefcase, ShieldAlert, Languages,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
 
 export default function AppSidebar() {
-  const { roles, profile, signOut } = useAuth();
+  const { roles, profile, signOut, canAccessModule, tenant, isSuperAdmin } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const { t, i18n } = useTranslation();
 
   const menuItems = [
-    { icon: LayoutDashboard, label: t('nav.dashboard'),         path: '/',                        roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'] },
-    { icon: Briefcase,       label: t('nav.supplierPortal'),    path: '/supplier-portal',          roles: ['supplier'] },
-    { icon: Building2,       label: t('nav.suppliers'),         path: '/suppliers',                roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
-    { icon: ShieldAlert,     label: t('nav.vendorRisk'),        path: '/vendor-risk',              roles: ['admin', 'procurement_officer', 'approver'] },
-    { icon: FileText,        label: t('nav.priceLists'),        path: '/price-lists',              roles: ['admin', 'procurement_officer', 'supplier'] },
-    { icon: Send,            label: t('nav.rfq'),               path: '/rfq',                     roles: ['admin', 'procurement_officer', 'supplier'] },
-    { icon: Gavel,           label: t('nav.eBidding'),          path: '/bidding',                 roles: ['admin', 'procurement_officer', 'supplier'] },
-    { icon: ClipboardList,   label: t('nav.finalQuotations'),   path: '/final-quotations',         roles: ['admin', 'procurement_officer', 'approver'] },
-    { icon: Award,           label: t('nav.awards'),            path: '/awards',                  roles: ['admin', 'procurement_officer', 'approver', 'executive'] },
-    { icon: BarChart3,       label: t('nav.reports'),           path: '/reports',                 roles: ['admin', 'procurement_officer', 'executive'] },
-    { icon: Settings,        label: t('nav.adminSettings'),     path: '/admin',                   roles: ['admin'] },
-    { icon: UserCheck,       label: t('nav.supplierApprovals'), path: '/admin/supplier-approvals', roles: ['admin'] },
+    { icon: LayoutDashboard, label: t('nav.dashboard'),         path: '/',                        roles: ['admin', 'procurement_officer', 'approver', 'executive', 'supplier'], moduleKey: 'dashboard' },
+    { icon: Briefcase,       label: t('nav.supplierPortal'),    path: '/supplier-portal',          roles: ['supplier'],                                                        moduleKey: 'supplier_portal' },
+    { icon: Building2,       label: t('nav.suppliers'),         path: '/suppliers',                roles: ['admin', 'procurement_officer', 'approver', 'executive'],             moduleKey: 'suppliers' },
+    { icon: ShieldAlert,     label: t('nav.vendorRisk'),        path: '/vendor-risk',              roles: ['admin', 'procurement_officer', 'approver'],                         moduleKey: 'vendor_risk' },
+    { icon: FileText,        label: t('nav.priceLists'),        path: '/price-lists',              roles: ['admin', 'procurement_officer', 'supplier'],                         moduleKey: 'price_lists' },
+    { icon: Send,            label: t('nav.rfq'),               path: '/rfq',                     roles: ['admin', 'procurement_officer', 'supplier'],                         moduleKey: 'rfq' },
+    { icon: Gavel,           label: t('nav.eBidding'),          path: '/bidding',                 roles: ['admin', 'procurement_officer', 'supplier'],                         moduleKey: 'e_bidding' },
+    { icon: ClipboardList,   label: t('nav.finalQuotations'),   path: '/final-quotations',         roles: ['admin', 'procurement_officer', 'approver'],                         moduleKey: 'final_quotations' },
+    { icon: Award,           label: t('nav.awards'),            path: '/awards',                  roles: ['admin', 'procurement_officer', 'approver', 'executive'],             moduleKey: 'awards' },
+    { icon: BarChart3,       label: t('nav.reports'),           path: '/reports',                 roles: ['admin', 'procurement_officer', 'executive'],                        moduleKey: 'reports' },
+    { icon: Settings,        label: t('nav.adminSettings'),     path: '/admin',                   roles: ['admin'],                                                            moduleKey: 'admin_settings' },
+    { icon: UserCheck,       label: t('nav.supplierApprovals'), path: '/admin/supplier-approvals', roles: ['admin'],                                                            moduleKey: 'supplier_approvals' },
   ];
 
   const visibleItems = menuItems.filter(
-    (item) => item.roles.some((r) => roles.includes(r as any))
+    (item) =>
+      item.roles.some((r) => roles.includes(r as any)) &&
+      canAccessModule(item.moduleKey)
   );
 
   const toggleLang = () => {
@@ -56,7 +60,7 @@ export default function AppSidebar() {
         {!collapsed && (
           <div className="overflow-hidden">
             <p className="font-semibold text-sm text-sidebar-accent-foreground truncate">Smart Procurement</p>
-            <p className="text-[10px] text-sidebar-foreground truncate">NSL Foods PLC</p>
+            <p className="text-[10px] text-sidebar-foreground truncate">{tenant?.name ?? 'Smart Procurement'}</p>
           </div>
         )}
       </div>

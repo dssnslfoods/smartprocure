@@ -35,6 +35,13 @@ import VendorRiskForm from "@/pages/vendors/VendorRiskForm";
 import RFQBidComparison from "@/pages/rfq/RFQBidComparison";
 import RFQAwardApproval from "@/pages/rfq/RFQAwardApproval";
 import NotFound from "@/pages/NotFound";
+import SuperAdminLayout from "@/components/layout/SuperAdminLayout";
+import SuperAdminDashboard from "@/pages/super-admin/SuperAdminDashboard";
+import TenantList from "@/pages/super-admin/TenantList";
+import TenantForm from "@/pages/super-admin/TenantForm";
+import TenantDetail from "@/pages/super-admin/TenantDetail";
+import GlobalUsers from "@/pages/super-admin/GlobalUsers";
+import GlobalSettings from "@/pages/super-admin/GlobalSettings";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -68,6 +75,21 @@ const App = () => (
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register/supplier" element={<SupplierRegistration />} />
+            {/* Super Admin routes — MUST be before AppLayout to avoid catch-all matching */}
+            <Route
+              element={
+                <ProtectedRoute allowedRoles={['super_admin']}>
+                  <SuperAdminLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/super-admin" element={<SuperAdminDashboard />} />
+              <Route path="/super-admin/tenants" element={<TenantList />} />
+              <Route path="/super-admin/tenants/new" element={<TenantForm />} />
+              <Route path="/super-admin/tenants/:id" element={<TenantDetail />} />
+              <Route path="/super-admin/users" element={<GlobalUsers />} />
+              <Route path="/super-admin/settings" element={<GlobalSettings />} />
+            </Route>
             <Route
               element={
                 <ProtectedRoute>
