@@ -72,18 +72,10 @@ export default function AwardsPage() {
 
   useEffect(() => { fetchStats(); }, []);
 
-  const filters = useCallback((query: any) => {
-    if (search) {
-      return query.or(`award_number.ilike.%${search}%,award_no.ilike.%${search}%,recommendation.ilike.%${search}%`);
-    }
-    return query;
-  }, [search]);
-
   const pagination = useSupabasePagination<any>({
     tableName: 'awards',
     select: '*, suppliers(company_name, risk_level), rfqs(title, rfq_number), final_quotations(currency)',
-    pageSize: 20,
-    filters,
+    pageSize: 200,
   });
 
   const handleStatusChange = async (id: string, status: string) => {
@@ -177,6 +169,24 @@ export default function AwardsPage() {
 
   const canApprove = hasRole('admin') || hasRole('approver');
 
+  const searchLower = search.toLowerCase().trim();
+  const filteredItems = searchLower
+    ? pagination.items.filter((a: any) => {
+        const awardNo = a.award_no || a.award_number || '';
+        const supplier = a.suppliers?.company_name || '';
+        const rfqTitle = a.rfqs?.title || '';
+        const rfqNumber = a.rfqs?.rfq_number || '';
+        const displayAmount = a.final_amount ?? a.amount;
+        const amount = displayAmount ? `${a.final_quotations?.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '';
+        const risk = a.suppliers?.risk_level || '';
+        const status = getStatusDisplay(a).label;
+        const date = (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString() : '';
+        const recommendation = a.recommendation || '';
+        const combined = `${awardNo} ${supplier} ${rfqTitle} ${rfqNumber} ${amount} ${risk} ${status} ${date} ${recommendation}`.toLowerCase();
+        return combined.includes(searchLower);
+      })
+    : pagination.items;
+
   return (
     <div className="space-y-6">
       <div>
@@ -229,7 +239,7 @@ export default function AwardsPage() {
 
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input placeholder={t('awards.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        <Input placeholder="ค้นหา (ผู้ขาย, RFQ, จำนวนเงิน, สถานะ, วันที่...)" value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
       </div>
 
       <Card>
@@ -251,10 +261,10 @@ export default function AwardsPage() {
               <tbody>
                 {pagination.loading ? (
                   <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">{t('common.loading')}</td></tr>
-                ) : pagination.items.length === 0 ? (
-                  <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">{t('awards.noAwards')}</td></tr>
+                ) : filteredItems.length === 0 ? (
+                  <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">{search ? 'ไม่พบผลลัพธ์ที่ค้นหา' : t('awards.noAwards')}</td></tr>
                 ) : (
-                  pagination.items.map(a => {
+                  filteredItems.map(a => {
                     const sc = getStatusDisplay(a);
                     const displayAmount = a.final_amount ?? a.amount;
                     const riskLevel = a.suppliers?.risk_level as RiskLevel;
