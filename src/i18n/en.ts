@@ -377,11 +377,34 @@ const en = {
       step4: 'Award',
     },
     tooltipActions: {
-      select:   'Select this quotation as RFQ winner',
-      readyPO:  'Confirm this quotation is ready for purchase order',
-      award:    'Create Award and send to approval workflow',
+      select:  'Select this quotation as RFQ winner',
+      readyPO: 'Confirm this quotation is ready for purchase order',
+      award:   'Create Award and send to approval workflow',
     },
     tooltipNext: 'Click to proceed to: {{step}}',
+    buttons: {
+      addFQ:       'Add Final Quotation',
+      view:        'View Details',
+      select:      'Select as Winner',
+      readyPO:     'Confirm Ready for PO',
+      createAward: 'Create Award',
+      rejected:    'Rejected',
+    },
+    workflow: {
+      label: 'Steps:',
+      step1: 'Pending',
+      step2: 'Select Winner',
+      step3: 'Ready for PO',
+      step4: 'Create Award',
+    },
+    confirm: {
+      title:       'Confirm Create Award?',
+      description: 'An award will be created from this quotation and sent to the approval workflow.',
+      proceed:     '→ You will be redirected to the "Awards" page after confirmation.',
+      btn:         'Confirm Create Award',
+      created:     '✓ Award Created',
+      createdDesc: 'Redirecting to "Awards" page to complete approval.',
+    },
   },
 } as const;
 

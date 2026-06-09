@@ -172,8 +172,8 @@ export default function FinalQuotationsPage() {
       toast({ title: 'เกิดข้อผิดพลาด', description: error.message, variant: 'destructive' });
     } else {
       toast({
-        title: '✓ สร้างใบมอบงานแล้ว',
-        description: 'กำลังพาไปที่หน้า "การมอบงาน" เพื่อดำเนินการอนุมัติต่อ',
+        title: t('fq.confirm.created'),
+        description: t('fq.confirm.createdDesc'),
       });
       setAwardConfirm(null);
       pagination.refresh();
@@ -213,14 +213,14 @@ export default function FinalQuotationsPage() {
           {/* Compact workflow guide */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <ListChecks className="w-3.5 h-3.5" />
-            <span className="font-medium text-foreground">ขั้นตอน:</span>
-            <span>รอเลือก</span>
+            <span className="font-medium text-foreground">{t('fq.workflow.label')}</span>
+            <span>{t('fq.workflow.step1')}</span>
             <ArrowRight className="w-3 h-3" />
-            <span>เลือกผู้ชนะ</span>
+            <span>{t('fq.workflow.step2')}</span>
             <ArrowRight className="w-3 h-3" />
-            <span>พร้อม PO</span>
+            <span>{t('fq.workflow.step3')}</span>
             <ArrowRight className="w-3 h-3" />
-            <span>สร้างใบมอบงาน</span>
+            <span>{t('fq.workflow.step4')}</span>
           </div>
 
           <div className="relative max-w-sm">
@@ -277,14 +277,14 @@ export default function FinalQuotationsPage() {
                                       <Eye className="w-3 h-3" />
                                     </Button>
                                   </TooltipTrigger>
-                                  <TooltipContent>ดูรายละเอียด</TooltipContent>
+                                  <TooltipContent>{t('fq.buttons.view')}</TooltipContent>
                                 </Tooltip>
 
                                 {canManage && !q.is_selected && q.status !== 'rejected' && (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button variant="outline" size="sm" onClick={() => handleSelect(q.id, q.rfq_id)}>
-                                        <CheckCircle2 className="w-3 h-3 mr-1" />เลือกเป็นผู้ชนะ
+                                        <CheckCircle2 className="w-3 h-3 mr-1" />{t('fq.buttons.select')}
                                         <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
@@ -298,7 +298,7 @@ export default function FinalQuotationsPage() {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button variant="outline" size="sm" onClick={() => handleReadyForPO(q.id)}>
-                                        <FileCheck className="w-3 h-3 mr-1" />ยืนยันพร้อม PO
+                                        <FileCheck className="w-3 h-3 mr-1" />{t('fq.buttons.readyPO')}
                                         <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
@@ -312,7 +312,7 @@ export default function FinalQuotationsPage() {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button size="sm" onClick={() => setAwardConfirm(q)}>
-                                        <Award className="w-3 h-3 mr-1" />สร้างใบมอบงาน
+                                        <Award className="w-3 h-3 mr-1" />{t('fq.buttons.createAward')}
                                         <ArrowRight className="w-3 h-3 ml-1" />
                                       </Button>
                                     </TooltipTrigger>
@@ -323,7 +323,7 @@ export default function FinalQuotationsPage() {
                                 )}
 
                                 {q.status === 'rejected' && (
-                                  <span className="text-xs text-muted-foreground italic">ถูกปฏิเสธ</span>
+                                  <span className="text-xs text-muted-foreground italic">{t('fq.buttons.rejected')}</span>
                                 )}
                               </div>
                             </td>
@@ -484,11 +484,11 @@ export default function FinalQuotationsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <Award className="w-5 h-5 text-primary" /> ยืนยันสร้างใบมอบงาน (Award)?
+              <Award className="w-5 h-5 text-primary" /> {t('fq.confirm.title')}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 pt-1">
-                <p>ระบบจะสร้างใบมอบงานจากใบเสนอราคานี้ และส่งเข้ากระบวนการอนุมัติ</p>
+                <p>{t('fq.confirm.description')}</p>
                 {awardConfirm && (
                   <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-1">
                     <div className="flex items-center gap-2 font-medium text-foreground">
@@ -497,22 +497,22 @@ export default function FinalQuotationsPage() {
                     </div>
                     <div className="text-muted-foreground">RFQ: {awardConfirm.rfqs?.title || '—'}</div>
                     <div className="text-muted-foreground">
-                      จำนวนเงิน: <span className="font-semibold text-foreground">
+                      {t('common.amount')}: <span className="font-semibold text-foreground">
                         {awardConfirm.total_amount ? `${awardConfirm.currency} ${Number(awardConfirm.total_amount).toLocaleString()}` : '—'}
                       </span>
                     </div>
                   </div>
                 )}
                 <p className="text-xs flex items-center gap-1.5 text-primary">
-                  <ArrowRight className="w-3.5 h-3.5" /> หลังยืนยัน จะพาไปที่หน้า "การมอบงาน" เพื่อดำเนินการอนุมัติต่อ
+                  <ArrowRight className="w-3.5 h-3.5" /> {t('fq.confirm.proceed')}
                 </p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => awardConfirm && handleCreateAward(awardConfirm)}>
-              <Award className="w-4 h-4 mr-1" /> ยืนยันสร้างใบมอบงาน
+              <Award className="w-4 h-4 mr-1" /> {t('fq.confirm.btn')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
