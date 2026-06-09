@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Calculator, Trophy, AlertTriangle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Calculator, Trophy, AlertTriangle, CheckCircle, Send } from 'lucide-react';
 import RiskBadge from '@/components/RiskBadge';
 import { scoreQuotations } from '@/lib/scoring';
 import type { ScoredQuotation } from '@/lib/scoring';
@@ -24,6 +24,8 @@ export default function RFQBidComparison() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [sentToFQ, setSentToFQ] = useState<Set<string>>(new Set());
+  const [sendingFQ, setSendingFQ] = useState<string | null>(null);
 
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
@@ -52,6 +54,69 @@ export default function RFQBidComparison() {
     };
     fetch();
   }, [id]);
+
+  // Check which quotations already sent to Final Quotation
+  useEffect(() => {
+    if (!id) return;
+    const checkExisting = async () => {
+      const { data } = await supabase
+        .from('final_quotations')
+        .select('quotation_id')
+        .eq('rfq_id', id)
+        .not('quotation_id', 'is', null);
+      if (data) {
+        setSentToFQ(new Set(data.map((d: any) => d.quotation_id)));
+      }
+    };
+    checkExisting();
+  }, [id]);
+
+  const handleSendToFinalQuotation = async (q: any) => {
+    if (!id || !user) return;
+    setSendingFQ(q.id);
+    try {
+      // Check if already exists
+      const { data: existing } = await supabase
+        .from('final_quotations')
+        .select('id')
+        .eq('rfq_id', id)
+        .eq('quotation_id', q.id)
+        .maybeSingle();
+
+      if (existing) {
+        toast({ title: 'มีอยู่แล้ว', description: 'ใบเสนอราคานี้ถูกส่งไป Final Quotation แล้ว', variant: 'destructive' });
+        setSentToFQ(prev => new Set(prev).add(q.id));
+        setSendingFQ(null);
+        return;
+      }
+
+      const effectivePrice = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
+
+      const { error } = await supabase.from('final_quotations').insert({
+        rfq_id: id,
+        supplier_id: q.supplier_id,
+        quotation_id: q.id,
+        total_amount: effectivePrice || q.total_amount,
+        currency: q.currency || 'THB',
+        payment_terms: q.payment_term || q.payment_terms || '',
+        delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
+        notes: `จาก RFQ ${rfq?.rfq_number || ''} — ${rfq?.title || ''} | Score: ${q.final_score ?? '—'}`,
+        status: 'pending',
+        created_by: user.id,
+      });
+
+      if (error) throw error;
+
+      setSentToFQ(prev => new Set(prev).add(q.id));
+      toast({
+        title: 'ส่งไป Final Quotation แล้ว',
+        description: `${suppliers[q.supplier_id]?.company_name} — สามารถไปเลือกและจัดการต่อได้ที่เมนู "ใบเสนอราคาสุดท้าย"`,
+      });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setSendingFQ(null);
+  };
 
   const handleRunEvaluation = async () => {
     if (!id || !user) return;
@@ -206,6 +271,7 @@ export default function RFQBidComparison() {
                 <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50">Risk Score</th>
                 <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50">Final Score</th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
+                {canManage && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -281,6 +347,26 @@ export default function RFQBidComparison() {
                     <td className="p-3 text-center">
                       <RankBadge rank={s.rank} />
                     </td>
+                    {canManage && (
+                      <td className="p-3 text-center">
+                        {sentToFQ.has(q.id) ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                            <CheckCircle className="w-3.5 h-3.5" /> ส่งแล้ว
+                          </span>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={sendingFQ === q.id}
+                            onClick={() => handleSendToFinalQuotation(q)}
+                            className="text-xs"
+                          >
+                            <Send className="w-3.5 h-3.5 mr-1" />
+                            {sendingFQ === q.id ? 'กำลังส่ง...' : 'ส่ง Final'}
+                          </Button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

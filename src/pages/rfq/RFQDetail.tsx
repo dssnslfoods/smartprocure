@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
@@ -263,22 +263,34 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
   const [rows, setRows] = useSt<any[]>([]);
   const [supMap, setSupMap] = useSt<Record<string, any>>({});
   const [loading, setLoading] = useSt(true);
+  const [rfqData, setRfqData] = useSt<any>(null);
+  const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
+  const [sendingFQ, setSendingFQ] = useSt<string | null>(null);
+  const { user, hasRole: hr } = useAuth();
+  const { toast: t } = useToast();
+  const canMng = hr('admin') || hr('procurement_officer');
 
   useEff(() => {
     const fetch = async () => {
-      const { data } = await sb.from('quotations')
-        .select('*, suppliers(id, company_name, risk_level)')
-        .eq('rfq_id', rfqId).order('final_score', { ascending: false });
-      if (data) {
+      const [qRes, rfqRes, fqRes] = await Promise.all([
+        sb.from('quotations')
+          .select('*, suppliers(id, company_name, risk_level)')
+          .eq('rfq_id', rfqId).order('final_score', { ascending: false }),
+        sb.from('rfqs').select('rfq_number, title').eq('id', rfqId).single(),
+        sb.from('final_quotations').select('quotation_id').eq('rfq_id', rfqId).not('quotation_id', 'is', null),
+      ]);
+      if (rfqRes.data) setRfqData(rfqRes.data);
+      if (fqRes.data) setSentToFQ(new Set(fqRes.data.map((d: any) => d.quotation_id)));
+      if (qRes.data) {
         const sm: Record<string, any> = {};
-        data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
+        qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
         setSupMap(sm);
-        const hasScores = data.some((q: any) => q.final_score != null);
+        const hasScores = qRes.data.some((q: any) => q.final_score != null);
         if (hasScores) {
-          setRows(data.sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
+          setRows(qRes.data.sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
         } else {
-          const scored = scoreQuotations(data, sm);
-          setRows(data.map((q: any) => {
+          const scored = scoreQuotations(qRes.data, sm);
+          setRows(qRes.data.map((q: any) => {
             const s = scored.find(x => x.quotation_id === q.id);
             return { ...q, ...(s ?? {}) };
           }).sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
@@ -288,6 +300,28 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
     };
     fetch();
   }, [rfqId]);
+
+  const handleSendFQ = async (q: any) => {
+    if (!user) return;
+    setSendingFQ(q.id);
+    try {
+      const { data: existing } = await sb.from('final_quotations').select('id').eq('rfq_id', rfqId).eq('quotation_id', q.id).maybeSingle();
+      if (existing) { setSentToFQ(prev => new Set(prev).add(q.id)); setSendingFQ(null); return; }
+      const ep = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
+      const { error } = await sb.from('final_quotations').insert({
+        rfq_id: rfqId, supplier_id: q.supplier_id, quotation_id: q.id,
+        total_amount: ep || q.total_amount, currency: q.currency || 'THB',
+        payment_terms: q.payment_term || q.payment_terms || '',
+        delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
+        notes: `จาก RFQ ${rfqData?.rfq_number || ''} — ${rfqData?.title || ''} | Score: ${q.final_score ?? '—'}`,
+        status: 'pending', created_by: user.id,
+      });
+      if (error) throw error;
+      setSentToFQ(prev => new Set(prev).add(q.id));
+      t({ title: 'ส่งไป Final Quotation แล้ว', description: supMap[q.supplier_id]?.company_name });
+    } catch (err: any) { t({ title: 'Error', description: err.message, variant: 'destructive' }); }
+    setSendingFQ(null);
+  };
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
   if (rows.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">No quotations yet.</p>;
@@ -305,6 +339,7 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
             <th className="text-right p-3 font-medium text-muted-foreground">Risk Score</th>
             <th className="text-right p-3 font-medium text-muted-foreground">Final</th>
             <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
+            {canMng && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
           </tr>
         </thead>
         <tbody>
@@ -321,6 +356,19 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
                 <td className="p-3 text-right tabular-nums">{q.risk_score ?? '—'}</td>
                 <td className="p-3 text-right tabular-nums font-bold">{q.final_score ?? '—'}</td>
                 <td className="p-3 text-center text-muted-foreground">#{q.rank ?? (idx + 1)}</td>
+                {canMng && (
+                  <td className="p-3 text-center">
+                    {sentToFQ.has(q.id) ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                        <CheckCircle className="w-3.5 h-3.5" /> ส่งแล้ว
+                      </span>
+                    ) : (
+                      <Button variant="outline" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs">
+                        <Send className="w-3.5 h-3.5 mr-1" />{sendingFQ === q.id ? '...' : 'ส่ง Final'}
+                      </Button>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}
