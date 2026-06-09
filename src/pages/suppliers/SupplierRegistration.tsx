@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -24,11 +24,35 @@ interface DocFile {
   name: string;
 }
 
+interface TenantOption {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export default function SupplierRegistration() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [selectedTenant, setSelectedTenant] = useState('');
+
+  // Fetch active tenants for dropdown
+  useEffect(() => {
+    const fetchTenants = async () => {
+      const { data } = await supabase
+        .from('tenants')
+        .select('id, name, slug')
+        .eq('is_active', true)
+        .order('name');
+      if (data) {
+        setTenants(data);
+        if (data.length === 1) setSelectedTenant(data[0].id);
+      }
+    };
+    fetchTenants();
+  }, []);
 
   const [form, setForm] = useState({
     company_name: '', tax_id: '', address: '', city: '', country: 'Thailand',
@@ -66,6 +90,10 @@ export default function SupplierRegistration() {
   const validateStep = () => {
     switch (step) {
       case 0:
+        if (!selectedTenant) {
+          toast({ title: 'กรุณาเลือกบริษัทที่ต้องการสมัคร', variant: 'destructive' });
+          return false;
+        }
         if (!form.company_name || !form.tax_id) {
           toast({ title: 'กรุณากรอกชื่อบริษัทและเลขประจำตัวผู้เสียภาษี', variant: 'destructive' });
           return false;
@@ -134,7 +162,7 @@ export default function SupplierRegistration() {
       const { error: roleError } = await supabase.from('user_roles').insert({ user_id: userId, role: 'supplier' });
       if (roleError) throw roleError;
 
-      // 3. Create supplier record
+      // 3. Create supplier record (with tenant_id)
       const { data: supplier, error: supError } = await supabase.from('suppliers').insert({
         company_name: form.company_name,
         tax_id: form.tax_id,
@@ -147,18 +175,20 @@ export default function SupplierRegistration() {
         notes: form.notes,
         status: 'submitted',
         created_by: userId,
+        tenant_id: selectedTenant,
       }).select().single();
 
       if (supError) throw supError;
 
-      // 4. Link profile to supplier
+      // 4. Link profile to supplier (with tenant_id)
       await supabase.from('profiles').update({
         supplier_id: supplier.id,
         full_name: form.full_name,
         phone: form.contact_phone,
+        tenant_id: selectedTenant,
       }).eq('id', userId);
 
-      // 5. Create contact
+      // 5. Create contact (with tenant_id)
       if (form.contact_name) {
         await supabase.from('supplier_contacts').insert({
           supplier_id: supplier.id,
@@ -167,6 +197,7 @@ export default function SupplierRegistration() {
           email: form.contact_email,
           phone: form.contact_phone,
           is_primary: true,
+          tenant_id: selectedTenant,
         });
       }
 
@@ -194,6 +225,7 @@ export default function SupplierRegistration() {
             file_url: urlData.publicUrl,
             file_size: doc.file.size,
             uploaded_by: userId,
+            tenant_id: selectedTenant,
           });
         }
       }
@@ -205,23 +237,36 @@ export default function SupplierRegistration() {
         action: 'supplier_self_registration',
         new_values: { company_name: form.company_name, email: form.reg_email },
         performed_by: userId,
+        tenant_id: selectedTenant,
       });
 
-      // 9. Notify all admins
-      const { data: adminRoles } = await supabase
-        .from('user_roles')
-        .select('user_id')
-        .eq('role', 'admin');
+      // 9. Notify admins in the same tenant
+      const { data: tenantAdmins } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('tenant_id', selectedTenant);
 
-      if (adminRoles && adminRoles.length > 0) {
-        const notifs = adminRoles.map(r => ({
-          user_id: r.user_id,
-          title: 'Supplier ลงทะเบียนใหม่',
-          message: `${form.company_name} ส่งคำขอลงทะเบียน กรุณาตรวจสอบข้อมูลและเอกสาร`,
-          type: 'supplier_registration',
-          link: '/admin/supplier-approvals',
-        }));
-        await supabase.from('notifications').insert(notifs);
+      if (tenantAdmins) {
+        const adminUserIds = tenantAdmins.map(p => p.id);
+        const { data: adminRoles } = adminUserIds.length > 0
+          ? await supabase
+              .from('user_roles')
+              .select('user_id')
+              .eq('role', 'admin')
+              .in('user_id', adminUserIds)
+          : { data: [] };
+
+        if (adminRoles && adminRoles.length > 0) {
+          const notifs = adminRoles.map(r => ({
+            user_id: r.user_id,
+            title: 'Supplier ลงทะเบียนใหม่',
+            message: `${form.company_name} ส่งคำขอลงทะเบียน กรุณาตรวจสอบข้อมูลและเอกสาร`,
+            type: 'supplier_registration',
+            link: '/admin/supplier-approvals',
+            tenant_id: selectedTenant,
+          }));
+          await supabase.from('notifications').insert(notifs);
+        }
       }
 
       // Sign out - supplier needs admin approval before accessing
@@ -250,7 +295,7 @@ export default function SupplierRegistration() {
             <span className="text-primary-foreground font-bold text-xl">SP</span>
           </div>
           <h1 className="text-2xl font-bold text-foreground">ลงทะเบียน Supplier ใหม่</h1>
-          <p className="text-sm text-muted-foreground mt-1">Smart Procurement — NSL Foods PLC</p>
+          <p className="text-sm text-muted-foreground mt-1">Smart Procurement</p>
         </div>
 
         {/* Stepper */}
@@ -283,6 +328,22 @@ export default function SupplierRegistration() {
             {/* Step 0: Company Info */}
             {step === 0 && (
               <>
+                {/* Tenant Selection */}
+                <div className="space-y-1.5">
+                  <Label>สมัครเป็น Supplier ให้กับบริษัท *</Label>
+                  <Select value={selectedTenant} onValueChange={setSelectedTenant}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="เลือกบริษัทที่ต้องการสมัคร" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tenants.map(t => (
+                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">เลือกบริษัทที่ท่านต้องการลงทะเบียนเป็นผู้ขาย (Supplier)</p>
+                </div>
+
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label>ชื่อบริษัท *</Label>
