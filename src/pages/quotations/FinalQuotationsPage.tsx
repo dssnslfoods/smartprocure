@@ -56,19 +56,28 @@ export default function FinalQuotationsPage() {
 
   useEffect(() => { fetchCompareData(compareRfqId); }, [compareRfqId, fetchCompareData]);
 
-  const filters = useCallback((query: any) => {
-    if (search) {
-      return query.or(`notes.ilike.%${search}%,currency.ilike.%${search}%`);
-    }
-    return query;
-  }, [search]);
-
   const pagination = useSupabasePagination<any>({
     tableName: 'final_quotations',
     select: '*, suppliers(company_name), rfqs(title, rfq_number)',
-    pageSize: 20,
-    filters,
+    pageSize: 200,
   });
+
+  // Client-side search across all visible columns
+  const searchLower = search.toLowerCase().trim();
+  const filteredItems = searchLower
+    ? pagination.items.filter((q: any) => {
+        const supplierName = q.suppliers?.company_name || '';
+        const rfqTitle = q.rfqs?.title || '';
+        const rfqNumber = q.rfqs?.rfq_number || '';
+        const amount = q.total_amount ? `${q.currency} ${Number(q.total_amount).toLocaleString()}` : '';
+        const terms = [q.payment_terms, q.delivery_terms].filter(Boolean).join(' ');
+        const status = q.status || '';
+        const date = q.created_at ? new Date(q.created_at).toLocaleDateString() : '';
+        const notes = q.notes || '';
+        const combined = `${supplierName} ${rfqTitle} ${rfqNumber} ${amount} ${terms} ${status} ${date} ${notes}`.toLowerCase();
+        return combined.includes(searchLower);
+      })
+    : pagination.items;
 
   const handleRfqChange = async (rfqId: string) => {
     setForm(p => ({ ...p, rfq_id: rfqId, quotation_id: '', supplier_id: '' }));
@@ -189,10 +198,10 @@ export default function FinalQuotationsPage() {
                   <tbody>
                     {pagination.loading ? (
                       <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
-                    ) : pagination.items.length === 0 ? (
-                      <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No final quotations</td></tr>
+                    ) : filteredItems.length === 0 ? (
+                      <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">{search ? 'ไม่พบผลลัพธ์ที่ค้นหา' : 'No final quotations'}</td></tr>
                     ) : (
-                      pagination.items.map((q) => {
+                      filteredItems.map((q) => {
                         const sc = statusConfig[q.status] || statusConfig.pending;
                         return (
                           <tr key={q.id} className="border-b hover:bg-muted/30">
