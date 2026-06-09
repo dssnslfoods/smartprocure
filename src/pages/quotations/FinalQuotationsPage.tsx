@@ -37,18 +37,36 @@ export default function FinalQuotationsPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  const [currencyOptions, setCurrencyOptions] = useState<string[]>([]);
+  const [defaultCurrency, setDefaultCurrency] = useState('THB');
+
   const [form, setForm] = useState({
     rfq_id: '', supplier_id: '', quotation_id: '', total_amount: '',
-    currency: 'USD', payment_terms: '', delivery_terms: '', notes: '',
+    currency: '', payment_terms: '', delivery_terms: '', notes: '',
   });
 
   const fetchBasics = async () => {
-    const [rfqRes, supRes] = await Promise.all([
+    const [rfqRes, supRes, curRes] = await Promise.all([
       supabase.from('rfqs').select('id, title, rfq_number').order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id, company_name').eq('status', 'approved'),
+      // Derive currency options from actual data (no hardcode)
+      supabase.from('final_quotations').select('currency'),
     ]);
     if (rfqRes.data) setRfqs(rfqRes.data);
     if (supRes.data) setSuppliers(supRes.data);
+
+    // Build currency list + most-common default from DB
+    const counts: Record<string, number> = {};
+    (curRes.data ?? []).forEach((r: any) => {
+      const c = (r.currency || '').trim();
+      if (c) counts[c] = (counts[c] || 0) + 1;
+    });
+    const sorted = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const opts = sorted.length > 0 ? sorted : ['THB'];
+    setCurrencyOptions(opts);
+    const def = opts[0];
+    setDefaultCurrency(def);
+    setForm(p => ({ ...p, currency: p.currency || def }));
   };
 
   useEffect(() => { fetchBasics(); }, []);
@@ -98,7 +116,7 @@ export default function FinalQuotationsPage() {
     if (q) {
       setForm(p => ({
         ...p, quotation_id: qId, supplier_id: q.supplier_id,
-        total_amount: q.total_amount?.toString() || '', currency: q.currency || 'USD',
+        total_amount: q.total_amount?.toString() || '', currency: q.currency || defaultCurrency,
         payment_terms: q.payment_terms || '', delivery_terms: q.delivery_terms || '',
       }));
     }
@@ -111,7 +129,7 @@ export default function FinalQuotationsPage() {
       rfq_id: form.rfq_id, supplier_id: form.supplier_id,
       quotation_id: form.quotation_id || null,
       total_amount: parseFloat(form.total_amount) || null,
-      currency: form.currency, payment_terms: form.payment_terms,
+      currency: form.currency || defaultCurrency, payment_terms: form.payment_terms,
       delivery_terms: form.delivery_terms, notes: form.notes,
       created_by: user?.id, status: 'pending',
     });
@@ -189,31 +207,18 @@ export default function FinalQuotationsPage() {
         </TabsList>
 
         <TabsContent value="all" className="space-y-4">
-          {/* Workflow guide */}
-          <Card className="bg-muted/30 border-dashed">
-            <CardContent className="p-4">
-              <p className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
-                <ListChecks className="w-3.5 h-3.5" /> ขั้นตอนการทำงาน (กดปุ่ม Action ทางขวาของแต่ละรายการเพื่อเลื่อนขั้น)
-              </p>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-medium">
-                  <Clock className="w-3.5 h-3.5" /> 1. รอเลือก
-                </span>
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-600 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> 2. เลือกเป็นผู้ชนะ
-                </span>
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-medium">
-                  <FileCheck className="w-3.5 h-3.5" /> 3. ยืนยันพร้อมออก PO
-                </span>
-                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary font-medium">
-                  <Award className="w-3.5 h-3.5" /> 4. สร้างใบมอบงาน → หน้าการมอบงาน
-                </span>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Compact workflow guide */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <ListChecks className="w-3.5 h-3.5" />
+            <span className="font-medium text-foreground">ขั้นตอน:</span>
+            <span>รอเลือก</span>
+            <ArrowRight className="w-3 h-3" />
+            <span>เลือกผู้ชนะ</span>
+            <ArrowRight className="w-3 h-3" />
+            <span>พร้อม PO</span>
+            <ArrowRight className="w-3 h-3" />
+            <span>สร้างใบมอบงาน</span>
+          </div>
 
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -249,10 +254,14 @@ export default function FinalQuotationsPage() {
                             <td className="p-3 font-semibold">{q.total_amount ? `${q.currency} ${Number(q.total_amount).toLocaleString()}` : '—'}</td>
                             <td className="p-3 text-muted-foreground text-xs">{[q.payment_terms, q.delivery_terms].filter(Boolean).join(' · ') || '—'}</td>
                             <td className="p-3">
-                              <div className="flex flex-col gap-1">
+                              <div className="flex flex-col gap-1.5">
                                 <Badge variant="secondary" className={`${sc.color} w-fit`}>{sc.label}</Badge>
                                 {sc.step > 0 && (
-                                  <span className="text-[10px] text-muted-foreground">ขั้นที่ {sc.step}/3</span>
+                                  <div className="flex items-center gap-1" title={`ขั้นที่ ${sc.step} จาก 3`}>
+                                    {[1, 2, 3].map(n => (
+                                      <span key={n} className={`h-1.5 w-5 rounded-full ${n <= sc.step ? 'bg-primary' : 'bg-muted'}`} />
+                                    ))}
+                                  </div>
                                 )}
                               </div>
                             </td>
@@ -271,8 +280,9 @@ export default function FinalQuotationsPage() {
                                 {canManage && !q.is_selected && q.status !== 'rejected' && (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <Button variant="outline" size="sm" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => handleSelect(q.id, q.rfq_id)}>
+                                      <Button variant="outline" size="sm" onClick={() => handleSelect(q.id, q.rfq_id)}>
                                         <CheckCircle2 className="w-3 h-3 mr-1" />เลือกเป็นผู้ชนะ
+                                        <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-[220px]">
@@ -285,8 +295,9 @@ export default function FinalQuotationsPage() {
                                 {canManage && q.is_selected && !q.ready_for_po && (
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <Button variant="outline" size="sm" className="text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => handleReadyForPO(q.id)}>
+                                      <Button variant="outline" size="sm" onClick={() => handleReadyForPO(q.id)}>
                                         <FileCheck className="w-3 h-3 mr-1" />ยืนยันพร้อม PO
+                                        <ArrowRight className="w-3 h-3 ml-1 opacity-50" />
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-[220px]">
@@ -423,12 +434,10 @@ export default function FinalQuotationsPage() {
               </div>
               <div className="space-y-1">
                 <Label>Currency</Label>
-                <Select value={form.currency} onValueChange={v => setForm(p => ({ ...p, currency: v }))}>
+                <Select value={form.currency || defaultCurrency} onValueChange={v => setForm(p => ({ ...p, currency: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="ETB">ETB</SelectItem>
-                    <SelectItem value="EUR">EUR</SelectItem>
+                    {currencyOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -454,19 +463,17 @@ export default function FinalQuotationsPage() {
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Quotation Details</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>รายละเอียดใบเสนอราคา</DialogTitle></DialogHeader>
           {selectedDetail && (
             <div className="space-y-3 text-sm">
-              <DetailRow label="Supplier" value={selectedDetail.suppliers?.company_name} />
+              <DetailRow label="ผู้ขาย" value={selectedDetail.suppliers?.company_name} />
               <DetailRow label="RFQ" value={selectedDetail.rfqs?.title} />
-              <DetailRow label="Amount" value={selectedDetail.total_amount ? `${selectedDetail.currency} ${Number(selectedDetail.total_amount).toLocaleString()}` : null} />
-              <DetailRow label="Payment Terms" value={selectedDetail.payment_terms} />
-              <DetailRow label="Delivery Terms" value={selectedDetail.delivery_terms} />
-              <DetailRow label="Status" value={selectedDetail.status} />
-              <DetailRow label="Selected" value={selectedDetail.is_selected ? 'Yes' : 'No'} />
-              <DetailRow label="PO Ready" value={selectedDetail.ready_for_po ? 'Yes' : 'No'} />
-              <DetailRow label="Notes" value={selectedDetail.notes} />
-              <DetailRow label="Created" value={selectedDetail.created_at ? new Date(selectedDetail.created_at).toLocaleString() : null} />
+              <DetailRow label="จำนวนเงิน" value={selectedDetail.total_amount ? `${selectedDetail.currency || ''} ${Number(selectedDetail.total_amount).toLocaleString()}`.trim() : null} />
+              <DetailRow label="เงื่อนไขชำระเงิน" value={selectedDetail.payment_terms} />
+              <DetailRow label="เงื่อนไขส่งมอบ" value={selectedDetail.delivery_terms} />
+              <DetailRow label="สถานะ" value={(statusConfig[selectedDetail.status] || statusConfig.pending).label} />
+              <DetailRow label="หมายเหตุ" value={selectedDetail.notes} />
+              <DetailRow label="วันที่สร้าง" value={selectedDetail.created_at ? new Date(selectedDetail.created_at).toLocaleString('th-TH') : null} />
             </div>
           )}
         </DialogContent>

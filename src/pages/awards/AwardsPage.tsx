@@ -81,7 +81,7 @@ export default function AwardsPage() {
 
   const pagination = useSupabasePagination<any>({
     tableName: 'awards',
-    select: '*, suppliers(company_name, risk_level), rfqs(title, rfq_number)',
+    select: '*, suppliers(company_name, risk_level), rfqs(title, rfq_number), final_quotations(currency)',
     pageSize: 20,
     filters,
   });
@@ -275,7 +275,7 @@ export default function AwardsPage() {
                           <div className="text-muted-foreground/70">{a.rfqs?.rfq_number}</div>
                         </td>
                         <td className="p-3 text-right font-semibold tabular-nums">
-                          {displayAmount ? `$${Number(displayAmount).toLocaleString()}` : '—'}
+                          {displayAmount ? `${a.final_quotations?.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '—'}
                         </td>
                         <td className="p-3 text-center">
                           <RiskBadge level={riskLevel} />
@@ -422,7 +422,7 @@ export default function AwardsPage() {
               <DetailRow label={t('awards.awardNo')} value={selected.award_no || selected.award_number} />
               <DetailRow label={t('awards.supplier')} value={selected.suppliers?.company_name} />
               <DetailRow label={t('awards.rfq')} value={`${selected.rfqs?.rfq_number} · ${selected.rfqs?.title}`} />
-              <DetailRow label={t('awards.finalAmount')} value={selected.final_amount != null ? `$${Number(selected.final_amount).toLocaleString()}` : selected.amount ? `$${Number(selected.amount).toLocaleString()}` : null} />
+              <DetailRow label={t('awards.finalAmount')} value={(() => { const cur = selected.final_quotations?.currency || 'THB'; const amt = selected.final_amount ?? selected.amount; return amt != null ? `${cur} ${Number(amt).toLocaleString()}` : null; })()} />
               <DetailRow label={t('common.status')} value={getStatusDisplay(selected).label} />
               <DetailRow label={t('awards.awardReason')} value={selected.award_reason} />
               <DetailRow label={t('awards.recommendation')} value={selected.recommendation} />
