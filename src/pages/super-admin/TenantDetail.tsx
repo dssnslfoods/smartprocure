@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Save, Building, Users, Grid3X3 } from 'lucide-react';
+import { ArrowLeft, Save, Building, Users, Grid3X3, Link2, Unlink, Search, Package } from 'lucide-react';
 import { MODULE_KEYS, type ModuleKey, type AppRole } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -36,6 +37,7 @@ interface TenantData {
   is_active: boolean;
   logo_url: string | null;
   settings: any;
+  supplier_sharing_enabled: boolean;
 }
 
 interface TenantUser {
@@ -43,6 +45,25 @@ interface TenantUser {
   email: string;
   full_name: string | null;
   roles: string[];
+}
+
+interface LinkedSupplier {
+  id: string;
+  supplier_id: string;
+  company_name: string;
+  supplier_code: string | null;
+  email: string | null;
+  tenant_name: string; // origin tenant
+  linked_at: string;
+}
+
+interface AvailableSupplier {
+  id: string;
+  company_name: string;
+  supplier_code: string | null;
+  email: string | null;
+  tenant_id: string;
+  tenant_name: string;
 }
 
 export default function TenantDetail() {
@@ -57,6 +78,13 @@ export default function TenantDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Supplier sharing state
+  const [linkedSuppliers, setLinkedSuppliers] = useState<LinkedSupplier[]>([]);
+  const [availableSuppliers, setAvailableSuppliers] = useState<AvailableSupplier[]>([]);
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [sharingToggling, setSharingToggling] = useState(false);
+
   const fetchData = useCallback(async () => {
     if (!id) return;
 
@@ -67,7 +95,7 @@ export default function TenantDetail() {
       supabase.from('profiles').select('id, email, full_name').eq('tenant_id', id),
     ]);
 
-    if (tenantRes.data) setTenant(tenantRes.data);
+    if (tenantRes.data) setTenant(tenantRes.data as TenantData);
 
     const enabled = new Set<string>();
     modulesRes.data?.forEach((m: any) => {
@@ -83,7 +111,6 @@ export default function TenantDetail() {
     });
     setRoleModules(rm);
 
-    // Fetch roles for each user
     if (usersRes.data) {
       const withRoles = await Promise.all(
         usersRes.data.map(async (u: any) => {
@@ -94,46 +121,158 @@ export default function TenantDetail() {
       setUsers(withRoles);
     }
 
+    // Fetch linked suppliers
+    await fetchLinkedSuppliers();
+
     setLoading(false);
+  }, [id]);
+
+  const fetchLinkedSuppliers = useCallback(async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from('tenant_suppliers')
+      .select('id, supplier_id, linked_at, suppliers(company_name, supplier_code, email, tenant_id)')
+      .eq('tenant_id', id)
+      .order('linked_at', { ascending: false });
+
+    if (data) {
+      // Get origin tenant names
+      const supplierTenantIds = [...new Set(data.map((d: any) => d.suppliers?.tenant_id).filter(Boolean))];
+      const { data: tenantNames } = supplierTenantIds.length > 0
+        ? await supabase.from('tenants').select('id, name').in('id', supplierTenantIds)
+        : { data: [] };
+      const tenantMap = Object.fromEntries((tenantNames ?? []).map((t: any) => [t.id, t.name]));
+
+      setLinkedSuppliers(
+        data.map((d: any) => ({
+          id: d.id,
+          supplier_id: d.supplier_id,
+          company_name: d.suppliers?.company_name ?? '-',
+          supplier_code: d.suppliers?.supplier_code,
+          email: d.suppliers?.email,
+          tenant_name: tenantMap[d.suppliers?.tenant_id] ?? 'Unknown',
+          linked_at: d.linked_at,
+        })),
+      );
+    }
   }, [id]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Search suppliers from other tenants to link
+  const searchSuppliers = async () => {
+    if (!id || !supplierSearch.trim()) return;
+    setSearchLoading(true);
+    try {
+      const { data } = await supabase
+        .from('suppliers')
+        .select('id, company_name, supplier_code, email, tenant_id')
+        .neq('tenant_id', id) // exclude suppliers already in this tenant
+        .or(`company_name.ilike.%${supplierSearch}%,supplier_code.ilike.%${supplierSearch}%,email.ilike.%${supplierSearch}%`)
+        .limit(20);
+
+      if (data) {
+        // Exclude already linked ones
+        const linkedIds = new Set(linkedSuppliers.map((ls) => ls.supplier_id));
+        const filtered = data.filter((s: any) => !linkedIds.has(s.id));
+
+        // Get tenant names
+        const tids = [...new Set(filtered.map((s: any) => s.tenant_id).filter(Boolean))];
+        const { data: tenantNames } = tids.length > 0
+          ? await supabase.from('tenants').select('id, name').in('id', tids)
+          : { data: [] };
+        const tenantMap = Object.fromEntries((tenantNames ?? []).map((t: any) => [t.id, t.name]));
+
+        setAvailableSuppliers(
+          filtered.map((s: any) => ({
+            ...s,
+            tenant_name: tenantMap[s.tenant_id] ?? 'Unknown',
+          })),
+        );
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+    }
+    setSearchLoading(false);
+  };
+
+  const linkSupplier = async (supplierId: string) => {
+    if (!id) return;
+    try {
+      const { error } = await supabase.rpc('link_supplier_to_tenant', {
+        _supplier_id: supplierId,
+        _tenant_id: id,
+      });
+      if (error) throw error;
+      toast({ title: 'Supplier linked', description: 'Supplier has been linked to this tenant.' });
+      setAvailableSuppliers((prev) => prev.filter((s) => s.id !== supplierId));
+      await fetchLinkedSuppliers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const unlinkSupplier = async (supplierId: string) => {
+    if (!id) return;
+    try {
+      const { error } = await supabase.rpc('unlink_supplier_from_tenant', {
+        _supplier_id: supplierId,
+        _tenant_id: id,
+      });
+      if (error) throw error;
+      toast({ title: 'Supplier unlinked', description: 'Supplier has been removed from this tenant.' });
+      await fetchLinkedSuppliers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const toggleSharing = async (enabled: boolean) => {
+    if (!id) return;
+    setSharingToggling(true);
+    try {
+      const { error } = await supabase.rpc('toggle_supplier_sharing', {
+        _tenant_id: id,
+        _enabled: enabled,
+      });
+      if (error) throw error;
+      setTenant((prev) => prev ? { ...prev, supplier_sharing_enabled: enabled } : prev);
+      toast({
+        title: enabled ? 'Supplier sharing enabled' : 'Supplier sharing disabled',
+        description: enabled
+          ? 'This tenant can now see linked suppliers from other tenants.'
+          : 'Supplier sharing is now turned off for this tenant.',
+      });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setSharingToggling(false);
+  };
+
   // Save modules
   const saveModules = async () => {
     if (!id) return;
     setSaving(true);
     try {
-      // Upsert all modules
       const upserts = MODULE_KEYS.map((key) => ({
         tenant_id: id,
         module_key: key,
         is_enabled: enabledModules.has(key),
       }));
-
-      // Delete and re-insert (simpler than complex upsert)
       await supabase.from('tenant_modules').delete().eq('tenant_id', id);
       await supabase.from('tenant_modules').insert(upserts);
 
-      // Clean up role_modules for disabled modules
       const disabledKeys = MODULE_KEYS.filter((k) => !enabledModules.has(k));
       if (disabledKeys.length > 0) {
-        await supabase
-          .from('tenant_role_modules')
-          .delete()
-          .eq('tenant_id', id)
-          .in('module_key', disabledKeys);
-
-        // Also update local state
+        await supabase.from('tenant_role_modules').delete().eq('tenant_id', id).in('module_key', disabledKeys);
         const updated = { ...roleModules };
         for (const role of CONFIGURABLE_ROLES) {
           disabledKeys.forEach((k) => updated[role]?.delete(k));
         }
         setRoleModules(updated);
       }
-
       toast({ title: 'Modules saved', description: 'Module configuration updated.' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -158,7 +297,6 @@ export default function TenantDetail() {
       if (inserts.length > 0) {
         await supabase.from('tenant_role_modules').insert(inserts);
       }
-
       toast({ title: 'Role access saved', description: 'Role-module mappings updated.' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -223,6 +361,9 @@ export default function TenantDetail() {
           <TabsTrigger value="roles" className="gap-1">
             <Building className="w-4 h-4" /> Role Access
           </TabsTrigger>
+          <TabsTrigger value="suppliers" className="gap-1">
+            <Package className="w-4 h-4" /> Suppliers
+          </TabsTrigger>
           <TabsTrigger value="users" className="gap-1">
             <Users className="w-4 h-4" /> Users ({users.length})
           </TabsTrigger>
@@ -238,14 +379,8 @@ export default function TenantDetail() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {MODULE_KEYS.map((key) => (
-                  <label
-                    key={key}
-                    className="flex items-center gap-2 p-2 rounded-md hover:bg-accent cursor-pointer"
-                  >
-                    <Checkbox
-                      checked={enabledModules.has(key)}
-                      onCheckedChange={() => toggleModule(key)}
-                    />
+                  <label key={key} className="flex items-center gap-2 p-2 rounded-md hover:bg-accent cursor-pointer">
+                    <Checkbox checked={enabledModules.has(key)} onCheckedChange={() => toggleModule(key)} />
                     <span className="text-sm">{MODULE_LABELS[key]}</span>
                   </label>
                 ))}
@@ -311,6 +446,154 @@ export default function TenantDetail() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Suppliers Sharing Tab */}
+        <TabsContent value="suppliers">
+          <div className="space-y-6">
+            {/* Sharing Toggle */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Supplier Sharing</CardTitle>
+                    <CardDescription className="mt-1">
+                      Allow this tenant to see suppliers linked from other tenants.
+                      Only basic information is shared (name, address, contacts, documents).
+                      Price Lists, RFQ, and Risk data remain separate.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground">
+                      {tenant.supplier_sharing_enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                    <Switch
+                      checked={tenant.supplier_sharing_enabled}
+                      onCheckedChange={toggleSharing}
+                      disabled={sharingToggling}
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+
+            {/* Linked Suppliers */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Link2 className="w-5 h-5" />
+                  Linked Suppliers ({linkedSuppliers.length})
+                </CardTitle>
+                <CardDescription>
+                  Suppliers from other tenants that are linked to {tenant.name}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {linkedSuppliers.length === 0 ? (
+                  <p className="text-muted-foreground text-sm py-4">
+                    No linked suppliers yet. Search and link suppliers from other tenants below.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {linkedSuppliers.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between py-3 px-4 rounded-lg border hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-sm truncate">{s.company_name}</p>
+                            {s.supplier_code && (
+                              <Badge variant="outline" className="text-xs shrink-0">
+                                {s.supplier_code}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1">
+                            {s.email && <span className="text-xs text-muted-foreground">{s.email}</span>}
+                            <Badge variant="secondary" className="text-xs">
+                              from: {s.tenant_name}
+                            </Badge>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
+                          onClick={() => unlinkSupplier(s.supplier_id)}
+                        >
+                          <Unlink className="w-4 h-4 mr-1" /> Unlink
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Search & Link Suppliers */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Link Suppliers from Other Tenants</CardTitle>
+                <CardDescription>
+                  Search for suppliers in other tenants and link them to {tenant.name}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      className="pl-9"
+                      placeholder="Search by company name, code, or email..."
+                      value={supplierSearch}
+                      onChange={(e) => setSupplierSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && searchSuppliers()}
+                    />
+                  </div>
+                  <Button onClick={searchSuppliers} disabled={searchLoading || !supplierSearch.trim()}>
+                    {searchLoading ? 'Searching...' : 'Search'}
+                  </Button>
+                </div>
+
+                {availableSuppliers.length > 0 && (
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {availableSuppliers.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between py-3 px-4 rounded-lg border hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-sm truncate">{s.company_name}</p>
+                            {s.supplier_code && (
+                              <Badge variant="outline" className="text-xs shrink-0">
+                                {s.supplier_code}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1">
+                            {s.email && <span className="text-xs text-muted-foreground">{s.email}</span>}
+                            <Badge variant="secondary" className="text-xs">
+                              {s.tenant_name}
+                            </Badge>
+                          </div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => linkSupplier(s.id)}
+                        >
+                          <Link2 className="w-4 h-4 mr-1" /> Link
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* Users Tab */}
