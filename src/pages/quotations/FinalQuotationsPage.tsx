@@ -21,6 +21,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
+import { useTranslation } from '@/i18n';
 
 export default function FinalQuotationsPage() {
   const [rfqs, setRfqs] = useState<any[]>([]);
@@ -180,13 +181,14 @@ export default function FinalQuotationsPage() {
     }
   };
 
+  const { t } = useTranslation();
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
   const statusConfig: Record<string, { color: string; label: string; step: number }> = {
-    pending:      { color: 'bg-amber-500/10 text-amber-600',     label: 'รอเลือก',      step: 1 },
-    selected:     { color: 'bg-blue-500/10 text-blue-600',       label: 'เลือกแล้ว',     step: 2 },
-    ready_for_po: { color: 'bg-emerald-500/10 text-emerald-600', label: 'พร้อมออก PO',  step: 3 },
-    rejected:     { color: 'bg-destructive/10 text-destructive', label: 'ไม่ผ่าน',       step: 0 },
+    pending:      { color: 'bg-amber-500/10 text-amber-600',     label: t('fq.statuses.pending'),      step: 1 },
+    selected:     { color: 'bg-blue-500/10 text-blue-600',       label: t('fq.statuses.selected'),     step: 2 },
+    ready_for_po: { color: 'bg-emerald-500/10 text-emerald-600', label: t('fq.statuses.ready_for_po'), step: 3 },
+    rejected:     { color: 'bg-destructive/10 text-destructive', label: t('fq.statuses.rejected'),     step: 0 },
   };
 
   return (
@@ -287,7 +289,7 @@ export default function FinalQuotationsPage() {
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent side="left" className="p-3">
-                                      <WorkflowProgressTooltip currentStep={1} action="เลือกใบเสนอราคานี้เป็นผู้ชนะของ RFQ" />
+                                      <WorkflowProgressTooltip currentStep={1} />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -301,7 +303,7 @@ export default function FinalQuotationsPage() {
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent side="left" className="p-3">
-                                      <WorkflowProgressTooltip currentStep={2} action="ยืนยันว่าใบนี้พร้อมจัดทำใบสั่งซื้อ (PO)" />
+                                      <WorkflowProgressTooltip currentStep={2} />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -315,7 +317,7 @@ export default function FinalQuotationsPage() {
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent side="left" className="p-3">
-                                      <WorkflowProgressTooltip currentStep={3} action="สร้าง Award เข้ากระบวนการอนุมัติ" />
+                                      <WorkflowProgressTooltip currentStep={3} />
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -540,20 +542,28 @@ function CompareRow({ label, values, highlight, rawValues }: { label: string; va
   );
 }
 
-const WORKFLOW_STEPS = [
-  { label: 'รอเลือก' },
-  { label: 'เลือกผู้ชนะ' },
-  { label: 'พร้อม PO' },
-  { label: 'มอบงาน' },
-];
-
-function WorkflowProgressTooltip({ currentStep, action }: { currentStep: 1 | 2 | 3; action: string }) {
+function WorkflowProgressTooltip({ currentStep }: { currentStep: 1 | 2 | 3 }) {
+  const { t } = useTranslation();
   const toStep = currentStep + 1;
+
+  const steps = [
+    t('fq.workflowSteps.step1'),
+    t('fq.workflowSteps.step2'),
+    t('fq.workflowSteps.step3'),
+    t('fq.workflowSteps.step4'),
+  ];
+
+  const actions = [
+    t('fq.tooltipActions.select'),
+    t('fq.tooltipActions.readyPO'),
+    t('fq.tooltipActions.award'),
+  ];
+
   return (
     <div className="space-y-2 py-0.5" style={{ minWidth: 220 }}>
-      <p className="text-xs font-medium leading-tight">{action}</p>
+      <p className="text-xs font-medium leading-tight">{actions[currentStep - 1]}</p>
       <div className="flex items-start">
-        {WORKFLOW_STEPS.map((s, i) => {
+        {steps.map((label, i) => {
           const n = i + 1;
           const done = n < currentStep;
           const current = n === currentStep;
@@ -577,10 +587,10 @@ function WorkflowProgressTooltip({ currentStep, action }: { currentStep: 1 | 2 |
                   next    && 'text-blue-400 font-bold',
                   !done && !current && !next && 'text-muted-foreground/50',
                 )}>
-                  {s.label}
+                  {label}
                 </span>
               </div>
-              {i < WORKFLOW_STEPS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div className={cn(
                   'h-px w-3 mb-[18px] flex-shrink-0',
                   n < currentStep ? 'bg-emerald-500' :
@@ -592,7 +602,7 @@ function WorkflowProgressTooltip({ currentStep, action }: { currentStep: 1 | 2 |
         })}
       </div>
       <p className="text-[10px] text-blue-400 font-medium">
-        ↳ กดเพื่อไปยัง: {WORKFLOW_STEPS[toStep - 1]?.label}
+        ↳ {t('fq.tooltipNext', { step: steps[toStep - 1] })}
       </p>
     </div>
   );

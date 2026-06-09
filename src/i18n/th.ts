@@ -363,6 +363,26 @@ const th = {
     critical: 'ร้ายแรง',
     unknown: 'ไม่ทราบ',
   },
+  fq: {
+    statuses: {
+      pending:      'รอเลือก',
+      selected:     'เลือกแล้ว',
+      ready_for_po: 'พร้อมออก PO',
+      rejected:     'ไม่ผ่าน',
+    },
+    workflowSteps: {
+      step1: 'รอเลือก',
+      step2: 'เลือกผู้ชนะ',
+      step3: 'พร้อม PO',
+      step4: 'มอบงาน',
+    },
+    tooltipActions: {
+      select:  'เลือกใบเสนอราคานี้เป็นผู้ชนะของ RFQ',
+      readyPO: 'ยืนยันว่าใบนี้พร้อมจัดทำใบสั่งซื้อ (PO)',
+      award:   'สร้าง Award เข้ากระบวนการอนุมัติ',
+    },
+    tooltipNext: 'กดเพื่อไปยัง: {{step}}',
+  },
 } as const;
 
 export default th;

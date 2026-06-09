@@ -363,6 +363,26 @@ const en = {
     critical: 'Critical',
     unknown: 'Unknown',
   },
+  fq: {
+    statuses: {
+      pending:      'Pending Selection',
+      selected:     'Winner Selected',
+      ready_for_po: 'Ready for PO',
+      rejected:     'Rejected',
+    },
+    workflowSteps: {
+      step1: 'Pending',
+      step2: 'Select Winner',
+      step3: 'Ready for PO',
+      step4: 'Award',
+    },
+    tooltipActions: {
+      select:   'Select this quotation as RFQ winner',
+      readyPO:  'Confirm this quotation is ready for purchase order',
+      award:    'Create Award and send to approval workflow',
+    },
+    tooltipNext: 'Click to proceed to: {{step}}',
+  },
 } as const;
 
 export default en;
