@@ -7,8 +7,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye, ArrowRight, Award, Trophy, Clock, ListChecks } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -26,8 +32,10 @@ export default function FinalQuotationsPage() {
   const [compareRfqId, setCompareRfqId] = useState<string>('');
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [awardConfirm, setAwardConfirm] = useState<any>(null);
   const { hasRole, user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [form, setForm] = useState({
     rfq_id: '', supplier_id: '', quotation_id: '', total_amount: '',
@@ -141,20 +149,25 @@ export default function FinalQuotationsPage() {
       recommendation: `Based on final quotation evaluation`,
     });
     if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      toast({ title: 'เกิดข้อผิดพลาด', description: error.message, variant: 'destructive' });
     } else {
-      toast({ title: 'Award created for approval' });
+      toast({
+        title: '✓ สร้างใบมอบงานแล้ว',
+        description: 'กำลังพาไปที่หน้า "การมอบงาน" เพื่อดำเนินการอนุมัติต่อ',
+      });
+      setAwardConfirm(null);
       pagination.refresh();
+      setTimeout(() => navigate('/awards'), 800);
     }
   };
 
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
-  const statusConfig: Record<string, { color: string; label: string }> = {
-    pending: { color: 'bg-amber-500/10 text-amber-600', label: 'Pending' },
-    selected: { color: 'bg-blue-500/10 text-blue-600', label: 'Selected' },
-    ready_for_po: { color: 'bg-emerald-500/10 text-emerald-600', label: 'Ready for PO' },
-    rejected: { color: 'bg-destructive/10 text-destructive', label: 'Rejected' },
+  const statusConfig: Record<string, { color: string; label: string; step: number }> = {
+    pending:      { color: 'bg-amber-500/10 text-amber-600',     label: 'รอเลือก',      step: 1 },
+    selected:     { color: 'bg-blue-500/10 text-blue-600',       label: 'เลือกแล้ว',     step: 2 },
+    ready_for_po: { color: 'bg-emerald-500/10 text-emerald-600', label: 'พร้อมออก PO',  step: 3 },
+    rejected:     { color: 'bg-destructive/10 text-destructive', label: 'ไม่ผ่าน',       step: 0 },
   };
 
   return (
@@ -176,9 +189,35 @@ export default function FinalQuotationsPage() {
         </TabsList>
 
         <TabsContent value="all" className="space-y-4">
+          {/* Workflow guide */}
+          <Card className="bg-muted/30 border-dashed">
+            <CardContent className="p-4">
+              <p className="text-xs font-medium text-muted-foreground mb-3 flex items-center gap-1.5">
+                <ListChecks className="w-3.5 h-3.5" /> ขั้นตอนการทำงาน (กดปุ่ม Action ทางขวาของแต่ละรายการเพื่อเลื่อนขั้น)
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-medium">
+                  <Clock className="w-3.5 h-3.5" /> 1. รอเลือก
+                </span>
+                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-600 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> 2. เลือกเป็นผู้ชนะ
+                </span>
+                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-medium">
+                  <FileCheck className="w-3.5 h-3.5" /> 3. ยืนยันพร้อมออก PO
+                </span>
+                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary font-medium">
+                  <Award className="w-3.5 h-3.5" /> 4. สร้างใบมอบงาน → หน้าการมอบงาน
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Search quotations..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Input placeholder="ค้นหา (ผู้ขาย, RFQ, จำนวนเงิน, สถานะ...)" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
           <Card>
             <CardContent className="p-0">
@@ -210,28 +249,70 @@ export default function FinalQuotationsPage() {
                             <td className="p-3 font-semibold">{q.total_amount ? `${q.currency} ${Number(q.total_amount).toLocaleString()}` : '—'}</td>
                             <td className="p-3 text-muted-foreground text-xs">{[q.payment_terms, q.delivery_terms].filter(Boolean).join(' · ') || '—'}</td>
                             <td className="p-3">
-                              <Badge variant="secondary" className={sc.color}>{sc.label}</Badge>
-                              {q.is_selected && <Badge variant="outline" className="ml-1 text-xs">✓ Selected</Badge>}
-                              {q.ready_for_po && <Badge variant="outline" className="ml-1 text-xs border-emerald-500 text-emerald-600">PO Ready</Badge>}
+                              <div className="flex flex-col gap-1">
+                                <Badge variant="secondary" className={`${sc.color} w-fit`}>{sc.label}</Badge>
+                                {sc.step > 0 && (
+                                  <span className="text-[10px] text-muted-foreground">ขั้นที่ {sc.step}/3</span>
+                                )}
+                              </div>
                             </td>
                             <td className="p-3 text-muted-foreground">{q.created_at ? new Date(q.created_at).toLocaleDateString() : '—'}</td>
                             <td className="p-3 text-right">
-                              <div className="flex gap-1 justify-end">
-                                <Button variant="ghost" size="sm" onClick={() => { setSelectedDetail(q); setDetailOpen(true); }}>
-                                  <Eye className="w-3 h-3" />
-                                </Button>
-                                {canManage && !q.is_selected && (
-                                  <Button variant="outline" size="sm" onClick={() => handleSelect(q.id, q.rfq_id)}>
-                                    <CheckCircle2 className="w-3 h-3 mr-1" />Select
-                                  </Button>
+                              <div className="flex gap-1 justify-end items-center">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="sm" onClick={() => { setSelectedDetail(q); setDetailOpen(true); }}>
+                                      <Eye className="w-3 h-3" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>ดูรายละเอียด</TooltipContent>
+                                </Tooltip>
+
+                                {canManage && !q.is_selected && q.status !== 'rejected' && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="outline" size="sm" className="text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => handleSelect(q.id, q.rfq_id)}>
+                                        <CheckCircle2 className="w-3 h-3 mr-1" />เลือกเป็นผู้ชนะ
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-[220px]">
+                                      เลือกใบเสนอราคานี้เป็นผู้ชนะของ RFQ นี้<br />
+                                      <span className="text-muted-foreground">ถัดไป: ยืนยันพร้อมออก PO</span>
+                                    </TooltipContent>
+                                  </Tooltip>
                                 )}
+
                                 {canManage && q.is_selected && !q.ready_for_po && (
-                                  <Button variant="outline" size="sm" onClick={() => handleReadyForPO(q.id)}>
-                                    <FileCheck className="w-3 h-3 mr-1" />PO Ready
-                                  </Button>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="outline" size="sm" className="text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => handleReadyForPO(q.id)}>
+                                        <FileCheck className="w-3 h-3 mr-1" />ยืนยันพร้อม PO
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-[220px]">
+                                      ยืนยันว่าใบนี้พร้อมจัดทำใบสั่งซื้อ (PO)<br />
+                                      <span className="text-muted-foreground">ถัดไป: สร้างใบมอบงาน</span>
+                                    </TooltipContent>
+                                  </Tooltip>
                                 )}
+
                                 {canManage && q.ready_for_po && (
-                                  <Button size="sm" onClick={() => handleCreateAward(q)}>Create Award</Button>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button size="sm" onClick={() => setAwardConfirm(q)}>
+                                        <Award className="w-3 h-3 mr-1" />สร้างใบมอบงาน
+                                        <ArrowRight className="w-3 h-3 ml-1" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-[240px]">
+                                      สร้าง Award เข้ากระบวนการอนุมัติ<br />
+                                      <span className="text-muted-foreground">แล้วพาไปที่หน้า "การมอบงาน"</span>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+
+                                {q.status === 'rejected' && (
+                                  <span className="text-xs text-muted-foreground italic">ถูกปฏิเสธ</span>
                                 )}
                               </div>
                             </td>
@@ -390,6 +471,45 @@ export default function FinalQuotationsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Create Award confirmation */}
+      <AlertDialog open={!!awardConfirm} onOpenChange={(o) => !o && setAwardConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Award className="w-5 h-5 text-primary" /> ยืนยันสร้างใบมอบงาน (Award)?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 pt-1">
+                <p>ระบบจะสร้างใบมอบงานจากใบเสนอราคานี้ และส่งเข้ากระบวนการอนุมัติ</p>
+                {awardConfirm && (
+                  <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-1">
+                    <div className="flex items-center gap-2 font-medium text-foreground">
+                      <Trophy className="w-4 h-4 text-emerald-600" />
+                      {awardConfirm.suppliers?.company_name || '—'}
+                    </div>
+                    <div className="text-muted-foreground">RFQ: {awardConfirm.rfqs?.title || '—'}</div>
+                    <div className="text-muted-foreground">
+                      จำนวนเงิน: <span className="font-semibold text-foreground">
+                        {awardConfirm.total_amount ? `${awardConfirm.currency} ${Number(awardConfirm.total_amount).toLocaleString()}` : '—'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs flex items-center gap-1.5 text-primary">
+                  <ArrowRight className="w-3.5 h-3.5" /> หลังยืนยัน จะพาไปที่หน้า "การมอบงาน" เพื่อดำเนินการอนุมัติต่อ
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction onClick={() => awardConfirm && handleCreateAward(awardConfirm)}>
+              <Award className="w-4 h-4 mr-1" /> ยืนยันสร้างใบมอบงาน
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
