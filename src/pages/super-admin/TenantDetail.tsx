@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Save, Building, Users, Grid3X3, Link2, Unlink, Search, Package } from 'lucide-react';
+import { ArrowLeft, Save, Building, Users, Grid3X3, Link2, Unlink, Search, Package, UserPlus, Shield, ShieldCheck, Trash2 } from 'lucide-react';
 import { MODULE_KEYS, type ModuleKey, type AppRole } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 
@@ -85,6 +85,12 @@ export default function TenantDetail() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [sharingToggling, setSharingToggling] = useState(false);
 
+  // Admin management state
+  const [tenantAdmins, setTenantAdmins] = useState<{ user_id: string; email: string; full_name: string | null; granted_by: string | null }[]>([]);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminSearchResults, setAdminSearchResults] = useState<{ id: string; email: string; full_name: string | null; current_tenant: string | null }[]>([]);
+  const [adminSearchLoading, setAdminSearchLoading] = useState(false);
+
   const fetchData = useCallback(async () => {
     if (!id) return;
 
@@ -157,9 +163,104 @@ export default function TenantDetail() {
     }
   }, [id]);
 
+  // Fetch admins who have access to this tenant
+  const fetchTenantAdmins = useCallback(async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from('user_tenant_access')
+      .select('user_id, granted_by, profiles!user_tenant_access_user_id_profiles_fkey(email, full_name)')
+      .eq('tenant_id', id);
+    if (data) {
+      setTenantAdmins(
+        data.map((d: any) => ({
+          user_id: d.user_id,
+          email: d.profiles?.email ?? '',
+          full_name: d.profiles?.full_name,
+          granted_by: d.granted_by,
+        })),
+      );
+    }
+  }, [id]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Also fetch tenant admins
+  useEffect(() => {
+    fetchTenantAdmins();
+  }, [fetchTenantAdmins]);
+
+  // Search users to grant tenant access
+  const searchAdmins = async () => {
+    if (!adminSearch.trim()) return;
+    setAdminSearchLoading(true);
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, tenant_id')
+        .or(`email.ilike.%${adminSearch}%,full_name.ilike.%${adminSearch}%`)
+        .limit(20);
+      if (data) {
+        // Only show users who have admin role and aren't already in tenant admins
+        const existingIds = new Set(tenantAdmins.map((a) => a.user_id));
+        const filtered: typeof adminSearchResults = [];
+        for (const u of data as any[]) {
+          if (existingIds.has(u.id)) continue;
+          const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', u.id);
+          const hasAdmin = roles?.some((r: any) => r.role === 'admin');
+          if (hasAdmin) {
+            filtered.push({
+              id: u.id,
+              email: u.email,
+              full_name: u.full_name,
+              current_tenant: u.tenant_id,
+            });
+          }
+        }
+        setAdminSearchResults(filtered);
+      }
+    } catch (err) {
+      console.error('Admin search error:', err);
+    }
+    setAdminSearchLoading(false);
+  };
+
+  // Grant admin access to this tenant
+  const grantTenantAccess = async (userId: string) => {
+    if (!id) return;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('user_tenant_access').insert({
+        user_id: userId,
+        tenant_id: id,
+        granted_by: user?.id,
+      });
+      if (error) throw error;
+      toast({ title: 'Access granted', description: 'Admin now has access to this tenant.' });
+      setAdminSearchResults((prev) => prev.filter((u) => u.id !== userId));
+      await fetchTenantAdmins();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  // Revoke admin access from this tenant
+  const revokeTenantAccess = async (userId: string) => {
+    if (!id) return;
+    try {
+      const { error } = await supabase
+        .from('user_tenant_access')
+        .delete()
+        .eq('user_id', userId)
+        .eq('tenant_id', id);
+      if (error) throw error;
+      toast({ title: 'Access revoked', description: 'Admin access has been removed from this tenant.' });
+      await fetchTenantAdmins();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
 
   // Search suppliers from other tenants to link
   const searchSuppliers = async () => {
@@ -598,38 +699,124 @@ export default function TenantDetail() {
 
         {/* Users Tab */}
         <TabsContent value="users">
-          <Card>
-            <CardHeader>
-              <CardTitle>Users in this Tenant</CardTitle>
-              <CardDescription>All users assigned to {tenant.name}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {users.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-4">No users in this tenant yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {users.map((u) => (
-                    <div
-                      key={u.id}
-                      className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-accent"
-                    >
-                      <div>
-                        <p className="font-medium text-sm">{u.full_name || u.email}</p>
-                        <p className="text-xs text-muted-foreground">{u.email}</p>
+          <div className="space-y-6">
+            {/* Admin Access Management */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5" />
+                  Admin Access ({tenantAdmins.length})
+                </CardTitle>
+                <CardDescription>
+                  Admins who can access this tenant. Admins with access to multiple tenants will be prompted to choose on login.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {tenantAdmins.length === 0 ? (
+                  <p className="text-muted-foreground text-sm py-4">No admins have access to this tenant yet.</p>
+                ) : (
+                  <div className="space-y-2 mb-4">
+                    {tenantAdmins.map((a) => (
+                      <div
+                        key={a.user_id}
+                        className="flex items-center justify-between py-3 px-4 rounded-lg border hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 bg-orange-100 rounded-full flex items-center justify-center">
+                            <Shield className="w-4 h-4 text-orange-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">{a.full_name || a.email}</p>
+                            <p className="text-xs text-muted-foreground">{a.email}</p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => revokeTenantAccess(a.user_id)}
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" /> Revoke
+                        </Button>
                       </div>
-                      <div className="flex gap-1">
-                        {u.roles.map((r) => (
-                          <Badge key={r} variant="outline" className="text-xs">
-                            {r}
-                          </Badge>
-                        ))}
-                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Search & Grant Admin Access */}
+                <div className="border-t pt-4">
+                  <Label className="text-sm font-medium mb-2 block">Grant Admin Access</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        className="pl-9"
+                        placeholder="Search admin users by email or name..."
+                        value={adminSearch}
+                        onChange={(e) => setAdminSearch(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && searchAdmins()}
+                      />
                     </div>
-                  ))}
+                    <Button onClick={searchAdmins} disabled={adminSearchLoading || !adminSearch.trim()}>
+                      {adminSearchLoading ? 'Searching...' : 'Search'}
+                    </Button>
+                  </div>
+                  {adminSearchResults.length > 0 && (
+                    <div className="space-y-2 mt-3 max-h-60 overflow-y-auto">
+                      {adminSearchResults.map((u) => (
+                        <div
+                          key={u.id}
+                          className="flex items-center justify-between py-3 px-4 rounded-lg border hover:bg-accent/50 transition-colors"
+                        >
+                          <div>
+                            <p className="font-medium text-sm">{u.full_name || u.email}</p>
+                            <p className="text-xs text-muted-foreground">{u.email}</p>
+                          </div>
+                          <Button variant="outline" size="sm" onClick={() => grantTenantAccess(u.id)}>
+                            <UserPlus className="w-4 h-4 mr-1" /> Grant Access
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+
+            {/* All Users in Tenant */}
+            <Card>
+              <CardHeader>
+                <CardTitle>All Users ({users.length})</CardTitle>
+                <CardDescription>All users currently assigned to {tenant.name}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {users.length === 0 ? (
+                  <p className="text-muted-foreground text-sm py-4">No users in this tenant yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {users.map((u) => (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-accent"
+                      >
+                        <div>
+                          <p className="font-medium text-sm">{u.full_name || u.email}</p>
+                          <p className="text-xs text-muted-foreground">{u.email}</p>
+                        </div>
+                        <div className="flex gap-1">
+                          {u.roles.map((r) => (
+                            <Badge key={r} variant="outline" className="text-xs">
+                              {r}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

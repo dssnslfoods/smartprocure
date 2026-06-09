@@ -30,6 +30,10 @@ interface AuthContextType {
   tenantId: string | null;
   tenant: TenantInfo | null;
   isSuperAdmin: boolean;
+  /** Number of tenants this user can access (for admin multi-tenant) */
+  accessibleTenantCount: number;
+  /** Whether admin needs to pick a tenant before proceeding */
+  needsTenantSelection: boolean;
   allowedModules: ModuleKey[];
   canAccessModule: (moduleKey: ModuleKey | string) => boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
@@ -48,6 +52,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [tenant, setTenant] = useState<TenantInfo | null>(null);
   const [allowedModules, setAllowedModules] = useState<ModuleKey[]>([]);
+  const [accessibleTenantCount, setAccessibleTenantCount] = useState(0);
+  const [needsTenantSelection, setNeedsTenantSelection] = useState(false);
 
   const isSuperAdmin = roles.includes('super_admin');
 
@@ -67,6 +73,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Fetch tenant info + allowed modules (skip for super_admin — they see everything)
       const _isSuperAdmin = userRoles.includes('super_admin');
       const _tenantId = profileRes.data?.tenant_id;
+      const _isAdmin = userRoles.includes('admin');
+
+      // Check how many tenants the user can access (for admin multi-tenant)
+      if (_isAdmin && !_isSuperAdmin) {
+        const { data: accessData } = await supabase
+          .from('user_tenant_access')
+          .select('tenant_id')
+          .eq('user_id', userId);
+        const count = accessData?.length ?? 0;
+        setAccessibleTenantCount(count);
+        // Need tenant selection if admin has >1 tenant AND no tenant currently set
+        setNeedsTenantSelection(count > 1 && !_tenantId);
+      } else {
+        setAccessibleTenantCount(_tenantId ? 1 : 0);
+        setNeedsTenantSelection(false);
+      }
 
       if (_tenantId && !_isSuperAdmin) {
         const [tenantRes, roleModulesRes] = await Promise.all([
@@ -148,6 +170,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setTenantId(null);
     setTenant(null);
     setAllowedModules([]);
+    setAccessibleTenantCount(0);
+    setNeedsTenantSelection(false);
   };
 
   const hasRole = (role: AppRole) => roles.includes(role);
@@ -164,7 +188,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user, session, roles, profile, loading,
-        tenantId, tenant, isSuperAdmin, allowedModules, canAccessModule,
+        tenantId, tenant, isSuperAdmin, accessibleTenantCount, needsTenantSelection,
+        allowedModules, canAccessModule,
         signIn, signOut, hasRole,
       }}
     >

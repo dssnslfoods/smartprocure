@@ -60,6 +60,22 @@ export default function Login() {
         }
       }
 
+      // Check if admin has multi-tenant access
+      const isAdmin = roles?.some(r => r.role === 'admin');
+      if (isAdmin && !isSuperAdmin) {
+        const { data: accessData } = await supabase
+          .from('user_tenant_access')
+          .select('tenant_id')
+          .eq('user_id', user.id);
+        if (accessData && accessData.length > 1) {
+          // Clear tenant_id so selector shows, then redirect
+          await supabase.from('profiles').update({ tenant_id: null }).eq('id', user.id);
+          setLoading(false);
+          navigate('/select-tenant');
+          return;
+        }
+      }
+
       setLoading(false);
       navigate(isSuperAdmin ? '/super-admin' : '/');
       return;

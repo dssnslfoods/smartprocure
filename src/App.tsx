@@ -34,6 +34,7 @@ import VendorRiskPage from "@/pages/vendors/VendorRiskPage";
 import VendorRiskForm from "@/pages/vendors/VendorRiskForm";
 import RFQBidComparison from "@/pages/rfq/RFQBidComparison";
 import RFQAwardApproval from "@/pages/rfq/RFQAwardApproval";
+import TenantSelector from "@/pages/TenantSelector";
 import NotFound from "@/pages/NotFound";
 import SuperAdminLayout from "@/components/layout/SuperAdminLayout";
 import SuperAdminDashboard from "@/pages/super-admin/SuperAdminDashboard";
@@ -74,6 +75,7 @@ const App = () => (
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/select-tenant" element={<TenantSelector />} />
             <Route path="/register/supplier" element={<SupplierRegistration />} />
             {/* Super Admin routes — MUST be before AppLayout to avoid catch-all matching */}
             <Route

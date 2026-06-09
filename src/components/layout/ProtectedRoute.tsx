@@ -8,7 +8,7 @@ interface Props {
 }
 
 export default function ProtectedRoute({ children, allowedRoles, requiredModule }: Props) {
-  const { user, roles, loading, canAccessModule, isSuperAdmin } = useAuth();
+  const { user, roles, loading, canAccessModule, isSuperAdmin, accessibleTenantCount, hasRole, tenantId } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -29,6 +29,11 @@ export default function ProtectedRoute({ children, allowedRoles, requiredModule 
   // Super admin accessing regular app routes — redirect to super-admin dashboard
   if (isSuperAdmin && !allowedRoles?.includes('super_admin')) {
     return <Navigate to="/super-admin" replace />;
+  }
+
+  // Admin with multi-tenant access and no tenant selected — redirect to tenant selector
+  if (hasRole('admin') && accessibleTenantCount > 1 && !tenantId) {
+    return <Navigate to="/select-tenant" replace />;
   }
 
   if (allowedRoles && !allowedRoles.some((r) => roles.includes(r))) {
