@@ -66,12 +66,6 @@ export default function AppSidebar() {
         { icon: BarChart3, label: t('nav.reports'), path: '/reports', roles: ['admin', 'procurement_officer', 'executive'], moduleKey: 'reports' },
       ],
     },
-    {
-      label: 'ระบบ',
-      items: [
-        { icon: Settings, label: t('nav.adminSettings'), path: '/admin', roles: ['admin'], moduleKey: 'admin_settings' },
-      ],
-    },
   ];
 
   const visibleGroups = menuGroups
@@ -163,6 +157,22 @@ export default function AppSidebar() {
               {roles.join(', ')}
             </p>
           </div>
+        )}
+
+        {roles.includes('admin' as any) && canAccessModule('admin_settings') && (
+          <Link
+            to="/admin"
+            className={cn(
+              'flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full transition-colors',
+              location.pathname.startsWith('/admin') && !location.pathname.startsWith('/admin/supplier')
+                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+            )}
+            title={collapsed ? t('nav.adminSettings') : undefined}
+          >
+            <Settings className="w-4 h-4 shrink-0" />
+            {!collapsed && <span>{t('nav.adminSettings')}</span>}
+          </Link>
         )}
 
         <button
