@@ -59,11 +59,22 @@ function parseBool(val: any): boolean {
   return s === 'true' || s === '1' || s === 'yes';
 }
 
+// Case-insensitive lookup — matches column label OR column key regardless of order
+function findValue(row: Record<string, any>, col: typeof COLUMNS[0]): any {
+  const labelLower = col.label.toLowerCase();
+  const keyLower   = col.key.toLowerCase();
+  for (const k of Object.keys(row)) {
+    const kl = k.trim().toLowerCase();
+    if (kl === labelLower || kl === keyLower) return row[k];
+  }
+  return null;
+}
+
 function validateRow(row: Record<string, any>, index: number): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   for (const col of COLUMNS) {
-    const val = (row[col.label] ?? row[col.key] ?? '');
-    const str = String(val ?? '').trim();
+    const raw = findValue(row, col);
+    const str = String(raw ?? '').trim();
     if (col.required && !str) {
       errors.push(`แถว ${index + 1}: "${col.label}" จำเป็นต้องกรอก`);
     }
@@ -75,27 +86,19 @@ function validateRow(row: Record<string, any>, index: number): { valid: boolean;
 }
 
 function rowToInsert(row: Record<string, any>, userId: string | undefined): any {
-  const get = (col: typeof COLUMNS[0]) => {
-    const val = row[col.label] ?? row[col.key] ?? null;
-    return val === '' ? null : val;
-  };
   const obj: any = {};
   for (const col of COLUMNS) {
-    const raw = get(col);
-    if (raw === null || raw === undefined) {
-      obj[col.key] = null;
-      continue;
-    }
+    const raw = findValue(row, col);
+    const val = raw === null || raw === undefined || String(raw).trim() === '' ? null : raw;
     if (col.key === 'is_preferred' || col.key === 'is_blacklisted') {
-      obj[col.key] = parseBool(raw);
+      obj[col.key] = parseBool(val);
     } else {
-      obj[col.key] = String(raw).trim() || null;
+      obj[col.key] = val !== null ? String(val).trim() || null : null;
     }
   }
-  // Defaults
-  if (!obj.status) obj.status = 'approved';
-  if (!obj.supplier_type) obj.supplier_type = 'approved';
-  if (!obj.risk_level) obj.risk_level = 'low';
+  if (!obj.status)        obj.status        = 'approved';
+  if (!obj.supplier_type) obj.supplier_type  = 'approved';
+  if (!obj.risk_level)    obj.risk_level     = 'low';
   obj.created_by = userId ?? null;
   return obj;
 }
@@ -156,25 +159,45 @@ export default function SupplierImport() {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const data = e.target?.result;
-      const wb = XLSX.read(data, { type: 'binary', cellDates: true });
+      const wb = XLSX.read(e.target?.result, { type: 'binary', cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
 
-      // skip hint row (row 1 in template has hints not header)
-      // detect: if first row key matches hint text instead of column label, skip it
-      const firstKey = raw[0] ? Object.keys(raw[0])[0] : '';
-      const isHintRow = firstKey && !COLUMNS.some(c => c.label === firstKey);
-      const dataRows = isHintRow ? raw.slice(1) : raw;
+      // Read every row as a plain array — no assumption about header position
+      const allRows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
 
-      const parsed: ParsedRow[] = dataRows
-        .filter(r => {
-          // skip completely empty rows
-          return Object.values(r).some(v => String(v ?? '').trim() !== '');
-        })
-        .map((r, i) => {
-          const { valid, errors } = validateRow(r, i);
-          return { index: i, raw: r, valid, errors };
+      // Known column identifiers (label + key, lowercase)
+      const knownNames = new Set([
+        ...COLUMNS.map(c => c.label.toLowerCase()),
+        ...COLUMNS.map(c => c.key.toLowerCase()),
+      ]);
+
+      // Find the first row (within first 5 rows) that has the most matches
+      let headerRowIdx = 0;
+      let bestMatches = 0;
+      for (let i = 0; i < Math.min(5, allRows.length); i++) {
+        const matches = allRows[i].filter(
+          (cell: any) => knownNames.has(String(cell ?? '').trim().toLowerCase())
+        ).length;
+        if (matches > bestMatches) { bestMatches = matches; headerRowIdx = i; }
+      }
+
+      if (bestMatches === 0) {
+        toast({ title: 'ไม่พบหัวคอลัมน์', description: 'ไฟล์ต้องมีแถวหัวคอลัมน์ที่ตรงกับ Template', variant: 'destructive' });
+        return;
+      }
+
+      // Build header → index map (case-insensitive, any order)
+      const headerRow: string[] = allRows[headerRowIdx].map((h: any) => String(h ?? '').trim());
+
+      // Convert each data row (below header) to an object keyed by header name
+      const parsed: ParsedRow[] = allRows
+        .slice(headerRowIdx + 1)
+        .filter(row => row.some((cell: any) => String(cell ?? '').trim() !== ''))
+        .map((row: any[], i) => {
+          const obj: Record<string, any> = {};
+          headerRow.forEach((h, idx) => { if (h) obj[h] = row[idx] ?? ''; });
+          const { valid, errors } = validateRow(obj, i);
+          return { index: i, raw: obj, valid, errors };
         });
 
       setRows(parsed);
@@ -249,6 +272,10 @@ export default function SupplierImport() {
           <p className="text-sm text-muted-foreground">
             ดาวน์โหลดไฟล์ Excel Template ที่มีหัวคอลัมน์ครบถ้วนพร้อมข้อมูลตัวอย่าง 2 แถว
             และ Sheet "คำอธิบายคอลัมน์" อธิบายค่าที่อนุญาตในแต่ละคอลัมน์
+          </p>
+          <p className="text-xs text-emerald-600 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            ระบบตรวจจับหัวคอลัมน์อัตโนมัติ — <strong>เรียงคอลัมน์สลับกันได้</strong> ใส่เฉพาะคอลัมน์ที่ต้องการก็ได้
           </p>
           <div className="flex flex-wrap gap-2">
             {COLUMNS.map(c => (
@@ -411,7 +438,10 @@ export default function SupplierImport() {
               <li>• คอลัมน์ที่ไม่ได้กรอก (ว่างเปล่า) จะใช้ค่า Default: status=approved, supplier_type=approved, risk_level=low</li>
               <li>• ระบบจะไม่ตรวจสอบ Duplicate — หากมี company_name ซ้ำจะสร้างรายการใหม่</li>
               <li>• ข้อมูลที่นำเข้าจะมีสถานะ tenant_id ของ Tenant ปัจจุบัน</li>
-              <li>• แถวแรกใน Template เป็นคำอธิบาย (hint) ระบบจะตรวจจับและข้ามอัตโนมัติ</li>
+              <li>• <strong>เรียงคอลัมน์สลับกันได้</strong> — ระบบจับคู่ด้วยชื่อหัวคอลัมน์ ไม่ใช่ตำแหน่ง</li>
+              <li>• ใส่เฉพาะคอลัมน์ที่ต้องการได้ ไม่จำเป็นต้องครบทุกคอลัมน์</li>
+              <li>• แถว Hint (คำอธิบาย) ใน Template จะถูกข้ามอัตโนมัติ ไม่ต้องลบออก</li>
+              <li>• รองรับชื่อหัวคอลัมน์ทั้ง English label และ snake_case (เช่น "Company Name" หรือ "company_name")</li>
             </ul>
           </div>
         </CardContent>
