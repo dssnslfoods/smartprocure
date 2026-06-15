@@ -16,6 +16,7 @@ import SupplierList from "@/pages/suppliers/SupplierList";
 import SupplierForm from "@/pages/suppliers/SupplierForm";
 import SupplierDetail from "@/pages/suppliers/SupplierDetail";
 import SupplierEdit from "@/pages/suppliers/SupplierEdit";
+import SupplierImport from "@/pages/suppliers/SupplierImport";
 import PriceListPage from "@/pages/pricelists/PriceListPage";
 import PriceListDetail from "@/pages/pricelists/PriceListDetail";
 import QuotationSearch from "@/pages/pricelists/QuotationSearch";
@@ -105,6 +106,7 @@ const App = () => (
               <Route path="/vendor-risk" element={<VendorRiskPage />} />
               <Route path="/vendor-risk/:supplierId" element={<VendorRiskForm />} />
               <Route path="/suppliers/new" element={<SupplierForm />} />
+              <Route path="/suppliers/import" element={<SupplierImport />} />
               <Route path="/suppliers/:id" element={<SupplierDetail />} />
               <Route path="/suppliers/:id/edit" element={<SupplierEdit />} />
               <Route path="/price-lists" element={<PriceListPage />} />

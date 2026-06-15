@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, FileText, Send, Gavel, ClipboardList,
   Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
-  UserCheck, Briefcase, ShieldAlert, Languages,
+  UserCheck, Briefcase, ShieldAlert, Languages, FileUp,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -43,6 +43,7 @@ export default function AppSidebar() {
         { icon: UserCheck,   label: t('nav.supplierApprovals'), path: '/admin/supplier-approvals', roles: ['admin'],                                               moduleKey: 'supplier_approvals' },
         { icon: Building2,   label: t('nav.suppliers'),         path: '/suppliers',                roles: ['admin', 'procurement_officer', 'approver', 'executive'], moduleKey: 'suppliers' },
         { icon: ShieldAlert, label: t('nav.vendorRisk'),        path: '/vendor-risk',              roles: ['admin', 'procurement_officer', 'approver'],             moduleKey: 'vendor_risk' },
+        { icon: FileUp,      label: 'นำเข้าข้อมูล',             path: '/suppliers/import',         roles: ['admin'],                                               moduleKey: 'suppliers' },
       ],
     },
     {
