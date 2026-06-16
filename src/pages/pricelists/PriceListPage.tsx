@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History } from 'lucide-react';
+import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { CATEGORY_LABELS, CATEGORY_COLORS, type PriceListCategory } from '@/lib/priceListConstants';
+import { exportCatalog } from '@/lib/catalogExcel';
+import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
@@ -30,13 +32,26 @@ interface CatalogRow {
 }
 
 export default function PriceListPage() {
-  const { roles, profile } = useAuth();
+  const { roles, profile, tenant } = useAuth();
+  const { toast } = useToast();
   const isSupplier   = roles.includes('supplier');
   const mySupplierId = profile?.supplier_id ?? null;
 
   const [catalogs, setCatalogs] = useState<CatalogRow[]>([]);
   const [loading,  setLoading]  = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [cycle, setCycle] = useState<PricelistCycleSettings>(DEFAULT_CYCLE);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const count = await exportCatalog();
+      toast({ title: '✓ Export สำเร็จ', description: `ส่งออก ${count} รายการเป็นไฟล์ Excel` });
+    } catch (err: any) {
+      toast({ title: 'Export ไม่สำเร็จ', description: err.message, variant: 'destructive' });
+    }
+    setExporting(false);
+  };
 
   useEffect(() => { loadPricelistCycle().then(setCycle); }, []);
 
@@ -93,16 +108,28 @@ export default function PriceListPage() {
         <div>
           <h1 className="text-2xl font-bold">Master Catalog</h1>
           <p className="text-sm text-muted-foreground">
-            Catalog กลางของ NSL Foods PLC — แยกตามหมวดสินค้า ใช้สำหรับสร้าง Checklist เพื่อขอใบเสนอราคา
+            Catalog กลางของ {tenant?.name ?? 'องค์กร'} — แยกตามหมวดสินค้า ใช้สำหรับสร้าง Checklist เพื่อขอใบเสนอราคา
           </p>
         </div>
         {!isSupplier && (
-          <Link to="/price-lists/quotation-history">
-            <Button variant="outline" className="shrink-0">
-              <History className="h-4 w-4 mr-2" />
-              ประวัติใบเสนอราคา
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" onClick={handleExport} disabled={exporting}>
+              <FileDown className="h-4 w-4 mr-2" />
+              {exporting ? 'กำลังส่งออก...' : 'Export Excel'}
             </Button>
-          </Link>
+            <Link to="/price-lists/import">
+              <Button variant="outline">
+                <Upload className="h-4 w-4 mr-2" />
+                นำเข้า Excel
+              </Button>
+            </Link>
+            <Link to="/price-lists/quotation-history">
+              <Button variant="outline">
+                <History className="h-4 w-4 mr-2" />
+                ประวัติใบเสนอราคา
+              </Button>
+            </Link>
+          </div>
         )}
       </div>
 
