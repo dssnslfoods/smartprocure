@@ -80,7 +80,7 @@ function computeBaseline(it: ItemRow): { value: number | null; source: 'nominate
 export default function PriceListDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { roles, profile } = useAuth();
+  const { roles, profile, tenant } = useAuth();
   const isAdmin       = roles.includes('admin');
   const isProcurement = roles.includes('procurement_officer') || isAdmin;
   const isSupplier    = roles.includes('supplier');
@@ -371,6 +371,7 @@ export default function PriceListDetail() {
       supplierId,
       rfqNumber:    rfqNumber || undefined,
       validUntil:   header.valid_until || undefined,
+      tenantName:   tenant?.name || undefined,
     });
     toast.success(
       `Export ${selected.size} รายการสำเร็จ` +

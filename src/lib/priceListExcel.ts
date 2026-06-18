@@ -27,6 +27,7 @@ export interface ChecklistMeta {
   rfqNumber?:    string;
   validUntil?:   string;
   notes?:        string;
+  tenantName?:   string;
 }
 
 // ─── Brand colors ─────────────────────────────────────────────────────────────
@@ -96,8 +97,9 @@ export async function exportChecklistToExcel(
   items: CatalogItemRow[],
   meta: ChecklistMeta
 ): Promise<void> {
+  const orgName = meta.tenantName || 'องค์กร';
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'NSL Foods SmartProcure';
+  wb.creator = `${orgName} SmartProcure`;
   wb.created = new Date();
   wb.modified = new Date();
 
@@ -126,7 +128,7 @@ function buildCoverSheet(wb: ExcelJS.Workbook, meta: ChecklistMeta) {
   // ── Hero banner ──
   ws.mergeCells('A1:B3');
   const hero = ws.getCell('A1');
-  hero.value = 'NSL Foods PLC';
+  hero.value = meta.tenantName || 'องค์กร';
   hero.fill = solidFill(NAVY);
   hero.font = font({ color: { argb: `FF${WHITE}` }, bold: true, size: 22 });
   hero.alignment = alignment('center');
@@ -217,7 +219,7 @@ function buildCoverSheet(wb: ExcelJS.Workbook, meta: ChecklistMeta) {
   // ── Contact footer ──
   ws.mergeCells(`A${r}:B${r}`);
   const ft = ws.getCell(`A${r}`);
-  ft.value = 'ติดต่อจัดซื้อ: procurement@nslfoods.co.th  |  ระบบ SmartProcure — NSL Foods PLC';
+  ft.value = `ระบบ SmartProcure — ${meta.tenantName || 'องค์กร'}`;
   ft.fill = solidFill(NAVY);
   ft.font = font({ color: { argb: `FF${WHITE}` }, size: 9, italic: true });
   ft.alignment = alignment('center');
@@ -238,8 +240,8 @@ function buildChecklistSheet(
       margins: { left: 0.5, right: 0.5, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
     },
     headerFooter: {
-      oddHeader: `&L&"Calibri,Bold"&12NSL Foods PLC — Price List Quotation Checklist&R${meta.catalogTitle} | ${meta.category}`,
-      oddFooter: '&L&9ไฟล์นี้จัดทำโดยระบบ SmartProcure — NSL Foods PLC&R&9หน้า &P / &N',
+      oddHeader: `&L&"Calibri,Bold"&12${meta.tenantName || 'องค์กร'} — Price List Quotation Checklist&R${meta.catalogTitle} | ${meta.category}`,
+      oddFooter: `&L&9ไฟล์นี้จัดทำโดยระบบ SmartProcure — ${meta.tenantName || 'องค์กร'}&R&9หน้า &P / &N`,
     },
     properties: { tabColor: { argb: `FF${NAVY}` } },
   });
@@ -266,7 +268,7 @@ function buildChecklistSheet(
   ws.getRow(1).height = 30;
   ws.mergeCells('A1:G1');
   const titleLeft = ws.getCell('A1');
-  titleLeft.value = `NSL Foods PLC  ·  PRICE LIST QUOTATION CHECKLIST  ·  ${meta.catalogTitle.toUpperCase()}`;
+  titleLeft.value = `${meta.tenantName || 'องค์กร'}  ·  PRICE LIST QUOTATION CHECKLIST  ·  ${meta.catalogTitle.toUpperCase()}`;
   titleLeft.fill = solidFill(NAVY);
   titleLeft.font = font({ color: { argb: `FF${WHITE}` }, bold: true, size: 13 });
   titleLeft.alignment = alignment('left');
