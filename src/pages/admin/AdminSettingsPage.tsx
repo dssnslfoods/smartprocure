@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet } from 'lucide-react';
+import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet, Trash2, AlertTriangle, Database, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DEFAULT_CYCLE, loadPricelistCycle, savePricelistCycle,
@@ -97,6 +97,13 @@ export default function AdminSettingsPage() {
   // ── Pricelist cycle state ────────────────────────────────────
   const [cycle, setCycle] = useState<PricelistCycleSettings>(DEFAULT_CYCLE);
   const [savingCycle, setSavingCycle] = useState(false);
+
+  // ── Clear transaction data state ─────────────────────────────
+  const [txnCounts, setTxnCounts] = useState<Record<string, number> | null>(null);
+  const [loadingCounts, setLoadingCounts] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearConfirmText, setClearConfirmText] = useState('');
+  const [clearing, setClearing] = useState(false);
 
   const { toast } = useToast();
 
@@ -203,6 +210,50 @@ export default function AdminSettingsPage() {
     else toast({ title: 'บันทึกสำเร็จ', description: `รอบ Pricelist = ${cycle.update_cycle_days} วัน` });
   };
 
+  // ── Clear transaction data ───────────────────────────────────
+  const loadTxnCounts = useCallback(async () => {
+    setLoadingCounts(true);
+    const { data, error } = await (supabase.rpc as any)('count_transaction_data');
+    setLoadingCounts(false);
+    if (error) {
+      toast({ title: 'โหลดจำนวนข้อมูลไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      return;
+    }
+    setTxnCounts((data as Record<string, number>) ?? {});
+  }, [toast]);
+
+  const handleClearTransactions = async () => {
+    setClearing(true);
+    const { data, error } = await (supabase.rpc as any)('clear_transaction_data');
+    setClearing(false);
+    if (error) {
+      toast({ title: 'ล้างข้อมูลไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      return;
+    }
+    const total = Object.values((data as Record<string, number>) ?? {}).reduce((a, b) => a + Number(b), 0);
+    toast({ title: '✓ ล้างข้อมูล Transaction สำเร็จ', description: `ลบทั้งหมด ${total.toLocaleString('th-TH')} รายการ` });
+    setShowClearConfirm(false);
+    setClearConfirmText('');
+    loadTxnCounts();
+  };
+
+  const TXN_LABELS: Record<string, string> = {
+    rfqs: 'ใบขอราคา (RFQ)',
+    rfq_items: '— รายการใน RFQ',
+    rfq_suppliers: '— ผู้ขายที่เชิญ',
+    rfq_evaluations: '— การประเมิน RFQ',
+    quotations: 'ใบเสนอราคา',
+    quotation_items: '— รายการในใบเสนอราคา',
+    bidding_events: 'การประมูล (e-Bidding)',
+    bid_entries: '— รายการเสนอราคาประมูล',
+    final_quotations: 'ใบเสนอราคาสุดท้าย',
+    awards: 'การมอบงาน (Awards)',
+    award_approvals: '— การอนุมัติมอบงาน',
+    approval_logs: '— บันทึกการอนุมัติ',
+  };
+  const txnTotal = txnCounts ? Object.values(txnCounts).reduce((a, b) => a + Number(b), 0) : 0;
+  const CLEAR_PHRASE = 'ล้างข้อมูล';
+
   // ── Create user ──────────────────────────────────────────────
   const handleCreateUser = async () => {
     if (!newUser.email || !newUser.password || !newUser.full_name) {
@@ -279,6 +330,7 @@ export default function AdminSettingsPage() {
           <TabsTrigger value="email" className="gap-2"><Mail className="w-4 h-4" />Email</TabsTrigger>
           <TabsTrigger value="pricelist" className="gap-2"><FileSpreadsheet className="w-4 h-4" />Pricelist</TabsTrigger>
           <TabsTrigger value="config" className="gap-2"><Settings className="w-4 h-4" />Config</TabsTrigger>
+          <TabsTrigger value="maintenance" className="gap-2" onClick={() => { if (!txnCounts) loadTxnCounts(); }}><Database className="w-4 h-4" />ระบบ</TabsTrigger>
         </TabsList>
 
         {/* ── Users Tab ── */}
@@ -615,7 +667,116 @@ export default function AdminSettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ── Maintenance / System Tab ── */}
+        <TabsContent value="maintenance" className="space-y-4">
+          <Card className="border-destructive/30">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2 text-destructive">
+                <Trash2 className="w-4 h-4" />
+                ล้างข้อมูล Transaction (เริ่มใช้งานระบบจริง)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium">ใช้สำหรับล้างข้อมูลทดสอบก่อนเริ่มใช้งานจริง</p>
+                  <p className="text-xs">
+                    ระบบจะลบ <strong>เฉพาะข้อมูล Transaction ในกลุ่มจัดซื้อ</strong> ได้แก่ ใบขอราคา (RFQ),
+                    การประมูล (e-Bidding), ใบเสนอราคา/ใบเสนอราคาสุดท้าย และการมอบงาน (Awards) พร้อมรายการที่เกี่ยวข้อง
+                    — <strong>เฉพาะของบริษัทที่คุณสังกัด</strong>
+                  </p>
+                  <p className="text-xs">
+                    ✅ <strong>ไม่ลบ</strong> Master Data: ผู้จัดจำหน่าย (Suppliers) และ Catalog/รายการราคา (Price Lists)
+                  </p>
+                </div>
+              </div>
+
+              {/* Current counts */}
+              <div className="rounded-md border bg-muted/30 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">ข้อมูลปัจจุบันที่จะถูกลบ</span>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={loadTxnCounts} disabled={loadingCounts}>
+                    {loadingCounts ? <Loader2 className="w-3 h-3 animate-spin" /> : 'รีเฟรช'}
+                  </Button>
+                </div>
+                {txnCounts === null ? (
+                  <p className="text-xs text-muted-foreground">{loadingCounts ? 'กำลังโหลด...' : 'กดรีเฟรชเพื่อดูจำนวน'}</p>
+                ) : txnTotal === 0 ? (
+                  <p className="text-xs text-emerald-600">ไม่มีข้อมูล Transaction — ระบบสะอาดพร้อมใช้งานจริงแล้ว</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1">
+                    {Object.entries(TXN_LABELS).map(([key, label]) => (
+                      <div key={key} className="flex items-center justify-between text-xs">
+                        <span className={label.startsWith('—') ? 'text-muted-foreground pl-2' : 'font-medium'}>{label}</span>
+                        <span className={`font-mono ${(txnCounts[key] ?? 0) > 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+                          {(txnCounts[key] ?? 0).toLocaleString('th-TH')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  รวม <strong className="text-foreground">{txnTotal.toLocaleString('th-TH')}</strong> รายการ
+                </span>
+                <Button
+                  variant="destructive"
+                  onClick={() => { setClearConfirmText(''); setShowClearConfirm(true); }}
+                  disabled={txnTotal === 0}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  ล้างข้อมูล Transaction
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      {/* ── Clear Transaction Confirm Dialog ── */}
+      <Dialog open={showClearConfirm} onOpenChange={(open) => { if (!open) { setShowClearConfirm(false); setClearConfirmText(''); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              ยืนยันการล้างข้อมูล Transaction
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              การลบนี้ <strong className="text-destructive">ไม่สามารถกู้คืนได้</strong> ระบบจะลบข้อมูล Transaction ทั้งหมด
+              จำนวน <strong className="text-foreground">{txnTotal.toLocaleString('th-TH')}</strong> รายการ
+              (RFQ, e-Bidding, ใบเสนอราคา, Awards) ของบริษัทคุณ — Suppliers และ Catalog จะไม่ถูกลบ
+            </p>
+            <div className="space-y-2">
+              <Label className="text-sm">พิมพ์ <span className="font-mono font-semibold text-destructive">{CLEAR_PHRASE}</span> เพื่อยืนยัน</Label>
+              <Input
+                value={clearConfirmText}
+                onChange={(e) => setClearConfirmText(e.target.value)}
+                placeholder={CLEAR_PHRASE}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setShowClearConfirm(false); setClearConfirmText(''); }} disabled={clearing}>
+                ยกเลิก
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleClearTransactions}
+                disabled={clearing || clearConfirmText.trim() !== CLEAR_PHRASE}
+              >
+                {clearing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+                {clearing ? 'กำลังลบ...' : 'ยืนยันล้างข้อมูล'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Reset Password Dialog ── */}
       <Dialog open={!!resetTarget} onOpenChange={(open) => { if (!open) { setResetTarget(null); setNewPassword(''); } }}>
