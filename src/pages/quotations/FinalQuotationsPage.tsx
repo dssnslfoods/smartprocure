@@ -162,14 +162,34 @@ export default function FinalQuotationsPage() {
   };
 
   const handleCreateAward = async (fq: any) => {
+    // Guard: one award per final quotation (DB also enforces this with a unique index)
+    const { data: existing } = await supabase
+      .from('awards')
+      .select('id, award_no')
+      .eq('final_quotation_id', fq.id)
+      .maybeSingle();
+    if (existing) {
+      toast({
+        title: 'มีใบมอบงานอยู่แล้ว',
+        description: `ใบเสนอราคานี้ถูกสร้างใบมอบงานแล้ว${existing.award_no ? ` (${existing.award_no})` : ''}`,
+        variant: 'destructive',
+      });
+      setAwardConfirm(null);
+      return;
+    }
     const { error } = await supabase.from('awards').insert({
       rfq_id: fq.rfq_id, supplier_id: fq.supplier_id,
-      final_quotation_id: fq.id, amount: fq.total_amount,
+      final_quotation_id: fq.id, amount: fq.total_amount, final_amount: fq.total_amount,
       status: 'pending', awarded_by: user?.id,
       recommendation: `Based on final quotation evaluation`,
     });
     if (error) {
-      toast({ title: 'เกิดข้อผิดพลาด', description: error.message, variant: 'destructive' });
+      const dup = error.code === '23505' || /duplicate|unique/i.test(error.message);
+      toast({
+        title: dup ? 'มีใบมอบงานอยู่แล้ว' : 'เกิดข้อผิดพลาด',
+        description: dup ? 'ใบเสนอราคานี้ถูกสร้างใบมอบงานแล้ว' : error.message,
+        variant: 'destructive',
+      });
     } else {
       toast({
         title: t('fq.confirm.created'),
