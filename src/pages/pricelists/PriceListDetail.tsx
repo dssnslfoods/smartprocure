@@ -780,6 +780,8 @@ export default function PriceListDetail() {
                   <th className="p-3 text-left font-medium text-muted-foreground">รหัส / สินค้า</th>
                   <th className="p-3 text-left font-medium text-muted-foreground">หน่วย</th>
                   <th className="p-3 text-right font-medium text-muted-foreground">ปริมาณที่ขอ</th>
+                  <th className="p-3 text-right font-medium text-muted-foreground">MOQ</th>
+                  <th className="p-3 text-right font-medium text-muted-foreground">Lead Time</th>
                   <th className="p-3 text-right font-medium text-muted-foreground">ราคาอ้างอิง</th>
                   <th className="p-3 text-right font-medium text-muted-foreground">ราคากลาง</th>
                   <th className="p-3 text-center font-medium text-muted-foreground">เสนอแล้ว</th>
@@ -788,7 +790,7 @@ export default function PriceListDetail() {
               </thead>
               <tbody>
                 {visibleItems.length === 0 ? (
-                  <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">ไม่พบรายการ</td></tr>
+                  <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">ไม่พบรายการ</td></tr>
                 ) : visibleItems.map(it => {
                   const blocked = !canSelect(it);
                   const baseline = computeBaseline(it);
@@ -851,6 +853,12 @@ export default function PriceListDetail() {
                           )}
                         </td>
                         <td className="p-3 text-right">
+                          <span className="font-mono text-xs">{it.moq != null ? it.moq.toLocaleString('th-TH') : '—'}</span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <span className="font-mono text-xs">{it.lead_time_days != null ? `${it.lead_time_days} วัน` : '—'}</span>
+                        </td>
+                        <td className="p-3 text-right">
                           {it.reference_price != null ? (
                             <span className="font-mono text-xs">
                               {Number(it.reference_price).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -893,7 +901,7 @@ export default function PriceListDetail() {
 
                       {isExpanded && (
                         <tr className="border-b bg-muted/20">
-                          <td colSpan={9} className="p-4">
+                          <td colSpan={11} className="p-4">
                             <div className="text-xs font-semibold text-muted-foreground mb-2">
                               Suppliers ที่เคยเสนอราคา ({it.offers.length} ราย)
                             </div>
