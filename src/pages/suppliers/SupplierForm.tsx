@@ -254,7 +254,7 @@ export default function SupplierForm() {
               if (aiData && !aiData.error) certData = aiData;
             } catch { /* fallback: save without AI fields */ }
 
-            await supabase.from('supplier_certificates').insert({
+            const { error: certInsertErr } = await supabase.from('supplier_certificates').insert({
               supplier_id: supplierId,
               certificate_type: certData.certificate_type || (doc.docLabel === 'company_cert' ? 'ใบรับรองบริษัท' : 'อื่นๆ'),
               certificate_no: certData.certificate_no || null,
@@ -267,6 +267,7 @@ export default function SupplierForm() {
               is_primary: certCount === 0,
               notes: certData.notes || null,
             } as any);
+            if (certInsertErr) { console.error('cert insert error:', certInsertErr); toast({ title: 'บันทึกใบรับรองไม่สำเร็จ', description: certInsertErr.message, variant: 'destructive' }); continue; }
             certCount++;
           } else {
             // Upload to documents bucket
@@ -277,7 +278,7 @@ export default function SupplierForm() {
             const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
             const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label?.replace(/ \(→.*\)/, '') || doc.name;
 
-            await supabase.from('supplier_documents').insert({
+            const { error: docInsertErr } = await supabase.from('supplier_documents').insert({
               supplier_id: supplierId,
               document_name: label,
               document_type: doc.docLabel,
@@ -285,6 +286,7 @@ export default function SupplierForm() {
               file_size: doc.file.size,
               uploaded_by: user?.id,
             });
+            if (docInsertErr) { console.error('doc insert error:', docInsertErr); toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: docInsertErr.message, variant: 'destructive' }); continue; }
             docCount++;
           }
         } catch (e) {
