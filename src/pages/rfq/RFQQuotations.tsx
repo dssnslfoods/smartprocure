@@ -54,6 +54,8 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
   const [scanning, setScanning] = useState(false);
   const [scanFile, setScanFile] = useState<File | null>(null);
   const [scanConfidence, setScanConfidence] = useState<string | null>(null);
+  const [scanSupplierName, setScanSupplierName] = useState<string | null>(null);
+  const [scanRejected, setScanRejected] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Decline-to-quote state
@@ -170,6 +172,8 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     setScanFile(file);
     setScanning(true);
     setScanConfidence(null);
+    setScanSupplierName(null);
+    setScanRejected(false);
     try {
       const buffer = await file.arrayBuffer();
       const base64 = btoa(
@@ -183,6 +187,34 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
         },
       });
       if (error) throw error;
+
+      const extractedName = data.supplier_name || '';
+      setScanSupplierName(extractedName);
+
+      // Match supplier name against invited list
+      const matched = suppliers.find(s => {
+        const a = s.company_name?.toLowerCase().trim() || '';
+        const b = extractedName.toLowerCase().trim();
+        if (!a || !b) return false;
+        return a === b || a.includes(b) || b.includes(a);
+      });
+
+      if (!matched && !isSupplier) {
+        setScanRejected(true);
+        setScanConfidence(data.confidence || 'medium');
+        toast({
+          title: 'Supplier ไม่ตรงกับรายชื่อที่เชิญ',
+          description: `AI อ่านได้: "${extractedName}" — ไม่พบใน Supplier ที่ Invite ไว้`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Auto-select supplier
+      if (matched && !isSupplier) {
+        setForm(prev => ({ ...prev, supplier_id: matched.id }));
+      }
+
       setForm(prev => ({
         ...prev,
         currency: data.currency || prev.currency,
@@ -209,7 +241,10 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
         }
       }
       setScanConfidence(data.confidence || 'medium');
-      toast({ title: 'AI อ่านใบเสนอราคาสำเร็จ', description: `ความมั่นใจ: ${data.confidence || 'medium'} — กรุณาตรวจสอบข้อมูลก่อนบันทึก` });
+      toast({
+        title: 'AI อ่านใบเสนอราคาสำเร็จ',
+        description: `Supplier: ${matched?.company_name || extractedName} · ความมั่นใจ: ${data.confidence || 'medium'}`,
+      });
     } catch (err: any) {
       toast({ title: 'AI สแกนไม่สำเร็จ', description: err.message || 'ลองใหม่อีกครั้ง', variant: 'destructive' });
     } finally {
@@ -290,6 +325,8 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     setItemPrices({});
     setScanFile(null);
     setScanConfidence(null);
+    setScanSupplierName(null);
+    setScanRejected(false);
     setSaving(false);
     fetchQuotations();
   };
@@ -383,14 +420,14 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                       <span className="text-xs">AI จะอ่านราคา, เงื่อนไข และกรอกข้อมูลให้อัตโนมัติ</span>
                     </button>
                   ) : (
-                    <div className="border rounded-lg p-3 bg-accent/30">
+                    <div className={`border rounded-lg p-3 ${scanRejected ? 'bg-red-50 border-red-200' : 'bg-accent/30'}`}>
                       <div className="flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-primary shrink-0" />
+                        <FileText className={`w-5 h-5 shrink-0 ${scanRejected ? 'text-red-500' : 'text-primary'}`} />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{scanFile.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {(scanFile.size / 1024).toFixed(0)} KB
-                            {scanConfidence && (
+                            {scanConfidence && !scanRejected && (
                               <Badge variant={scanConfidence === 'high' ? 'default' : scanConfidence === 'medium' ? 'secondary' : 'destructive'}
                                 className="ml-2 text-[10px] py-0">
                                 ความมั่นใจ: {scanConfidence}
@@ -402,7 +439,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                           <Loader2 className="w-4 h-4 animate-spin text-primary" />
                         ) : (
                           <Button type="button" variant="ghost" size="sm" className="text-xs"
-                            onClick={() => { setScanFile(null); setScanConfidence(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
+                            onClick={() => { setScanFile(null); setScanConfidence(null); setScanSupplierName(null); setScanRejected(false); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
                             เปลี่ยนไฟล์
                           </Button>
                         )}
@@ -411,6 +448,20 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                         <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
                           <Sparkles className="w-3 h-3" /> AI กำลังอ่านใบเสนอราคา...
                         </p>
+                      )}
+                      {scanRejected && scanSupplierName && (
+                        <div className="mt-2 p-2 rounded bg-red-100 border border-red-200">
+                          <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
+                            <XCircle className="w-3.5 h-3.5" />
+                            Supplier ไม่ตรงกับรายชื่อที่เชิญ
+                          </p>
+                          <p className="text-xs text-red-600 mt-1">
+                            AI อ่านได้: <span className="font-medium">"{scanSupplierName}"</span>
+                          </p>
+                          <p className="text-xs text-red-600">
+                            Supplier ที่เชิญ: {suppliers.map(s => s.company_name).join(', ')}
+                          </p>
+                        </div>
                       )}
                     </div>
                   )}
@@ -519,7 +570,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                   <Label className="text-xs">Internal Notes</Label>
                   <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
                 </div>
-                <Button onClick={handleSubmit} disabled={saving || scanning || !form.supplier_id} className="w-full">
+                <Button onClick={handleSubmit} disabled={saving || scanning || scanRejected || !form.supplier_id} className="w-full">
                   {saving ? 'Submitting...' : 'Submit Quotation'}
                 </Button>
               </div>
