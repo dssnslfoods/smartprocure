@@ -219,31 +219,38 @@ export default function SupplierForm() {
     // Capture docs and form BEFORE any state change to avoid stale/empty values
     const docsSnapshot = scannedDocs.map(d => ({ ...d }));
     const formSnapshot = { ...form };
-    // DEBUG v3: alert so user sees it
-    alert(`[DEBUG v3] docsSnapshot=${docsSnapshot.length}, names=${docsSnapshot.map(d=>d.name).join(',')}`);
-    console.log('[SupplierForm] handleConfirmSave START — docsSnapshot:', docsSnapshot.length, 'scannedDocs state:', scannedDocs.length, 'ref:', scannedDocsRef.current.length);
+    alert(`[DEBUG v4] docsSnapshot=${docsSnapshot.length}, names=${docsSnapshot.map(d=>d.name).join(',')}`);
 
     setShowConfirm(false);
     setLoading(true);
     const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = formSnapshot;
 
-    const { data: inserted, error } = await supabase.from('suppliers').insert({
-      company_name, tax_id, address, city, country, phone, email, website, contact_person,
-      tier: tier || null, notes: notes || null,
-      tenant_id: tenantId,
-      status: 'draft' as any,
-      created_by: user?.id,
-    } as any).select('id').single();
+    let supplierId: string;
+    try {
+      alert('[DEBUG] about to insert supplier...');
+      const { data: inserted, error } = await supabase.from('suppliers').insert({
+        company_name, tax_id, address, city, country, phone, email, website, contact_person,
+        tier: tier || null, notes: notes || null,
+        tenant_id: tenantId,
+        status: 'draft' as any,
+        created_by: user?.id,
+      } as any).select('id').single();
 
-    if (error || !inserted) {
+      alert(`[DEBUG] insert result — error: ${error?.message || 'none'}, inserted: ${JSON.stringify(inserted)}`);
+
+      if (error || !inserted) {
+        setLoading(false);
+        alert(`[DEBUG] INSERT FAILED: ${error?.message || 'inserted is null'}`);
+        return;
+      }
+      supplierId = inserted.id;
+    } catch (e: any) {
+      alert(`[DEBUG] INSERT EXCEPTION: ${e?.message || String(e)}`);
       setLoading(false);
-      toast({ title: 'บันทึกไม่สำเร็จ', description: error?.message || 'Unknown error', variant: 'destructive' });
       return;
     }
 
-    const supplierId = inserted.id;
-
-    alert(`[DEBUG] supplierId=${supplierId}, docs=${docsSnapshot.length}, fileValid=${docsSnapshot.map(d => !!d.file && d.file.size > 0).join(',')}`);
+    alert(`[DEBUG] supplier created: ${supplierId}, now uploading ${docsSnapshot.length} docs`);
 
     if (docsSnapshot.length > 0) {
       let certCount = 0;
