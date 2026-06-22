@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -9,8 +9,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, FileText, Building2, XCircle } from 'lucide-react';
+import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+function safeStorageName(fileName: string): string {
+  const ext = fileName.split('.').pop() || 'bin';
+  return `${crypto.randomUUID()}.${ext}`;
+}
 
 interface Props {
   rfqId: string;
@@ -44,6 +49,12 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     notes: '',
   });
   const [itemPrices, setItemPrices] = useState<Record<string, string>>({});
+
+  // AI scan state
+  const [scanning, setScanning] = useState(false);
+  const [scanFile, setScanFile] = useState<File | null>(null);
+  const [scanConfidence, setScanConfidence] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Decline-to-quote state
   const [declineOpen, setDeclineOpen] = useState(false);
@@ -154,6 +165,58 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     }
   }, [isSupplier, mySupplierId, form.supplier_id]);
 
+  // AI Scan handler
+  const handleScanFile = async (file: File) => {
+    setScanFile(file);
+    setScanning(true);
+    setScanConfidence(null);
+    try {
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+      const { data, error } = await supabase.functions.invoke('extract-quotation', {
+        body: {
+          file_base64: base64,
+          mime_type: file.type,
+          rfq_items: rfqItems.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit: i.unit })),
+        },
+      });
+      if (error) throw error;
+      setForm(prev => ({
+        ...prev,
+        currency: data.currency || prev.currency,
+        lead_time_days: data.lead_time_days?.toString() || prev.lead_time_days,
+        discount: data.discount?.toString() || prev.discount,
+        vat: data.vat?.toString() || prev.vat,
+        payment_term: data.payment_term || prev.payment_term,
+        delivery_terms: data.delivery_terms || prev.delivery_terms,
+        warranty: data.warranty || prev.warranty,
+        validity_days: data.validity_days?.toString() || prev.validity_days,
+        remark: [data.remark, data.quotation_no ? `เลขที่: ${data.quotation_no}` : null]
+          .filter(Boolean).join(' · ') || prev.remark,
+      }));
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        const newPrices: Record<string, string> = {};
+        for (const aiItem of data.items) {
+          const idx = aiItem.rfq_item_index;
+          if (idx != null && idx >= 0 && idx < rfqItems.length && aiItem.unit_price) {
+            newPrices[rfqItems[idx].id] = aiItem.unit_price.toString();
+          }
+        }
+        if (Object.keys(newPrices).length > 0) {
+          setItemPrices(prev => ({ ...prev, ...newPrices }));
+        }
+      }
+      setScanConfidence(data.confidence || 'medium');
+      toast({ title: 'AI อ่านใบเสนอราคาสำเร็จ', description: `ความมั่นใจ: ${data.confidence || 'medium'} — กรุณาตรวจสอบข้อมูลก่อนบันทึก` });
+    } catch (err: any) {
+      toast({ title: 'AI สแกนไม่สำเร็จ', description: err.message || 'ลองใหม่อีกครั้ง', variant: 'destructive' });
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!form.supplier_id) return;
     setSaving(true);
@@ -162,6 +225,18 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     const discount = parseFloat(form.discount) || 0;
     const vat = parseFloat(form.vat) || 0;
     const totalAmount = Math.max(0, subtotal - discount + vat);
+
+    // Upload quotation file to storage
+    let attachmentUrl: string | null = null;
+    if (scanFile) {
+      const safeName = safeStorageName(scanFile.name);
+      const storagePath = `quotations/${rfqId}/${safeName}`;
+      const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, scanFile);
+      if (!upErr) {
+        const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storagePath);
+        attachmentUrl = urlData?.publicUrl || null;
+      }
+    }
 
     const { data: quotation, error } = await supabase.from('quotations').insert({
       rfq_id: rfqId,
@@ -180,6 +255,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       spec_compliance_score: form.spec_compliance_score ? parseFloat(form.spec_compliance_score) : null,
       remark: form.remark || null,
       notes: form.notes || null,
+      attachment_url: attachmentUrl,
       evaluation_status: 'submitted',
       submitted_at: new Date().toISOString(),
     }).select().single();
@@ -212,6 +288,8 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     setOpen(false);
     setForm({ supplier_id: '', currency: 'USD', payment_term: '', delivery_terms: '', validity_days: '30', lead_time_days: '', warranty: '', discount: '0', vat: '0', spec_compliance_score: '', remark: '', notes: '' });
     setItemPrices({});
+    setScanFile(null);
+    setScanConfidence(null);
     setSaving(false);
     fetchQuotations();
   };
@@ -279,6 +357,65 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
             <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
               <DialogHeader><DialogTitle>Submit Quotation</DialogTitle></DialogHeader>
               <div className="space-y-4">
+
+                {/* AI Scan Upload */}
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    อัปโหลดใบเสนอราคา (AI อ่านอัตโนมัติ)
+                  </Label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,image/*"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleScanFile(f); }}
+                  />
+                  {!scanFile ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={scanning}
+                      className="w-full border-2 border-dashed rounded-lg p-4 flex flex-col items-center gap-2 text-sm text-muted-foreground hover:border-primary/50 hover:bg-accent/50 transition-colors cursor-pointer"
+                    >
+                      <Upload className="w-6 h-6" />
+                      <span>คลิกเพื่ออัปโหลด PDF หรือรูปภาพ</span>
+                      <span className="text-xs">AI จะอ่านราคา, เงื่อนไข และกรอกข้อมูลให้อัตโนมัติ</span>
+                    </button>
+                  ) : (
+                    <div className="border rounded-lg p-3 bg-accent/30">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-primary shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{scanFile.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {(scanFile.size / 1024).toFixed(0)} KB
+                            {scanConfidence && (
+                              <Badge variant={scanConfidence === 'high' ? 'default' : scanConfidence === 'medium' ? 'secondary' : 'destructive'}
+                                className="ml-2 text-[10px] py-0">
+                                ความมั่นใจ: {scanConfidence}
+                              </Badge>
+                            )}
+                          </p>
+                        </div>
+                        {scanning ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        ) : (
+                          <Button type="button" variant="ghost" size="sm" className="text-xs"
+                            onClick={() => { setScanFile(null); setScanConfidence(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
+                            เปลี่ยนไฟล์
+                          </Button>
+                        )}
+                      </div>
+                      {scanning && (
+                        <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" /> AI กำลังอ่านใบเสนอราคา...
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1">
                   <Label>Supplier *</Label>
                   {isSupplier && mySupplierId ? (
@@ -382,7 +519,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                   <Label className="text-xs">Internal Notes</Label>
                   <Textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} />
                 </div>
-                <Button onClick={handleSubmit} disabled={saving || !form.supplier_id} className="w-full">
+                <Button onClick={handleSubmit} disabled={saving || scanning || !form.supplier_id} className="w-full">
                   {saving ? 'Submitting...' : 'Submit Quotation'}
                 </Button>
               </div>
@@ -411,9 +548,16 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-lg">{q.currency} {q.total_amount?.toLocaleString()}</p>
-                  <p className="text-xs text-muted-foreground">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString() : '—'}</p>
+                <div className="flex items-center gap-3">
+                  {q.attachment_url && (
+                    <a href={q.attachment_url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary" title="ดูไฟล์แนบ">
+                      <FileText className="w-4 h-4" />
+                    </a>
+                  )}
+                  <div className="text-right">
+                    <p className="font-bold text-lg">{q.currency} {q.total_amount?.toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString() : '—'}</p>
+                  </div>
                 </div>
               </div>
             ))}
