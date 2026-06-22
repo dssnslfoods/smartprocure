@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
-import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, Landmark, KeyRound } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2 } from 'lucide-react';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -25,6 +25,9 @@ export default function SupplierApprovalPage() {
   const [resetTarget, setResetTarget] = useState<any>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
   const fetchSuppliers = async () => {
@@ -40,9 +43,22 @@ export default function SupplierApprovalPage() {
 
   useEffect(() => { fetchSuppliers(); }, []);
 
-  const openDetail = async (supplier: any) => {
+  const openDetail = async (supplier: any, startEditing = false) => {
     setSelected(supplier);
     setRejectReason('');
+    setEditing(startEditing);
+    setEditForm({
+      company_name: supplier.company_name || '',
+      tax_id: supplier.tax_id || '',
+      address: supplier.address || '',
+      city: supplier.city || '',
+      country: supplier.country || '',
+      phone: supplier.phone || '',
+      email: supplier.email || '',
+      website: supplier.website || '',
+      contact_person: supplier.contact_person || '',
+      notes: supplier.notes || '',
+    });
     const [contactsRes, docsRes] = await Promise.all([
       supabase.from('supplier_contacts').select('*').eq('supplier_id', supplier.id),
       supabase.from('supplier_documents').select('*').eq('supplier_id', supplier.id),
@@ -50,6 +66,42 @@ export default function SupplierApprovalPage() {
     setContacts(contactsRes.data || []);
     setDocuments(docsRes.data || []);
     setDetailOpen(true);
+  };
+
+  const handleEditChange = (field: string, value: string) => {
+    setEditForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selected) return;
+    if (!editForm.company_name?.trim()) {
+      toast({ title: 'กรุณากรอกชื่อบริษัท', variant: 'destructive' });
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.from('suppliers').update({
+      company_name: editForm.company_name,
+      tax_id: editForm.tax_id || null,
+      address: editForm.address || null,
+      city: editForm.city || null,
+      country: editForm.country || null,
+      phone: editForm.phone || null,
+      email: editForm.email || null,
+      website: editForm.website || null,
+      contact_person: editForm.contact_person || null,
+      notes: editForm.notes || null,
+      updated_at: new Date().toISOString(),
+    } as any).eq('id', selected.id);
+    setSaving(false);
+
+    if (error) {
+      toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'บันทึกสำเร็จ', description: `อัปเดตข้อมูล ${editForm.company_name} เรียบร้อย` });
+      setEditing(false);
+      setSelected({ ...selected, ...editForm });
+      fetchSuppliers();
+    }
   };
 
   const handleApprove = async (id: string) => {
@@ -63,11 +115,9 @@ export default function SupplierApprovalPage() {
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } else {
-      // Update the profile's is_active
       const sup = suppliers.find(s => s.id === id);
       if (sup?.created_by) {
         await supabase.from('profiles').update({ is_active: true }).eq('id', sup.created_by);
-        // Notify supplier in-app
         await supabase.from('notifications').insert({
           user_id: sup.created_by,
           title: 'การลงทะเบียนได้รับอนุมัติ',
@@ -75,7 +125,6 @@ export default function SupplierApprovalPage() {
           type: 'approval',
           link: '/supplier-portal',
         });
-        // Send email notification
         const { data: emailCfg } = await supabase.from('system_settings').select('value').eq('key', 'email_config').maybeSingle();
         const cfg = emailCfg?.value as Record<string, any> | null;
         if (cfg?.email_enabled && cfg?.notify_supplier_approved) {
@@ -128,7 +177,6 @@ export default function SupplierApprovalPage() {
           type: 'rejection',
           link: '/supplier-portal',
         });
-        // Send email notification
         const { data: emailCfg2 } = await supabase.from('system_settings').select('value').eq('key', 'email_config').maybeSingle();
         const cfg2 = emailCfg2?.value as Record<string, any> | null;
         if (cfg2?.email_enabled && cfg2?.notify_supplier_rejected) {
@@ -191,6 +239,18 @@ export default function SupplierApprovalPage() {
   );
 
   const pagination = usePagination(filtered, { pageSize: 20 });
+
+  const EDIT_FIELDS: { key: string; label: string; required?: boolean }[] = [
+    { key: 'company_name', label: 'ชื่อบริษัท', required: true },
+    { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
+    { key: 'contact_person', label: 'ผู้ติดต่อ' },
+    { key: 'phone', label: 'เบอร์โทร' },
+    { key: 'email', label: 'อีเมล' },
+    { key: 'website', label: 'เว็บไซต์' },
+    { key: 'address', label: 'ที่อยู่' },
+    { key: 'city', label: 'จังหวัด' },
+    { key: 'country', label: 'ประเทศ' },
+  ];
 
   return (
     <div className="space-y-6">
@@ -279,8 +339,11 @@ export default function SupplierApprovalPage() {
                       <td className="p-3 text-muted-foreground">{new Date(s.created_at).toLocaleDateString('th-TH')}</td>
                       <td className="p-3 text-right">
                         <div className="flex gap-1 justify-end">
-                          <Button variant="ghost" size="sm" onClick={() => openDetail(s)}>
+                          <Button variant="ghost" size="sm" onClick={() => openDetail(s, false)}>
                             <Eye className="w-3 h-3 mr-1" /> ตรวจสอบ
+                          </Button>
+                          <Button variant="ghost" size="sm" className="text-orange-600" onClick={() => openDetail(s, true)}>
+                            <Pencil className="w-3 h-3 mr-1" /> แก้ไข
                           </Button>
                           {s.created_by && (
                             <Button variant="ghost" size="sm" className="text-blue-600" onClick={() => { setResetTarget(s); setNewPassword(''); setResetOpen(true); }}>
@@ -304,11 +367,18 @@ export default function SupplierApprovalPage() {
         </CardContent>
       </Card>
 
-      {/* Detail Dialog */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+      {/* Detail / Edit Dialog */}
+      <Dialog open={detailOpen} onOpenChange={(open) => { setDetailOpen(open); if (!open) setEditing(false); }}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>ตรวจสอบข้อมูล Supplier</DialogTitle>
+            <div className="flex items-center justify-between">
+              <DialogTitle>{editing ? 'แก้ไขข้อมูล Supplier' : 'ตรวจสอบข้อมูล Supplier'}</DialogTitle>
+              {!editing && (
+                <Button variant="outline" size="sm" className="text-orange-600" onClick={() => setEditing(true)}>
+                  <Pencil className="w-3 h-3 mr-1" /> แก้ไข
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           {selected && (
             <div className="space-y-6">
@@ -317,17 +387,45 @@ export default function SupplierApprovalPage() {
                 <h3 className="font-medium flex items-center gap-2 mb-3">
                   <Building2 className="w-4 h-4" /> ข้อมูลบริษัท
                 </h3>
-                <div className="grid gap-2 text-sm">
-                  <Row label="ชื่อบริษัท" value={selected.company_name} />
-                  <Row label="Tax ID" value={selected.tax_id} />
-                  <Row label="ที่อยู่" value={selected.address} />
-                  <Row label="จังหวัด/เมือง" value={selected.city} />
-                  <Row label="ประเทศ" value={selected.country} />
-                  <Row label="เบอร์โทร" value={selected.phone} />
-                  <Row label="อีเมล" value={selected.email} />
-                  <Row label="เว็บไซต์" value={selected.website} />
-                  {selected.notes && <Row label="หมายเหตุ" value={selected.notes} />}
-                </div>
+                {editing ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {EDIT_FIELDS.map(f => (
+                      <div key={f.key} className={f.key === 'address' ? 'md:col-span-2 space-y-1.5' : 'space-y-1.5'}>
+                        <Label className="text-xs">
+                          {f.label} {f.required && <span className="text-red-500">*</span>}
+                        </Label>
+                        <Input
+                          value={editForm[f.key] || ''}
+                          onChange={e => handleEditChange(f.key, e.target.value)}
+                          placeholder={f.label}
+                          className="h-9"
+                        />
+                      </div>
+                    ))}
+                    <div className="md:col-span-2 space-y-1.5">
+                      <Label className="text-xs">หมายเหตุ</Label>
+                      <Textarea
+                        value={editForm.notes || ''}
+                        onChange={e => handleEditChange('notes', e.target.value)}
+                        rows={2}
+                        placeholder="หมายเหตุ"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 text-sm">
+                    <Row label="ชื่อบริษัท" value={selected.company_name} />
+                    <Row label="Tax ID" value={selected.tax_id} />
+                    <Row label="ผู้ติดต่อ" value={selected.contact_person} />
+                    <Row label="ที่อยู่" value={selected.address} />
+                    <Row label="จังหวัด/เมือง" value={selected.city} />
+                    <Row label="ประเทศ" value={selected.country} />
+                    <Row label="เบอร์โทร" value={selected.phone} />
+                    <Row label="อีเมล" value={selected.email} />
+                    <Row label="เว็บไซต์" value={selected.website} />
+                    {selected.notes && <Row label="หมายเหตุ" value={selected.notes} />}
+                  </div>
+                )}
               </div>
 
               {/* Contacts */}
@@ -380,23 +478,34 @@ export default function SupplierApprovalPage() {
 
               {/* Actions */}
               <div className="border-t pt-4 space-y-3">
-                <div className="space-y-1.5">
-                  <Label>เหตุผลกรณีปฏิเสธ</Label>
-                  <Textarea
-                    value={rejectReason}
-                    onChange={e => setRejectReason(e.target.value)}
-                    rows={2}
-                    placeholder="ระบุเหตุผล (กรณีปฏิเสธ)..."
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprove(selected.id)}>
-                    <CheckCircle2 className="w-4 h-4 mr-1" /> อนุมัติ
-                  </Button>
-                  <Button variant="destructive" onClick={() => handleReject(selected.id)}>
-                    <XCircle className="w-4 h-4 mr-1" /> ปฏิเสธ
-                  </Button>
-                </div>
+                {editing ? (
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" onClick={() => setEditing(false)}>ยกเลิก</Button>
+                    <Button onClick={handleSaveEdit} disabled={saving} className="bg-orange-500 hover:bg-orange-600">
+                      {saving ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> กำลังบันทึก...</> : <><Save className="w-4 h-4 mr-1" /> บันทึก</>}
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <Label>เหตุผลกรณีปฏิเสธ</Label>
+                      <Textarea
+                        value={rejectReason}
+                        onChange={e => setRejectReason(e.target.value)}
+                        rows={2}
+                        placeholder="ระบุเหตุผล (กรณีปฏิเสธ)..."
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => handleApprove(selected.id)}>
+                        <CheckCircle2 className="w-4 h-4 mr-1" /> อนุมัติ
+                      </Button>
+                      <Button variant="destructive" onClick={() => handleReject(selected.id)}>
+                        <XCircle className="w-4 h-4 mr-1" /> ปฏิเสธ
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
