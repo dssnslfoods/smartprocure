@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
-import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2 } from 'lucide-react';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2, Trash2, AlertTriangle } from 'lucide-react';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -28,6 +29,12 @@ export default function SupplierApprovalPage() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleteChecking, setDeleteChecking] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
+  const [deleteTxDetails, setDeleteTxDetails] = useState<any[]>([]);
+  const [deleting, setDeleting] = useState(false);
   const { toast } = useToast();
 
   const fetchSuppliers = async () => {
@@ -233,6 +240,45 @@ export default function SupplierApprovalPage() {
     }
   };
 
+  const handleDeleteClick = async (supplier: any) => {
+    setDeleteTarget(supplier);
+    setDeleteBlocked(false);
+    setDeleteTxDetails([]);
+    setDeleteChecking(true);
+    setDeleteOpen(true);
+
+    const { data, error } = await supabase.rpc('check_supplier_transactions', { p_supplier_id: supplier.id });
+    setDeleteChecking(false);
+
+    if (error) {
+      toast({ title: 'ตรวจสอบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      setDeleteOpen(false);
+      return;
+    }
+
+    if (data?.has_transactions) {
+      setDeleteBlocked(true);
+      setDeleteTxDetails(data.details || []);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget || deleteBlocked) return;
+    setDeleting(true);
+    const { error } = await supabase.from('suppliers').delete().eq('id', deleteTarget.id);
+    setDeleting(false);
+
+    if (error) {
+      toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'ลบสำเร็จ', description: `ลบ ${deleteTarget.company_name} เรียบร้อย` });
+      if (detailOpen && selected?.id === deleteTarget.id) setDetailOpen(false);
+      fetchSuppliers();
+    }
+    setDeleteOpen(false);
+    setDeleteTarget(null);
+  };
+
   const filtered = suppliers.filter(s =>
     s.company_name?.toLowerCase().includes(search.toLowerCase()) ||
     s.tax_id?.toLowerCase().includes(search.toLowerCase())
@@ -350,6 +396,9 @@ export default function SupplierApprovalPage() {
                               <KeyRound className="w-3 h-3 mr-1" /> รีเซ็ตรหัสผ่าน
                             </Button>
                           )}
+                          <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeleteClick(s)}>
+                            <Trash2 className="w-3 h-3 mr-1" /> ลบ
+                          </Button>
                           {(s.status === 'submitted' || s.status === 'review') && (
                             <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleApprove(s.id)}>
                               <CheckCircle2 className="w-3 h-3 mr-1" /> อนุมัติ
@@ -503,6 +552,10 @@ export default function SupplierApprovalPage() {
                       <Button variant="destructive" onClick={() => handleReject(selected.id)}>
                         <XCircle className="w-4 h-4 mr-1" /> ปฏิเสธ
                       </Button>
+                      <div className="flex-1" />
+                      <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDeleteClick(selected)}>
+                        <Trash2 className="w-4 h-4 mr-1" /> ลบ Supplier
+                      </Button>
                     </div>
                   </>
                 )}
@@ -511,6 +564,58 @@ export default function SupplierApprovalPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => { if (!open) { setDeleteOpen(false); setDeleteTarget(null); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              {deleteBlocked ? <AlertTriangle className="w-5 h-5 text-amber-500" /> : <Trash2 className="w-5 h-5 text-red-500" />}
+              {deleteBlocked ? 'ไม่สามารถลบได้' : 'ยืนยันการลบ Supplier'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                {deleteChecking ? (
+                  <div className="flex items-center gap-2 py-4">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>กำลังตรวจสอบข้อมูลที่เกี่ยวข้อง...</span>
+                  </div>
+                ) : deleteBlocked ? (
+                  <>
+                    <p>
+                      ไม่สามารถลบ <span className="font-semibold text-foreground">{deleteTarget?.company_name}</span> ได้ เนื่องจากมีข้อมูล Transaction ในระบบ:
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 text-sm">
+                      {deleteTxDetails.map((d: any, i: number) => (
+                        <li key={i}>{d.table}: {d.count} รายการ</li>
+                      ))}
+                    </ul>
+                    <p className="text-sm text-muted-foreground">
+                      กรุณาลบข้อมูล Transaction ที่เกี่ยวข้องก่อน หรือเปลี่ยนสถานะเป็น "ปฏิเสธ" แทน
+                    </p>
+                  </>
+                ) : (
+                  <p>
+                    คุณต้องการลบ <span className="font-semibold text-foreground">{deleteTarget?.company_name}</span> ออกจากระบบหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            {!deleteBlocked && !deleteChecking && (
+              <AlertDialogAction
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {deleting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> กำลังลบ...</> : <><Trash2 className="w-4 h-4 mr-1" /> ยืนยันลบ</>}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Reset Password Dialog */}
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
