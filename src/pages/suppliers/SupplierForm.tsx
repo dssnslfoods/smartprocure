@@ -89,7 +89,7 @@ function guessDocLabel(fileName: string): string {
 
 export default function SupplierForm() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, tenantId } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -213,6 +213,7 @@ export default function SupplierForm() {
     const { data: inserted, error } = await supabase.from('suppliers').insert({
       company_name, tax_id, address, city, country, phone, email, website, contact_person,
       tier: tier || null, notes: notes || null,
+      tenant_id: tenantId,
       status: 'draft' as any,
       created_by: user?.id,
     } as any).select('id').single();
