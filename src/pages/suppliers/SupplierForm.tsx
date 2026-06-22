@@ -219,6 +219,8 @@ export default function SupplierForm() {
     // Capture docs and form BEFORE any state change to avoid stale/empty values
     const docsSnapshot = scannedDocs.map(d => ({ ...d }));
     const formSnapshot = { ...form };
+    // DEBUG v3: alert so user sees it
+    alert(`[DEBUG v3] docsSnapshot=${docsSnapshot.length}, names=${docsSnapshot.map(d=>d.name).join(',')}`);
     console.log('[SupplierForm] handleConfirmSave START — docsSnapshot:', docsSnapshot.length, 'scannedDocs state:', scannedDocs.length, 'ref:', scannedDocsRef.current.length);
 
     setShowConfirm(false);
