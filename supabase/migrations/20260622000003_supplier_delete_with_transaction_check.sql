@@ -22,11 +22,14 @@ BEGIN
   SELECT count(*) INTO cnt FROM awards WHERE supplier_id = p_supplier_id;
   IF cnt > 0 THEN tx_count := tx_count + cnt; details := details || jsonb_build_array(jsonb_build_object('table', 'การจัดซื้อ (Award)', 'count', cnt)); END IF;
 
-  SELECT count(*) INTO cnt FROM purchase_orders WHERE supplier_id = p_supplier_id;
-  IF cnt > 0 THEN tx_count := tx_count + cnt; details := details || jsonb_build_array(jsonb_build_object('table', 'ใบสั่งซื้อ (PO)', 'count', cnt)); END IF;
-
   SELECT count(*) INTO cnt FROM price_lists WHERE supplier_id = p_supplier_id;
   IF cnt > 0 THEN tx_count := tx_count + cnt; details := details || jsonb_build_array(jsonb_build_object('table', 'รายการราคา', 'count', cnt)); END IF;
+
+  SELECT count(*) INTO cnt FROM bid_entries WHERE supplier_id = p_supplier_id;
+  IF cnt > 0 THEN tx_count := tx_count + cnt; details := details || jsonb_build_array(jsonb_build_object('table', 'ข้อเสนอราคา (Bid)', 'count', cnt)); END IF;
+
+  SELECT count(*) INTO cnt FROM final_quotations WHERE supplier_id = p_supplier_id;
+  IF cnt > 0 THEN tx_count := tx_count + cnt; details := details || jsonb_build_array(jsonb_build_object('table', 'ใบเสนอราคาสุดท้าย', 'count', cnt)); END IF;
 
   RETURN json_build_object('has_transactions', tx_count > 0, 'total', tx_count, 'details', details);
 END;
