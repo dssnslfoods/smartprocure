@@ -216,10 +216,14 @@ export default function SupplierForm() {
   };
 
   const handleConfirmSave = async () => {
+    // Capture docs and form BEFORE any state change to avoid stale/empty values
+    const docsSnapshot = scannedDocs.map(d => ({ ...d }));
+    const formSnapshot = { ...form };
+    console.log('[SupplierForm] handleConfirmSave START — docsSnapshot:', docsSnapshot.length, 'scannedDocs state:', scannedDocs.length, 'ref:', scannedDocsRef.current.length);
+
     setShowConfirm(false);
     setLoading(true);
-    const currentForm = formRef.current;
-    const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = currentForm;
+    const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = formSnapshot;
 
     const { data: inserted, error } = await supabase.from('suppliers').insert({
       company_name, tax_id, address, city, country, phone, email, website, contact_person,
@@ -237,13 +241,12 @@ export default function SupplierForm() {
 
     const supplierId = inserted.id;
 
-    const docsToUpload = scannedDocsRef.current;
-    console.log('[SupplierForm] scannedDocs from ref:', docsToUpload.length, docsToUpload.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
-    if (docsToUpload.length > 0) {
-      toast({ title: `กำลังอัปโหลด ${docsToUpload.length} เอกสาร...` });
+    console.log('[SupplierForm] docsSnapshot:', docsSnapshot.length, docsSnapshot.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
+    if (docsSnapshot.length > 0) {
+      toast({ title: `กำลังอัปโหลด ${docsSnapshot.length} เอกสาร...` });
       let certCount = 0;
       let docCount = 0;
-      for (const doc of docsToUpload) {
+      for (const doc of docsSnapshot) {
         console.log('[SupplierForm] processing doc:', doc.name, 'label:', doc.docLabel, 'isCert:', CERT_DOC_LABELS.has(doc.docLabel), 'fileValid:', !!doc.file, 'fileSize:', doc.file?.size);
         const isCert = CERT_DOC_LABELS.has(doc.docLabel);
         try {
