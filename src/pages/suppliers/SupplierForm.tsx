@@ -12,7 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, Upload, Sparkles, Loader2, FileText, CheckCircle, AlertTriangle, X, Eye } from 'lucide-react';
+import { ArrowLeft, Upload, Sparkles, Loader2, FileText, CheckCircle, AlertTriangle, X, Eye, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 async function fileToBase64(file: File): Promise<string> {
@@ -40,6 +40,23 @@ interface AIExtractResult {
   notes: string;
 }
 
+interface ScannedDoc {
+  file: File;
+  name: string;
+  type: string;
+  docLabel: string;
+  fieldsFound: string[];
+}
+
+const DOC_TYPE_OPTIONS = [
+  { value: 'quotation', label: 'ใบเสนอราคา' },
+  { value: 'invoice', label: 'ใบแจ้งหนี้ / Invoice' },
+  { value: 'pp20', label: 'ภพ.20' },
+  { value: 'company_cert', label: 'ใบรับรองบริษัท' },
+  { value: 'business_license', label: 'ใบอนุญาตประกอบกิจการ' },
+  { value: 'other', label: 'เอกสารอื่น ๆ' },
+];
+
 const REQUIRED_FIELDS: { key: keyof typeof EMPTY_FORM; label: string }[] = [
   { key: 'company_name', label: 'ชื่อบริษัท' },
   { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
@@ -60,6 +77,17 @@ const EMPTY_FORM = {
   notes: '',
 };
 
+const FORM_KEYS = ['company_name', 'tax_id', 'address', 'city', 'country', 'phone', 'email', 'website', 'contact_person'] as const;
+
+function guessDocLabel(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (/ภพ|pp\.?20|vat/i.test(fileName)) return 'pp20';
+  if (/ใบรับรอง|certificate|cert|หนังสือรับรอง/i.test(fileName)) return 'company_cert';
+  if (/quot|เสนอราคา|qo|qt/i.test(lower)) return 'quotation';
+  if (/inv|แจ้งหนี้|invoice/i.test(lower)) return 'invoice';
+  return 'other';
+}
+
 export default function SupplierForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -69,8 +97,8 @@ export default function SupplierForm() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [scannedFile, setScannedFile] = useState<{ name: string; type: string } | null>(null);
-  const [aiResult, setAiResult] = useState<AIExtractResult | null>(null);
+  const [scannedDocs, setScannedDocs] = useState<ScannedDoc[]>([]);
+  const [aiScanned, setAiScanned] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -93,8 +121,6 @@ export default function SupplierForm() {
     }
 
     setScanning(true);
-    setScannedFile({ name: file.name, type: file.type });
-    setAiResult(null);
 
     try {
       const base64 = await fileToBase64(file);
@@ -106,42 +132,53 @@ export default function SupplierForm() {
       if (data?.error) throw new Error(data.error);
 
       const result = data as AIExtractResult;
-      setAiResult(result);
 
-      setForm({
-        company_name: result.company_name || '',
-        tax_id: result.tax_id || '',
-        address: result.address || '',
-        city: result.city || '',
-        country: result.country || '',
-        phone: result.phone || '',
-        email: result.email || '',
-        website: result.website || '',
-        contact_person: result.contact_person || '',
-        tier: '',
-        notes: '',
+      const fieldsFound: string[] = [];
+      setForm((prev) => {
+        const updated = { ...prev };
+        for (const key of FORM_KEYS) {
+          const newVal = result[key];
+          if (newVal && !prev[key]?.trim()) {
+            (updated as any)[key] = newVal;
+            fieldsFound.push(key);
+          }
+        }
+        return updated;
       });
 
-      if (!result.tax_id) {
+      const docLabel = guessDocLabel(file.name);
+      setScannedDocs((prev) => [...prev, { file, name: file.name, type: file.type, docLabel, fieldsFound }]);
+      setAiScanned(true);
+
+      if (fieldsFound.length === 0) {
+        toast({ title: 'ไม่พบข้อมูลใหม่', description: 'เอกสารนี้ไม่มีข้อมูลที่ยังขาดอยู่ แต่จะถูกเก็บเป็นเอกสารแนบ' });
+      } else if (!result.tax_id && !form.tax_id) {
         toast({
           title: 'ไม่พบเลขประจำตัวผู้เสียภาษี',
-          description: 'กรุณาอัปโหลดเอกสารเพิ่มเติม เช่น ภพ.20 หรือ ใบรับรองบริษัท เพื่อให้ AI อ่านเลขภาษี หรือกรอกเลขภาษีด้วยตนเอง',
+          description: 'กรุณาอัปโหลดเอกสารเพิ่มเติม เช่น ภพ.20 หรือ ใบรับรองบริษัท',
           variant: 'destructive',
           duration: 10000,
         });
       } else {
         toast({
           title: 'สแกนเอกสารสำเร็จ',
-          description: `ความมั่นใจ: ${result.confidence === 'high' ? 'สูง' : result.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'} — กรุณาตรวจสอบข้อมูลก่อนบันทึก`,
+          description: `พบข้อมูลใหม่ ${fieldsFound.length} รายการ — ความมั่นใจ: ${result.confidence === 'high' ? 'สูง' : result.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'}`,
         });
       }
     } catch (err: any) {
       toast({ title: 'สแกนไม่สำเร็จ', description: err.message || 'ไม่สามารถอ่านข้อมูลจากเอกสารได้', variant: 'destructive' });
-      setScannedFile(null);
     } finally {
       setScanning(false);
     }
-  }, [toast]);
+  }, [toast, form.tax_id]);
+
+  const handleRemoveDoc = (index: number) => {
+    setScannedDocs((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDocLabelChange = (index: number, value: string) => {
+    setScannedDocs((prev) => prev.map((d, i) => i === index ? { ...d, docLabel: value } : d));
+  };
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -173,27 +210,61 @@ export default function SupplierForm() {
     setShowConfirm(false);
     setLoading(true);
     const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = form;
-    const { error } = await supabase.from('suppliers').insert({
-      company_name, tax_id, address, city, country, phone, email, website, contact_person, tier: tier || null,
-      notes: notes || null,
+
+    const { data: inserted, error } = await supabase.from('suppliers').insert({
+      company_name, tax_id, address, city, country, phone, email, website, contact_person,
+      tier: tier || null, notes: notes || null,
       status: 'draft' as any,
       created_by: user?.id,
-    } as any);
-    setLoading(false);
-    if (error) {
-      toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'บันทึกสำเร็จ', description: `เพิ่ม ${company_name} เรียบร้อย` });
-      navigate('/suppliers');
+    } as any).select('id').single();
+
+    if (error || !inserted) {
+      setLoading(false);
+      toast({ title: 'บันทึกไม่สำเร็จ', description: error?.message || 'Unknown error', variant: 'destructive' });
+      return;
     }
+
+    const supplierId = inserted.id;
+
+    if (scannedDocs.length > 0) {
+      let uploadedCount = 0;
+      for (const doc of scannedDocs) {
+        try {
+          const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
+          const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
+          if (uploadErr) { console.error('upload error:', uploadErr); continue; }
+
+          const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
+          const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label || doc.name;
+
+          await supabase.from('supplier_documents').insert({
+            supplier_id: supplierId,
+            document_name: label,
+            document_type: doc.docLabel,
+            file_url: urlData.publicUrl,
+            file_size: doc.file.size,
+            uploaded_by: user?.id,
+          });
+          uploadedCount++;
+        } catch (e) {
+          console.error('doc upload error:', e);
+        }
+      }
+      if (uploadedCount > 0) {
+        toast({ title: `อัปโหลดเอกสาร ${uploadedCount} ไฟล์สำเร็จ` });
+      }
+    }
+
+    setLoading(false);
+    toast({ title: 'บันทึกสำเร็จ', description: `เพิ่ม ${company_name} เรียบร้อย` });
+    navigate('/suppliers');
   };
 
-  const confidenceBadge = aiResult && (
-    <Badge variant={aiResult.confidence === 'high' ? 'default' : aiResult.confidence === 'medium' ? 'secondary' : 'destructive'}
-      className={aiResult.confidence === 'high' ? 'bg-green-100 text-green-800' : aiResult.confidence === 'medium' ? 'bg-yellow-100 text-yellow-800' : ''}>
-      {aiResult.confidence === 'high' ? 'ความมั่นใจสูง' : aiResult.confidence === 'medium' ? 'ความมั่นใจปานกลาง' : 'ความมั่นใจต่ำ'}
-    </Badge>
-  );
+  const handleClearAll = () => {
+    setScannedDocs([]);
+    setAiScanned(false);
+    setForm({ ...EMPTY_FORM });
+  };
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -210,51 +281,82 @@ export default function SupplierForm() {
       {/* AI Scan Section */}
       <Card className="border-dashed border-2 border-orange-200 bg-orange-50/30">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-orange-500" />
-            <CardTitle className="text-base">AI สแกนเอกสาร</CardTitle>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-orange-500" />
+              <CardTitle className="text-base">AI สแกนเอกสาร</CardTitle>
+              {scannedDocs.length > 0 && (
+                <Badge variant="secondary" className="bg-orange-100 text-orange-700">{scannedDocs.length} ไฟล์</Badge>
+              )}
+            </div>
+            {scannedDocs.length > 0 && (
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleClearAll}>
+                <X className="w-3.5 h-3.5 mr-1" /> ล้างทั้งหมด
+              </Button>
+            )}
           </div>
-          <CardDescription>อัปโหลดใบเสนอราคา, ใบแจ้งหนี้, หรือเอกสารทางการค้า — AI จะดึงข้อมูลผู้จัดจำหน่ายให้อัตโนมัติ</CardDescription>
+          <CardDescription>
+            อัปโหลดใบเสนอราคา, ภพ.20, ใบรับรองบริษัท หรือเอกสารทางการค้า — สแกนได้หลายไฟล์ ระบบจะเติมข้อมูลที่ยังขาดให้
+          </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
+          {/* Scanned files list */}
+          {scannedDocs.length > 0 && (
+            <div className="space-y-2">
+              {scannedDocs.map((doc, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-white border text-sm">
+                  <FileText className="w-4 h-4 text-orange-500 shrink-0" />
+                  <span className="font-medium truncate flex-1" title={doc.name}>{doc.name}</span>
+                  <Select value={doc.docLabel} onValueChange={(v) => handleDocLabelChange(idx, v)}>
+                    <SelectTrigger className="w-[160px] h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOC_TYPE_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {doc.fieldsFound.length > 0 && (
+                    <Badge variant="secondary" className="bg-green-50 text-green-700 text-xs shrink-0">
+                      +{doc.fieldsFound.length} ข้อมูล
+                    </Badge>
+                  )}
+                  <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => handleRemoveDoc(idx)}>
+                    <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Upload area — always visible */}
           {scanning ? (
-            <div className="flex flex-col items-center gap-3 py-8">
+            <div className="flex flex-col items-center gap-3 py-6">
               <Loader2 className="w-8 h-8 text-orange-500 animate-spin" />
               <p className="text-sm text-muted-foreground">กำลังสแกนเอกสาร...</p>
             </div>
-          ) : scannedFile && aiResult ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-orange-500" />
-                  <span className="text-sm font-medium">{scannedFile.name}</span>
-                  {confidenceBadge}
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => { setScannedFile(null); setAiResult(null); setForm({ ...EMPTY_FORM }); }}>
-                  <X className="w-4 h-4 mr-1" /> ล้าง
-                </Button>
-              </div>
-              {aiResult.notes && (
-                <Alert><AlertDescription className="text-xs">{aiResult.notes}</AlertDescription></Alert>
-              )}
-              {aiResult.confidence === 'low' && (
-                <Alert variant="destructive">
-                  <AlertTriangle className="w-4 h-4" />
-                  <AlertDescription>AI อ่านเอกสารได้ไม่ชัด กรุณาตรวจสอบข้อมูลอย่างละเอียด</AlertDescription>
-                </Alert>
-              )}
-            </div>
           ) : (
             <div
-              className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${dragOver ? 'border-orange-500 bg-orange-100/50' : 'border-gray-300 hover:border-orange-400 hover:bg-orange-50/50'}`}
+              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${dragOver ? 'border-orange-500 bg-orange-100/50' : 'border-gray-300 hover:border-orange-400 hover:bg-orange-50/50'}`}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
             >
-              <Upload className="w-8 h-8 mx-auto text-gray-400 mb-2" />
-              <p className="text-sm font-medium text-gray-600">ลากไฟล์มาวางที่นี่ หรือ คลิกเพื่อเลือกไฟล์</p>
-              <p className="text-xs text-gray-400 mt-1">รองรับ PDF, PNG, JPG (สูงสุด 20 MB)</p>
+              {scannedDocs.length > 0 ? (
+                <>
+                  <Plus className="w-6 h-6 mx-auto text-orange-400 mb-1" />
+                  <p className="text-sm font-medium text-orange-600">สแกนเอกสารเพิ่มเติม</p>
+                  <p className="text-xs text-gray-400 mt-0.5">เช่น ภพ.20, ใบรับรองบริษัท เพื่อเติมข้อมูลที่ยังขาด</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-8 h-8 mx-auto text-gray-400 mb-2" />
+                  <p className="text-sm font-medium text-gray-600">ลากไฟล์มาวางที่นี่ หรือ คลิกเพื่อเลือกไฟล์</p>
+                  <p className="text-xs text-gray-400 mt-1">รองรับ PDF, PNG, JPG (สูงสุด 20 MB)</p>
+                </>
+              )}
             </div>
           )}
           <input ref={fileInputRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleFileSelect} />
@@ -265,7 +367,7 @@ export default function SupplierForm() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">ข้อมูลบริษัท</CardTitle>
-          {aiResult && (
+          {aiScanned && (
             <CardDescription className="flex items-center gap-1 text-orange-600">
               <Eye className="w-3.5 h-3.5" /> ข้อมูลจาก AI — กรุณาตรวจสอบก่อนบันทึก
             </CardDescription>
@@ -277,7 +379,7 @@ export default function SupplierForm() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   ชื่อบริษัท <span className="text-red-500">*</span>
-                  {aiResult && form.company_name && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.company_name && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.company_name} onChange={(e) => handleChange('company_name', e.target.value)}
                   placeholder="เช่น บริษัท ABC จำกัด" className={!form.company_name ? 'border-red-300' : ''} />
@@ -285,27 +387,27 @@ export default function SupplierForm() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   เลขประจำตัวผู้เสียภาษี <span className="text-red-500">*</span>
-                  {aiResult && form.tax_id && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.tax_id && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.tax_id} onChange={(e) => handleChange('tax_id', e.target.value)}
                   placeholder="เลข 13 หลัก" className={!form.tax_id ? 'border-red-300' : ''} />
-                {aiResult && !form.tax_id && (
+                {aiScanned && !form.tax_id && (
                   <p className="text-xs text-red-500 mt-1">
-                    AI ไม่พบเลขภาษีในเอกสาร — ลองอัปโหลด <strong>ภพ.20</strong> หรือ <strong>ใบรับรองบริษัท</strong> หรือกรอกด้วยตนเอง
+                    AI ไม่พบเลขภาษีในเอกสาร — ลองสแกน <strong>ภพ.20</strong> หรือ <strong>ใบรับรองบริษัท</strong> เพิ่มเติม หรือกรอกด้วยตนเอง
                   </p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   ผู้ติดต่อ
-                  {aiResult && form.contact_person && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.contact_person && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.contact_person} onChange={(e) => handleChange('contact_person', e.target.value)} placeholder="ชื่อผู้ติดต่อ" />
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   เบอร์โทรศัพท์ <span className="text-red-500">*</span>
-                  {aiResult && form.phone && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.phone && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.phone} onChange={(e) => handleChange('phone', e.target.value)}
                   placeholder="0xx-xxx-xxxx" className={!form.phone ? 'border-red-300' : ''} />
@@ -313,35 +415,35 @@ export default function SupplierForm() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   อีเมล
-                  {aiResult && form.email && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.email && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input type="email" value={form.email} onChange={(e) => handleChange('email', e.target.value)} placeholder="email@example.com" />
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   เว็บไซต์
-                  {aiResult && form.website && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.website && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.website} onChange={(e) => handleChange('website', e.target.value)} placeholder="https://" />
               </div>
               <div className="space-y-2 md:col-span-2">
                 <Label className="flex items-center gap-1">
                   ที่อยู่
-                  {aiResult && form.address && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.address && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.address} onChange={(e) => handleChange('address', e.target.value)} placeholder="ที่อยู่เต็ม" />
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   จังหวัด
-                  {aiResult && form.city && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.city && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.city} onChange={(e) => handleChange('city', e.target.value)} placeholder="จังหวัด" />
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
                   ประเทศ
-                  {aiResult && form.country && <Sparkles className="w-3 h-3 text-orange-400" />}
+                  {aiScanned && form.country && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.country} onChange={(e) => handleChange('country', e.target.value)} placeholder="ประเทศ" />
               </div>
@@ -367,6 +469,16 @@ export default function SupplierForm() {
                 <AlertTriangle className="w-4 h-4" />
                 <AlertDescription>
                   กรุณากรอกข้อมูลที่จำเป็น: <strong>{missingFields.map((f) => f.label).join(', ')}</strong>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Document count summary */}
+            {scannedDocs.length > 0 && (
+              <Alert className="bg-blue-50 border-blue-200">
+                <FileText className="w-4 h-4 text-blue-600" />
+                <AlertDescription className="text-blue-800">
+                  เอกสารแนบ {scannedDocs.length} ไฟล์ จะถูกบันทึกพร้อมข้อมูล supplier — สามารถดูได้ที่แท็บ Documents หลังบันทึก
                 </AlertDescription>
               </Alert>
             )}
@@ -402,10 +514,16 @@ export default function SupplierForm() {
               {form.website && <><span className="text-muted-foreground">เว็บไซต์:</span><span>{form.website}</span></>}
               {form.tier && <><span className="text-muted-foreground">ระดับ:</span><span>{form.tier === 'critical_tier_1' ? 'Critical Tier 1' : 'Non-Critical Tier 1'}</span></>}
             </div>
-            {aiResult && (
-              <div className="flex items-center gap-2 pt-2 border-t">
-                <Sparkles className="w-3.5 h-3.5 text-orange-400" />
-                <span className="text-xs text-muted-foreground">ข้อมูลจาก AI Scan — {confidenceBadge}</span>
+            {scannedDocs.length > 0 && (
+              <div className="pt-2 border-t space-y-1">
+                <p className="text-xs text-muted-foreground font-medium">เอกสารแนบ ({scannedDocs.length} ไฟล์):</p>
+                {scannedDocs.map((doc, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs">
+                    <FileText className="w-3 h-3 text-orange-400" />
+                    <span>{doc.name}</span>
+                    <span className="text-muted-foreground">({DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label})</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
