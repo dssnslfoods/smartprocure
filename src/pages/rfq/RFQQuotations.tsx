@@ -282,7 +282,10 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     if (!form.supplier_id) return;
     setSaving(true);
 
-    const subtotal = Object.values(itemPrices).reduce((sum, p) => sum + (parseFloat(p) || 0), 0);
+    const subtotal = rfqItems.reduce((sum, item) => {
+      const unitPrice = parseFloat(itemPrices[item.id]) || 0;
+      return sum + (item.quantity || 1) * unitPrice;
+    }, 0);
     const discount = parseFloat(form.discount) || 0;
     const vat = parseFloat(form.vat) || 0;
     const totalAmount = Math.max(0, subtotal - discount + vat);
@@ -686,12 +689,52 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                       )}
                     </div>
 
-                    {/* Quotation details grid */}
+                    {/* Line items table */}
+                    {qItems.length > 0 && (() => {
+                      const itemsSubtotal = qItems.reduce((s: number, qi: any) => s + (parseFloat(qi.total_price) || 0), 0);
+                      return (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">รายการราคา ({qItems.length})</p>
+                        <div className="border rounded text-xs overflow-hidden">
+                          <table className="w-full">
+                            <thead>
+                              <tr className="bg-muted/50 text-muted-foreground">
+                                <th className="text-left px-3 py-1.5 font-medium">รายการ</th>
+                                <th className="text-right px-3 py-1.5 font-medium w-20">จำนวน</th>
+                                <th className="text-right px-3 py-1.5 font-medium w-24">ราคา/หน่วย</th>
+                                <th className="text-right px-3 py-1.5 font-medium w-28">รวม</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                              {qItems.map((qi: any) => (
+                                <tr key={qi.id}>
+                                  <td className="px-3 py-1.5">{qi.item_name}</td>
+                                  <td className="px-3 py-1.5 text-right">{qi.quantity?.toLocaleString() || '—'} {qi.unit || ''}</td>
+                                  <td className="px-3 py-1.5 text-right">{qi.unit_price?.toLocaleString() || '—'}</td>
+                                  <td className="px-3 py-1.5 text-right font-medium">{qi.total_price?.toLocaleString() || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {/* Pricing summary */}
+                          <div className="border-t bg-muted/30 px-3 py-2 space-y-0.5">
+                            <div className="flex justify-between"><span className="text-muted-foreground">รวมก่อนส่วนลด</span><span className="font-medium">{q.currency} {itemsSubtotal.toLocaleString()}</span></div>
+                            {parseFloat(q.discount) > 0 && (
+                              <div className="flex justify-between"><span className="text-muted-foreground">ส่วนลด</span><span className="text-red-600">−{parseFloat(q.discount).toLocaleString()}</span></div>
+                            )}
+                            <div className="flex justify-between"><span className="text-muted-foreground">ราคาหลังส่วนลด</span><span className="font-medium">{q.currency} {(itemsSubtotal - (parseFloat(q.discount) || 0)).toLocaleString()}</span></div>
+                            {parseFloat(q.vat) > 0 && (
+                              <div className="flex justify-between"><span className="text-muted-foreground">VAT</span><span>+{parseFloat(q.vat).toLocaleString()}</span></div>
+                            )}
+                            <div className="flex justify-between border-t pt-1 mt-1 font-bold"><span>ราคารวมสุทธิ</span><span>{q.currency} {q.total_amount?.toLocaleString()}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                      );
+                    })()}
+
+                    {/* Terms & conditions */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                      <div><span className="text-muted-foreground">Subtotal:</span> <span className="font-medium">{q.currency} {q.price?.toLocaleString() || '—'}</span></div>
-                      <div><span className="text-muted-foreground">Discount:</span> <span className="font-medium">{q.discount?.toLocaleString() || '0'}</span></div>
-                      <div><span className="text-muted-foreground">VAT:</span> <span className="font-medium">{q.vat?.toLocaleString() || '0'}</span></div>
-                      <div><span className="text-muted-foreground">Total:</span> <span className="font-bold">{q.currency} {q.total_amount?.toLocaleString()}</span></div>
                       <div><span className="text-muted-foreground">Lead Time:</span> <span className="font-medium">{q.lead_time_days ? `${q.lead_time_days} วัน` : '—'}</span></div>
                       <div><span className="text-muted-foreground">Validity:</span> <span className="font-medium">{q.validity_days ? `${q.validity_days} วัน` : '—'}</span></div>
                       <div><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{q.payment_term || q.payment_terms || '—'}</span></div>
@@ -701,21 +744,6 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     </div>
                     {q.remark && (
                       <div className="text-xs"><span className="text-muted-foreground">Remark:</span> {q.remark}</div>
-                    )}
-
-                    {/* Line items */}
-                    {qItems.length > 0 && (
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-muted-foreground">รายการราคา ({qItems.length})</p>
-                        <div className="border rounded divide-y text-xs">
-                          {qItems.map((qi: any) => (
-                            <div key={qi.id} className="flex items-center justify-between px-3 py-1.5">
-                              <span className="truncate">{qi.item_name}</span>
-                              <span className="shrink-0 ml-2 font-medium">{qi.quantity || '—'} × {qi.unit_price?.toLocaleString() || '—'} = {qi.total_price?.toLocaleString() || '—'}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
                     )}
                   </div>
                 )}
