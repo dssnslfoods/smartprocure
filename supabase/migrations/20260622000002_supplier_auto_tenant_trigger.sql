@@ -27,3 +27,8 @@ DROP TRIGGER IF EXISTS trg_set_supplier_doc_tenant_id ON public.supplier_documen
 CREATE TRIGGER trg_set_supplier_doc_tenant_id
   BEFORE INSERT ON public.supplier_documents
   FOR EACH ROW EXECUTE FUNCTION public.set_supplier_tenant_id();
+
+DROP TRIGGER IF EXISTS trg_set_supplier_cert_tenant_id ON public.supplier_certificates;
+CREATE TRIGGER trg_set_supplier_cert_tenant_id
+  BEFORE INSERT ON public.supplier_certificates
+  FOR EACH ROW EXECUTE FUNCTION public.set_supplier_tenant_id();
