@@ -81,6 +81,11 @@ const EMPTY_FORM = {
 
 const FORM_KEYS = ['company_name', 'tax_id', 'address', 'city', 'country', 'phone', 'email', 'website', 'contact_person'] as const;
 
+function safeStorageName(fileName: string): string {
+  const ext = fileName.split('.').pop() || 'bin';
+  return `${crypto.randomUUID()}.${ext}`;
+}
+
 function guessDocLabel(fileName: string): string {
   const lower = fileName.toLowerCase();
   if (/ภพ|pp\.?20|vat/i.test(fileName)) return 'pp20';
@@ -216,54 +221,41 @@ export default function SupplierForm() {
   };
 
   const handleConfirmSave = async () => {
-    // Capture docs and form BEFORE any state change to avoid stale/empty values
     const docsSnapshot = scannedDocs.map(d => ({ ...d }));
     const formSnapshot = { ...form };
-    alert(`[DEBUG v4] docsSnapshot=${docsSnapshot.length}, names=${docsSnapshot.map(d=>d.name).join(',')}`);
 
     setShowConfirm(false);
     setLoading(true);
     const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = formSnapshot;
 
-    let supplierId: string;
-    try {
-      alert('[DEBUG] about to insert supplier...');
-      const { data: inserted, error } = await supabase.from('suppliers').insert({
-        company_name, tax_id, address, city, country, phone, email, website, contact_person,
-        tier: tier || null, notes: notes || null,
-        tenant_id: tenantId,
-        status: 'draft' as any,
-        created_by: user?.id,
-      } as any).select('id').single();
+    const { data: inserted, error } = await supabase.from('suppliers').insert({
+      company_name, tax_id, address, city, country, phone, email, website, contact_person,
+      tier: tier || null, notes: notes || null,
+      tenant_id: tenantId,
+      status: 'draft' as any,
+      created_by: user?.id,
+    } as any).select('id').single();
 
-      alert(`[DEBUG] insert result — error: ${error?.message || 'none'}, inserted: ${JSON.stringify(inserted)}`);
-
-      if (error || !inserted) {
-        setLoading(false);
-        alert(`[DEBUG] INSERT FAILED: ${error?.message || 'inserted is null'}`);
-        return;
-      }
-      supplierId = inserted.id;
-    } catch (e: any) {
-      alert(`[DEBUG] INSERT EXCEPTION: ${e?.message || String(e)}`);
+    if (error || !inserted) {
       setLoading(false);
+      toast({ title: 'บันทึกไม่สำเร็จ', description: error?.message || 'Unknown error', variant: 'destructive' });
       return;
     }
 
-    alert(`[DEBUG] supplier created: ${supplierId}, now uploading ${docsSnapshot.length} docs`);
+    const supplierId = inserted.id;
 
     if (docsSnapshot.length > 0) {
+      toast({ title: `กำลังอัปโหลด ${docsSnapshot.length} เอกสาร...` });
       let certCount = 0;
       let docCount = 0;
       for (const doc of docsSnapshot) {
         const isCert = CERT_DOC_LABELS.has(doc.docLabel);
-        alert(`[DEBUG] uploading: ${doc.name}, isCert=${isCert}, fileSize=${doc.file?.size}`);
+        const safeName = safeStorageName(doc.name);
         try {
           if (isCert) {
-            const certPath = `${supplierId}/${Date.now()}_${doc.name}`;
+            const certPath = `${supplierId}/${safeName}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-certificates').upload(certPath, doc.file);
-            if (uploadErr) { alert(`[DEBUG] STORAGE UPLOAD FAILED: ${uploadErr.message}`); continue; }
-            alert('[DEBUG] storage upload OK');
+            if (uploadErr) { toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
 
             const { data: urlData } = supabase.storage.from('supplier-certificates').getPublicUrl(certPath);
 
@@ -274,7 +266,7 @@ export default function SupplierForm() {
                 body: { file_base64: b64, mime_type: doc.file.type },
               });
               if (aiData && !aiData.error) certData = aiData;
-            } catch { /* fallback */ }
+            } catch { /* fallback: save without AI fields */ }
 
             const { error: certInsertErr } = await supabase.from('supplier_certificates').insert({
               supplier_id: supplierId,
@@ -289,13 +281,12 @@ export default function SupplierForm() {
               is_primary: certCount === 0,
               notes: certData.notes || null,
             } as any);
-            if (certInsertErr) { alert(`[DEBUG] DB INSERT CERT FAILED: ${certInsertErr.message}`); continue; }
-            alert('[DEBUG] cert DB insert OK');
+            if (certInsertErr) { toast({ title: 'บันทึกใบรับรองไม่สำเร็จ', description: certInsertErr.message, variant: 'destructive' }); continue; }
             certCount++;
           } else {
-            const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
+            const filePath = `suppliers/${supplierId}/${safeName}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
-            if (uploadErr) { alert(`[DEBUG] STORAGE DOC UPLOAD FAILED: ${uploadErr.message}`); continue; }
+            if (uploadErr) { toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
 
             const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
             const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label?.replace(/ \(→.*\)/, '') || doc.name;
@@ -308,14 +299,17 @@ export default function SupplierForm() {
               file_size: doc.file.size,
               uploaded_by: user?.id,
             });
-            if (docInsertErr) { alert(`[DEBUG] DB INSERT DOC FAILED: ${docInsertErr.message}`); continue; }
+            if (docInsertErr) { toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: docInsertErr.message, variant: 'destructive' }); continue; }
             docCount++;
           }
         } catch (e: any) {
-          alert(`[DEBUG] EXCEPTION: ${e?.message || String(e)}`);
+          toast({ title: `เกิดข้อผิดพลาด: ${doc.name}`, description: e?.message || String(e), variant: 'destructive' });
         }
       }
-      alert(`[DEBUG] DONE: certs=${certCount}, docs=${docCount}`);
+      const parts = [];
+      if (certCount > 0) parts.push(`ใบรับรอง ${certCount} ฉบับ`);
+      if (docCount > 0) parts.push(`เอกสาร ${docCount} ไฟล์`);
+      if (parts.length > 0) toast({ title: `จัดเก็บ ${parts.join(' + ')} สำเร็จ` });
     }
 
     setLoading(false);
