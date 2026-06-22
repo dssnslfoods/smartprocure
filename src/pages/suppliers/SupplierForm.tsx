@@ -60,7 +60,6 @@ const DOC_TYPE_OPTIONS = [
 const REQUIRED_FIELDS: { key: keyof typeof EMPTY_FORM; label: string }[] = [
   { key: 'company_name', label: 'ชื่อบริษัท' },
   { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
-  { key: 'phone', label: 'เบอร์โทรศัพท์' },
 ];
 
 const EMPTY_FORM = {
@@ -406,11 +405,11 @@ export default function SupplierForm() {
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
-                  เบอร์โทรศัพท์ <span className="text-red-500">*</span>
+                  เบอร์โทรศัพท์
                   {aiScanned && form.phone && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
                 <Input value={form.phone} onChange={(e) => handleChange('phone', e.target.value)}
-                  placeholder="0xx-xxx-xxxx" className={!form.phone ? 'border-red-300' : ''} />
+                  placeholder="0xx-xxx-xxxx" />
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
