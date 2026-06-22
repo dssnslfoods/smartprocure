@@ -42,6 +42,7 @@ interface AIExtractResult {
 
 const REQUIRED_FIELDS: { key: keyof typeof EMPTY_FORM; label: string }[] = [
   { key: 'company_name', label: 'ชื่อบริษัท' },
+  { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
   { key: 'phone', label: 'เบอร์โทรศัพท์' },
 ];
 
@@ -121,10 +122,19 @@ export default function SupplierForm() {
         notes: '',
       });
 
-      toast({
-        title: 'สแกนเอกสารสำเร็จ',
-        description: `ความมั่นใจ: ${result.confidence === 'high' ? 'สูง' : result.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'} — กรุณาตรวจสอบข้อมูลก่อนบันทึก`,
-      });
+      if (!result.tax_id) {
+        toast({
+          title: 'ไม่พบเลขประจำตัวผู้เสียภาษี',
+          description: 'กรุณาอัปโหลดเอกสารเพิ่มเติม เช่น ภพ.20 หรือ ใบรับรองบริษัท เพื่อให้ AI อ่านเลขภาษี หรือกรอกเลขภาษีด้วยตนเอง',
+          variant: 'destructive',
+          duration: 10000,
+        });
+      } else {
+        toast({
+          title: 'สแกนเอกสารสำเร็จ',
+          description: `ความมั่นใจ: ${result.confidence === 'high' ? 'สูง' : result.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'} — กรุณาตรวจสอบข้อมูลก่อนบันทึก`,
+        });
+      }
     } catch (err: any) {
       toast({ title: 'สแกนไม่สำเร็จ', description: err.message || 'ไม่สามารถอ่านข้อมูลจากเอกสารได้', variant: 'destructive' });
       setScannedFile(null);
@@ -274,10 +284,16 @@ export default function SupplierForm() {
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
-                  เลขประจำตัวผู้เสียภาษี
+                  เลขประจำตัวผู้เสียภาษี <span className="text-red-500">*</span>
                   {aiResult && form.tax_id && <Sparkles className="w-3 h-3 text-orange-400" />}
                 </Label>
-                <Input value={form.tax_id} onChange={(e) => handleChange('tax_id', e.target.value)} placeholder="เลข 13 หลัก" />
+                <Input value={form.tax_id} onChange={(e) => handleChange('tax_id', e.target.value)}
+                  placeholder="เลข 13 หลัก" className={!form.tax_id ? 'border-red-300' : ''} />
+                {aiResult && !form.tax_id && (
+                  <p className="text-xs text-red-500 mt-1">
+                    AI ไม่พบเลขภาษีในเอกสาร — ลองอัปโหลด <strong>ภพ.20</strong> หรือ <strong>ใบรับรองบริษัท</strong> หรือกรอกด้วยตนเอง
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="flex items-center gap-1">
