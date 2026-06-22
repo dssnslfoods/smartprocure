@@ -5,8 +5,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Search } from 'lucide-react';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { Plus, Search, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
@@ -30,7 +33,50 @@ export default function SupplierList() {
   const [tierFilter, setTierFilter] = useState('all');
   const [certFilter, setCertFilter] = useState('all');         // certificate type
   const [certStatusFilter, setCertStatusFilter] = useState('all'); // valid / expiring / expired / missing
-  const { hasRole } = useAuth();
+  const { hasRole, isSuperAdmin } = useAuth();
+  const { toast } = useToast();
+  const canDelete = hasRole('admin') || isSuperAdmin;
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleteChecking, setDeleteChecking] = useState(false);
+  const [deleteBlocked, setDeleteBlocked] = useState(false);
+  const [deleteTxDetails, setDeleteTxDetails] = useState<any[]>([]);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteClick = async (supplier: any) => {
+    setDeleteTarget(supplier);
+    setDeleteBlocked(false);
+    setDeleteTxDetails([]);
+    setDeleteChecking(true);
+    setDeleteOpen(true);
+
+    const { data, error } = await supabase.rpc('check_supplier_transactions', { p_supplier_id: supplier.id });
+    setDeleteChecking(false);
+    if (error) {
+      toast({ title: 'ตรวจสอบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      setDeleteOpen(false);
+      return;
+    }
+    if (data?.has_transactions) {
+      setDeleteBlocked(true);
+      setDeleteTxDetails(data.details || []);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget || deleteBlocked) return;
+    setDeleting(true);
+    const { error } = await supabase.from('suppliers').delete().eq('id', deleteTarget.id);
+    setDeleting(false);
+    if (error) {
+      toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'ลบสำเร็จ', description: `ลบ ${deleteTarget.company_name} เรียบร้อย` });
+      pagination.refresh();
+    }
+    setDeleteOpen(false);
+    setDeleteTarget(null);
+  };
 
   const filters = useCallback((query: any) => {
     let q = query;
@@ -139,6 +185,7 @@ export default function SupplierList() {
                   <th className="text-right p-3 font-medium text-muted-foreground">คะแนนความเสี่ยง</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Certificates</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Created</th>
+                  {canDelete && <th className="text-right p-3 font-medium text-muted-foreground">จัดการ</th>}
                 </tr>
               </thead>
               <tbody>
@@ -209,6 +256,13 @@ export default function SupplierList() {
                           })()}
                         </td>
                         <td className="p-3 text-muted-foreground text-xs">{s.created_at ? new Date(s.created_at).toLocaleDateString() : '—'}</td>
+                        {canDelete && (
+                          <td className="p-3 text-right">
+                            <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={(e) => { e.preventDefault(); handleDeleteClick(s); }}>
+                              <Trash2 className="w-3 h-3 mr-1" /> ลบ
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })
@@ -219,6 +273,41 @@ export default function SupplierList() {
           <PaginationControls {...pagination} />
         </CardContent>
       </Card>
+
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => { if (!open) { setDeleteOpen(false); setDeleteTarget(null); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              {deleteBlocked ? <AlertTriangle className="w-5 h-5 text-amber-500" /> : <Trash2 className="w-5 h-5 text-red-500" />}
+              {deleteBlocked ? 'ไม่สามารถลบได้' : 'ยืนยันการลบ Supplier'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                {deleteChecking ? (
+                  <div className="flex items-center gap-2 py-4"><Loader2 className="w-4 h-4 animate-spin" /> กำลังตรวจสอบ...</div>
+                ) : deleteBlocked ? (
+                  <>
+                    <p>ไม่สามารถลบ <span className="font-semibold text-foreground">{deleteTarget?.company_name}</span> ได้ เนื่องจากมี Transaction:</p>
+                    <ul className="list-disc list-inside space-y-1 text-sm">
+                      {deleteTxDetails.map((d: any, i: number) => <li key={i}>{d.table}: {d.count} รายการ</li>)}
+                    </ul>
+                  </>
+                ) : (
+                  <p>คุณต้องการลบ <span className="font-semibold text-foreground">{deleteTarget?.company_name}</span> ออกจากระบบหรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้</p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            {!deleteBlocked && !deleteChecking && (
+              <AlertDialogAction onClick={handleConfirmDelete} disabled={deleting} className="bg-red-600 hover:bg-red-700">
+                {deleting ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> กำลังลบ...</> : <><Trash2 className="w-4 h-4 mr-1" /> ยืนยันลบ</>}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

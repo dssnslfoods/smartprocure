@@ -41,7 +41,7 @@ export default function SupplierApprovalPage() {
     const { data, error } = await supabase
       .from('suppliers')
       .select('*')
-      .in('status', ['submitted', 'review', 'approved', 'rejected'])
+      .in('status', ['draft', 'submitted', 'review', 'approved', 'rejected'])
       .order('created_at', { ascending: false });
     if (error) console.error('fetchSuppliers error:', error);
     if (data) setSuppliers(data);
@@ -372,12 +372,14 @@ export default function SupplierApprovalPage() {
                       <td className="p-3 text-muted-foreground">{s.email || '—'}</td>
                       <td className="p-3">
                         <Badge variant="secondary" className={
+                          s.status === 'draft'     ? 'bg-gray-500/10 text-gray-600' :
                           s.status === 'submitted' ? 'bg-amber-500/10 text-amber-600' :
                           s.status === 'review'    ? 'bg-blue-500/10 text-blue-600' :
                           s.status === 'approved'  ? 'bg-emerald-500/10 text-emerald-600' :
                           'bg-red-500/10 text-red-600'
                         }>
-                          {s.status === 'submitted' ? 'รอตรวจสอบ' :
+                          {s.status === 'draft'     ? 'ร่าง' :
+                           s.status === 'submitted' ? 'รอตรวจสอบ' :
                            s.status === 'review'    ? 'กำลังตรวจสอบ' :
                            s.status === 'approved'  ? 'อนุมัติแล้ว' : 'ปฏิเสธ'}
                         </Badge>
