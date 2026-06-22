@@ -4,8 +4,9 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Search } from 'lucide-react';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { Link } from 'react-router-dom';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
@@ -24,8 +25,18 @@ const RFQ_STATUSES = ['draft', 'published', 'closed', 'evaluation', 'awarded'];
 export default function RFQList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const { hasRole } = useAuth();
+  const { hasRole, profile } = useAuth();
   const { t } = useTranslation();
+  const isSupplier = hasRole('supplier');
+  const mySupplierId = profile?.supplier_id ?? null;
+
+  // For supplier users: only show RFQs they're invited to
+  const [myRfqIds, setMyRfqIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!isSupplier || !mySupplierId) { setMyRfqIds(null); return; }
+    supabase.from('rfq_suppliers').select('rfq_id').eq('supplier_id', mySupplierId)
+      .then(({ data }) => setMyRfqIds(data?.map(r => r.rfq_id) || []));
+  }, [isSupplier, mySupplierId]);
 
   const filters = useCallback((query: any) => {
     let filteredQuery = query;
@@ -35,8 +46,15 @@ export default function RFQList() {
     if (statusFilter !== 'all') {
       filteredQuery = filteredQuery.eq('status', statusFilter);
     }
+    if (isSupplier && myRfqIds !== null) {
+      if (myRfqIds.length === 0) {
+        filteredQuery = filteredQuery.in('id', ['00000000-0000-0000-0000-000000000000']);
+      } else {
+        filteredQuery = filteredQuery.in('id', myRfqIds);
+      }
+    }
     return filteredQuery;
-  }, [search, statusFilter]);
+  }, [search, statusFilter, isSupplier, myRfqIds]);
 
   const pagination = useSupabasePagination<any>({
     tableName: 'rfqs',
