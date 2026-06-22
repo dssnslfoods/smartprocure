@@ -230,17 +230,20 @@ export default function SupplierForm() {
 
     const supplierId = inserted.id;
 
+    console.log('[SupplierForm] scannedDocs count:', scannedDocs.length, scannedDocs.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
     if (scannedDocs.length > 0) {
+      toast({ title: `กำลังอัปโหลด ${scannedDocs.length} เอกสาร...` });
       let certCount = 0;
       let docCount = 0;
       for (const doc of scannedDocs) {
+        console.log('[SupplierForm] processing doc:', doc.name, 'label:', doc.docLabel, 'isCert:', CERT_DOC_LABELS.has(doc.docLabel), 'fileValid:', !!doc.file, 'fileSize:', doc.file?.size);
         const isCert = CERT_DOC_LABELS.has(doc.docLabel);
         try {
           if (isCert) {
             // Upload to certificates bucket + extract certificate info via AI
             const certPath = `${supplierId}/${Date.now()}_${doc.name}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-certificates').upload(certPath, doc.file);
-            if (uploadErr) { console.error('cert upload error:', uploadErr); continue; }
+            if (uploadErr) { console.error('cert upload error:', uploadErr); toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
 
             const { data: urlData } = supabase.storage.from('supplier-certificates').getPublicUrl(certPath);
 
@@ -273,7 +276,7 @@ export default function SupplierForm() {
             // Upload to documents bucket
             const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
-            if (uploadErr) { console.error('upload error:', uploadErr); continue; }
+            if (uploadErr) { console.error('doc upload error:', uploadErr); toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
 
             const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
             const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label?.replace(/ \(→.*\)/, '') || doc.name;
@@ -289,8 +292,9 @@ export default function SupplierForm() {
             if (docInsertErr) { console.error('doc insert error:', docInsertErr); toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: docInsertErr.message, variant: 'destructive' }); continue; }
             docCount++;
           }
-        } catch (e) {
+        } catch (e: any) {
           console.error('doc upload error:', e);
+          toast({ title: `เกิดข้อผิดพลาด: ${doc.name}`, description: e?.message || String(e), variant: 'destructive' });
         }
       }
       const parts = [];
