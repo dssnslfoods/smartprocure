@@ -217,13 +217,19 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       const extractedName = data.supplier_name || '';
       setScanSupplierName(extractedName);
 
-      // Match supplier name against invited list
-      const matched = suppliers.find(s => {
-        const a = s.company_name?.toLowerCase().trim() || '';
-        const b = extractedName.toLowerCase().trim();
-        if (!a || !b) return false;
-        return a === b || a.includes(b) || b.includes(a);
-      });
+      // Match supplier name against invited list (fuzzy)
+      const normalize = (s: string) =>
+        s.toLowerCase()
+          .replace(/\s+/g, '')
+          .replace(/บริษัท|จำกัด|มหาชน|\(มหาชน\)|co\.,?\s*ltd\.?|inc\.?|corp\.?|company|limited|llc|plc/gi, '')
+          .replace(/[().,\-]/g, '')
+          .trim();
+      const bNorm = normalize(extractedName);
+      const matched = bNorm ? suppliers.find(s => {
+        const aNorm = normalize(s.company_name || '');
+        if (!aNorm) return false;
+        return aNorm === bNorm || aNorm.includes(bNorm) || bNorm.includes(aNorm);
+      }) : null;
 
       if (!matched && !isSupplier) {
         setScanRejected(true);
