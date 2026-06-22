@@ -16,6 +16,8 @@ You will receive the document AND a list of RFQ line items. Your job is to extra
 Output ONLY valid JSON with this structure:
 
 {
+  "supplier_name": "<company name of the SELLER/VENDOR who is offering the price>" (string or null),
+  "supplier_tax_id": "<tax ID / VAT number / เลขประจำตัวผู้เสียภาษี of the seller>" (string or null),
   "items": [
     {
       "item_name": "<name of the item as written in the quotation>",
@@ -47,7 +49,9 @@ Rules:
 - VAT: look for "ภาษีมูลค่าเพิ่ม", "VAT 7%". Return the AMOUNT.
 - Payment terms: look for "เงื่อนไขการชำระ", "Payment Terms", "Credit Term".
 - If a field is not found in the document, return null (not empty string).
-- Include ALL line items found in the quotation, even if they don't match RFQ items.`;
+- Include ALL line items found in the quotation, even if they don't match RFQ items.
+- supplier_name: Extract the SELLER/VENDOR company name (the one offering the price), NOT the buyer/customer. For Thai documents look for "ผู้ขาย", "บริษัท" at the top or letterhead.
+- supplier_tax_id: Look for "เลขประจำตัวผู้เสียภาษี", "Tax ID", "VAT No.", or a 13-digit number near the seller info.`;
 
 const MODEL = "gemini-2.5-flash";
 
@@ -124,6 +128,8 @@ Return the JSON object with extracted data.`;
     }
 
     return json({
+      supplier_name:         parsed.supplier_name ?? null,
+      supplier_tax_id:       parsed.supplier_tax_id ?? null,
       items:                 Array.isArray(parsed.items) ? parsed.items : [],
       currency:              parsed.currency ?? "THB",
       lead_time_days:        parsed.lead_time_days ?? null,
