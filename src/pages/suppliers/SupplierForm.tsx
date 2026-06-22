@@ -15,6 +15,8 @@ import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Upload, Sparkles, Loader2, FileText, CheckCircle, AlertTriangle, X, Eye, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+const CERT_DOC_LABELS = new Set(['company_cert', 'quality_cert']);
+
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const bytes = new Uint8Array(buf);
@@ -52,7 +54,8 @@ const DOC_TYPE_OPTIONS = [
   { value: 'quotation', label: 'ใบเสนอราคา' },
   { value: 'invoice', label: 'ใบแจ้งหนี้ / Invoice' },
   { value: 'pp20', label: 'ภพ.20' },
-  { value: 'company_cert', label: 'ใบรับรองบริษัท' },
+  { value: 'company_cert', label: 'ใบรับรองบริษัท (→ ใบรับรอง)' },
+  { value: 'quality_cert', label: 'ใบรับรองคุณภาพ GMP/HACCP/ISO (→ ใบรับรอง)' },
   { value: 'business_license', label: 'ใบอนุญาตประกอบกิจการ' },
   { value: 'other', label: 'เอกสารอื่น ๆ' },
 ];
@@ -81,6 +84,7 @@ const FORM_KEYS = ['company_name', 'tax_id', 'address', 'city', 'country', 'phon
 function guessDocLabel(fileName: string): string {
   const lower = fileName.toLowerCase();
   if (/ภพ|pp\.?20|vat/i.test(fileName)) return 'pp20';
+  if (/gmp|haccp|iso|brc|sqf|fssc|halal|kosher|fda|อย\./i.test(fileName)) return 'quality_cert';
   if (/ใบรับรอง|certificate|cert|หนังสือรับรอง/i.test(fileName)) return 'company_cert';
   if (/quot|เสนอราคา|qo|qt/i.test(lower)) return 'quotation';
   if (/inv|แจ้งหนี้|invoice/i.test(lower)) return 'invoice';
@@ -227,32 +231,70 @@ export default function SupplierForm() {
     const supplierId = inserted.id;
 
     if (scannedDocs.length > 0) {
-      let uploadedCount = 0;
+      let certCount = 0;
+      let docCount = 0;
       for (const doc of scannedDocs) {
+        const isCert = CERT_DOC_LABELS.has(doc.docLabel);
         try {
-          const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
-          const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
-          if (uploadErr) { console.error('upload error:', uploadErr); continue; }
+          if (isCert) {
+            // Upload to certificates bucket + extract certificate info via AI
+            const certPath = `${supplierId}/${Date.now()}_${doc.name}`;
+            const { error: uploadErr } = await supabase.storage.from('supplier-certificates').upload(certPath, doc.file);
+            if (uploadErr) { console.error('cert upload error:', uploadErr); continue; }
 
-          const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
-          const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label || doc.name;
+            const { data: urlData } = supabase.storage.from('supplier-certificates').getPublicUrl(certPath);
 
-          await supabase.from('supplier_documents').insert({
-            supplier_id: supplierId,
-            document_name: label,
-            document_type: doc.docLabel,
-            file_url: urlData.publicUrl,
-            file_size: doc.file.size,
-            uploaded_by: user?.id,
-          });
-          uploadedCount++;
+            // Call AI to extract certificate details
+            let certData: any = {};
+            try {
+              const b64 = await fileToBase64(doc.file);
+              const { data: aiData } = await supabase.functions.invoke('extract-certificate', {
+                body: { file_base64: b64, mime_type: doc.file.type },
+              });
+              if (aiData && !aiData.error) certData = aiData;
+            } catch { /* fallback: save without AI fields */ }
+
+            await supabase.from('supplier_certificates').insert({
+              supplier_id: supplierId,
+              certificate_type: certData.certificate_type || (doc.docLabel === 'company_cert' ? 'ใบรับรองบริษัท' : 'อื่นๆ'),
+              certificate_no: certData.certificate_no || null,
+              issued_by: certData.issued_by || null,
+              issued_date: certData.issued_date || null,
+              expiry_date: certData.expiry_date || null,
+              file_url: urlData.publicUrl,
+              file_name: doc.name,
+              file_size: doc.file.size,
+              is_primary: certCount === 0,
+              notes: certData.notes || null,
+            } as any);
+            certCount++;
+          } else {
+            // Upload to documents bucket
+            const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
+            const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
+            if (uploadErr) { console.error('upload error:', uploadErr); continue; }
+
+            const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
+            const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label?.replace(/ \(→.*\)/, '') || doc.name;
+
+            await supabase.from('supplier_documents').insert({
+              supplier_id: supplierId,
+              document_name: label,
+              document_type: doc.docLabel,
+              file_url: urlData.publicUrl,
+              file_size: doc.file.size,
+              uploaded_by: user?.id,
+            });
+            docCount++;
+          }
         } catch (e) {
           console.error('doc upload error:', e);
         }
       }
-      if (uploadedCount > 0) {
-        toast({ title: `อัปโหลดเอกสาร ${uploadedCount} ไฟล์สำเร็จ` });
-      }
+      const parts = [];
+      if (certCount > 0) parts.push(`ใบรับรอง ${certCount} ฉบับ`);
+      if (docCount > 0) parts.push(`เอกสาร ${docCount} ไฟล์`);
+      if (parts.length > 0) toast({ title: `จัดเก็บ ${parts.join(' + ')} สำเร็จ` });
     }
 
     setLoading(false);
@@ -317,6 +359,9 @@ export default function SupplierForm() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Badge variant="outline" className={`text-xs shrink-0 ${CERT_DOC_LABELS.has(doc.docLabel) ? 'border-blue-300 text-blue-600' : 'border-gray-300 text-gray-500'}`}>
+                    {CERT_DOC_LABELS.has(doc.docLabel) ? '→ ใบรับรอง' : '→ Documents'}
+                  </Badge>
                   {doc.fieldsFound.length > 0 && (
                     <Badge variant="secondary" className="bg-green-50 text-green-700 text-xs shrink-0">
                       +{doc.fieldsFound.length} ข้อมูล
