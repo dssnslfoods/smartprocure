@@ -291,10 +291,12 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     let attachmentUrl: string | null = null;
     if (scanFile) {
       const safeName = safeStorageName(scanFile.name);
-      const storagePath = `quotations/${rfqId}/${safeName}`;
-      const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, scanFile);
-      if (!upErr) {
-        const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storagePath);
+      const storagePath = `${rfqId}/${safeName}`;
+      const { error: upErr } = await supabase.storage.from('quotation-files').upload(storagePath, scanFile);
+      if (upErr) {
+        toast({ title: 'อัปโหลดไฟล์ไม่สำเร็จ', description: upErr.message, variant: 'destructive' });
+      } else {
+        const { data: urlData } = supabase.storage.from('quotation-files').getPublicUrl(storagePath);
         attachmentUrl = urlData?.publicUrl || null;
       }
     }
