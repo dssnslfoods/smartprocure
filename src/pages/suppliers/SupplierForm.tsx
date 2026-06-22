@@ -243,24 +243,23 @@ export default function SupplierForm() {
 
     const supplierId = inserted.id;
 
-    console.log('[SupplierForm] docsSnapshot:', docsSnapshot.length, docsSnapshot.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
+    alert(`[DEBUG] supplierId=${supplierId}, docs=${docsSnapshot.length}, fileValid=${docsSnapshot.map(d => !!d.file && d.file.size > 0).join(',')}`);
+
     if (docsSnapshot.length > 0) {
-      toast({ title: `กำลังอัปโหลด ${docsSnapshot.length} เอกสาร...` });
       let certCount = 0;
       let docCount = 0;
       for (const doc of docsSnapshot) {
-        console.log('[SupplierForm] processing doc:', doc.name, 'label:', doc.docLabel, 'isCert:', CERT_DOC_LABELS.has(doc.docLabel), 'fileValid:', !!doc.file, 'fileSize:', doc.file?.size);
         const isCert = CERT_DOC_LABELS.has(doc.docLabel);
+        alert(`[DEBUG] uploading: ${doc.name}, isCert=${isCert}, fileSize=${doc.file?.size}`);
         try {
           if (isCert) {
-            // Upload to certificates bucket + extract certificate info via AI
             const certPath = `${supplierId}/${Date.now()}_${doc.name}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-certificates').upload(certPath, doc.file);
-            if (uploadErr) { console.error('cert upload error:', uploadErr); toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
+            if (uploadErr) { alert(`[DEBUG] STORAGE UPLOAD FAILED: ${uploadErr.message}`); continue; }
+            alert('[DEBUG] storage upload OK');
 
             const { data: urlData } = supabase.storage.from('supplier-certificates').getPublicUrl(certPath);
 
-            // Call AI to extract certificate details
             let certData: any = {};
             try {
               const b64 = await fileToBase64(doc.file);
@@ -268,7 +267,7 @@ export default function SupplierForm() {
                 body: { file_base64: b64, mime_type: doc.file.type },
               });
               if (aiData && !aiData.error) certData = aiData;
-            } catch { /* fallback: save without AI fields */ }
+            } catch { /* fallback */ }
 
             const { error: certInsertErr } = await supabase.from('supplier_certificates').insert({
               supplier_id: supplierId,
@@ -283,13 +282,13 @@ export default function SupplierForm() {
               is_primary: certCount === 0,
               notes: certData.notes || null,
             } as any);
-            if (certInsertErr) { console.error('cert insert error:', certInsertErr); toast({ title: 'บันทึกใบรับรองไม่สำเร็จ', description: certInsertErr.message, variant: 'destructive' }); continue; }
+            if (certInsertErr) { alert(`[DEBUG] DB INSERT CERT FAILED: ${certInsertErr.message}`); continue; }
+            alert('[DEBUG] cert DB insert OK');
             certCount++;
           } else {
-            // Upload to documents bucket
             const filePath = `suppliers/${supplierId}/${Date.now()}_${doc.name}`;
             const { error: uploadErr } = await supabase.storage.from('supplier-documents').upload(filePath, doc.file);
-            if (uploadErr) { console.error('doc upload error:', uploadErr); toast({ title: `อัปโหลดไฟล์ ${doc.name} ไม่สำเร็จ`, description: uploadErr.message, variant: 'destructive' }); continue; }
+            if (uploadErr) { alert(`[DEBUG] STORAGE DOC UPLOAD FAILED: ${uploadErr.message}`); continue; }
 
             const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(filePath);
             const label = DOC_TYPE_OPTIONS.find((o) => o.value === doc.docLabel)?.label?.replace(/ \(→.*\)/, '') || doc.name;
@@ -302,18 +301,14 @@ export default function SupplierForm() {
               file_size: doc.file.size,
               uploaded_by: user?.id,
             });
-            if (docInsertErr) { console.error('doc insert error:', docInsertErr); toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: docInsertErr.message, variant: 'destructive' }); continue; }
+            if (docInsertErr) { alert(`[DEBUG] DB INSERT DOC FAILED: ${docInsertErr.message}`); continue; }
             docCount++;
           }
         } catch (e: any) {
-          console.error('doc upload error:', e);
-          toast({ title: `เกิดข้อผิดพลาด: ${doc.name}`, description: e?.message || String(e), variant: 'destructive' });
+          alert(`[DEBUG] EXCEPTION: ${e?.message || String(e)}`);
         }
       }
-      const parts = [];
-      if (certCount > 0) parts.push(`ใบรับรอง ${certCount} ฉบับ`);
-      if (docCount > 0) parts.push(`เอกสาร ${docCount} ไฟล์`);
-      if (parts.length > 0) toast({ title: `จัดเก็บ ${parts.join(' + ')} สำเร็จ` });
+      alert(`[DEBUG] DONE: certs=${certCount}, docs=${docCount}`);
     }
 
     setLoading(false);
