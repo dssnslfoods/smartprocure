@@ -9,8 +9,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2, Trash2, Eye, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 
 function safeStorageName(fileName: string): string {
   const ext = fileName.split('.').pop() || 'bin';
@@ -57,6 +58,31 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
   const [scanSupplierName, setScanSupplierName] = useState<string | null>(null);
   const [scanRejected, setScanRejected] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Expand/view quotation state
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [quotationItems, setQuotationItems] = useState<Record<string, any[]>>({});
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const toggleExpand = async (qId: string) => {
+    if (expandedId === qId) { setExpandedId(null); return; }
+    setExpandedId(qId);
+    if (!quotationItems[qId]) {
+      const { data } = await supabase.from('quotation_items').select('*').eq('quotation_id', qId).order('created_at');
+      if (data) setQuotationItems(prev => ({ ...prev, [qId]: data }));
+    }
+  };
+
+  const handleDelete = async (qId: string, supplierId: string) => {
+    setDeleting(qId);
+    await supabase.from('quotation_items').delete().eq('quotation_id', qId);
+    await supabase.from('quotations').delete().eq('id', qId);
+    await supabase.from('rfq_suppliers').update({ responded: false }).eq('rfq_id', rfqId).eq('supplier_id', supplierId);
+    toast({ title: 'ลบใบเสนอราคาแล้ว' });
+    setDeleting(null);
+    setExpandedId(null);
+    fetchQuotations();
+  };
 
   // Decline-to-quote state
   const [declineOpen, setDeclineOpen] = useState(false);
@@ -586,32 +612,114 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
           <p className="text-sm text-muted-foreground text-center py-8">No quotations submitted yet</p>
         ) : (
           <div className="space-y-3">
-            {quotations.map(q => (
-              <div key={q.id} className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <Building2 className="w-4 h-4 text-primary" />
+            {quotations.map(q => {
+              const isExpanded = expandedId === q.id;
+              const qItems = quotationItems[q.id] || [];
+              return (
+              <div key={q.id} className="border rounded-lg overflow-hidden">
+                {/* Header row — clickable */}
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(q.id)}
+                  className="w-full flex items-center justify-between p-4 hover:bg-accent/50 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                      <Building2 className="w-4 h-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-sm">{q.suppliers?.company_name || 'Unknown'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {q.currency} {q.total_amount?.toLocaleString()} · {q.payment_term || q.payment_terms || '—'} · v{q.version}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">{q.suppliers?.company_name || 'Unknown'}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {q.currency} {q.total_amount?.toLocaleString()} · {q.payment_terms || '—'} · v{q.version}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="font-bold text-lg">{q.currency} {q.total_amount?.toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString() : '—'}</p>
+                    </div>
+                    {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {q.attachment_url && (
-                    <a href={q.attachment_url} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary" title="ดูไฟล์แนบ">
-                      <FileText className="w-4 h-4" />
-                    </a>
-                  )}
-                  <div className="text-right">
-                    <p className="font-bold text-lg">{q.currency} {q.total_amount?.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString() : '—'}</p>
+                </button>
+
+                {/* Expanded detail */}
+                {isExpanded && (
+                  <div className="border-t px-4 py-3 space-y-3 bg-muted/20">
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {q.attachment_url && (
+                        <a href={q.attachment_url} target="_blank" rel="noopener noreferrer">
+                          <Button variant="outline" size="sm" className="gap-1.5">
+                            <Eye className="w-3.5 h-3.5" />ดูไฟล์ต้นฉบับ
+                          </Button>
+                        </a>
+                      )}
+                      {canSubmit && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="outline" size="sm" className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50">
+                              <Trash2 className="w-3.5 h-3.5" />ลบ
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>ลบใบเสนอราคา?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                ลบใบเสนอราคาจาก {q.suppliers?.company_name || 'Unknown'} ({q.currency} {q.total_amount?.toLocaleString()}) — ไม่สามารถกู้คืนได้
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDelete(q.id, q.supplier_id)}
+                                className="bg-red-600 hover:bg-red-700"
+                                disabled={deleting === q.id}
+                              >
+                                {deleting === q.id ? 'กำลังลบ...' : 'ยืนยันลบ'}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
+
+                    {/* Quotation details grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <div><span className="text-muted-foreground">Subtotal:</span> <span className="font-medium">{q.currency} {q.price?.toLocaleString() || '—'}</span></div>
+                      <div><span className="text-muted-foreground">Discount:</span> <span className="font-medium">{q.discount?.toLocaleString() || '0'}</span></div>
+                      <div><span className="text-muted-foreground">VAT:</span> <span className="font-medium">{q.vat?.toLocaleString() || '0'}</span></div>
+                      <div><span className="text-muted-foreground">Total:</span> <span className="font-bold">{q.currency} {q.total_amount?.toLocaleString()}</span></div>
+                      <div><span className="text-muted-foreground">Lead Time:</span> <span className="font-medium">{q.lead_time_days ? `${q.lead_time_days} วัน` : '—'}</span></div>
+                      <div><span className="text-muted-foreground">Validity:</span> <span className="font-medium">{q.validity_days ? `${q.validity_days} วัน` : '—'}</span></div>
+                      <div><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{q.payment_term || q.payment_terms || '—'}</span></div>
+                      <div><span className="text-muted-foreground">Delivery:</span> <span className="font-medium">{q.delivery_terms || '—'}</span></div>
+                      {q.warranty && <div><span className="text-muted-foreground">Warranty:</span> <span className="font-medium">{q.warranty}</span></div>}
+                      {q.spec_compliance_score != null && <div><span className="text-muted-foreground">Spec:</span> <span className="font-medium">{q.spec_compliance_score}%</span></div>}
+                    </div>
+                    {q.remark && (
+                      <div className="text-xs"><span className="text-muted-foreground">Remark:</span> {q.remark}</div>
+                    )}
+
+                    {/* Line items */}
+                    {qItems.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">รายการราคา ({qItems.length})</p>
+                        <div className="border rounded divide-y text-xs">
+                          {qItems.map((qi: any) => (
+                            <div key={qi.id} className="flex items-center justify-between px-3 py-1.5">
+                              <span className="truncate">{qi.item_name}</span>
+                              <span className="shrink-0 ml-2 font-medium">{qi.quantity || '—'} × {qi.unit_price?.toLocaleString() || '—'} = {qi.total_price?.toLocaleString() || '—'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
               </div>
-            ))}
+              );
+            })}
 
             {declinedRows.length > 0 && (
               <>
