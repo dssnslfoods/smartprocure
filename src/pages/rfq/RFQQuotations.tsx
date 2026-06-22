@@ -356,6 +356,19 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     // Mark supplier as responded
     await supabase.from('rfq_suppliers').update({ responded: true }).eq('rfq_id', rfqId).eq('supplier_id', form.supplier_id);
 
+    // Auto-change to evaluation when all invited suppliers have responded or declined
+    const { data: allInvited } = await supabase.from('rfq_suppliers').select('responded, declined_at').eq('rfq_id', rfqId);
+    if (allInvited && allInvited.length > 0) {
+      const allDone = allInvited.every((r: any) => r.responded || r.declined_at);
+      if (allDone) {
+        const { data: rfqRow } = await supabase.from('rfqs').select('status').eq('id', rfqId).single();
+        if (rfqRow?.status === 'published') {
+          await supabase.from('rfqs').update({ status: 'evaluation' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
+          toast({ title: 'Supplier ตอบครบแล้ว', description: 'สถานะเปลี่ยนเป็น Evaluation' });
+        }
+      }
+    }
+
     toast({ title: 'Quotation submitted' });
     setOpen(false);
     setForm({ supplier_id: '', currency: 'USD', payment_term: '', delivery_terms: '', validity_days: '30', lead_time_days: '', warranty: '', discount: '0', vat: '0', spec_compliance_score: '', remark: '', notes: '' });

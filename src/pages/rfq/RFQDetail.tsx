@@ -7,7 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
@@ -39,6 +42,9 @@ export default function RFQDetail() {
   const [winner, setWinner] = useState<{ supplier_id: string; company_name: string; final_score: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
   const isSupplier = hasRole('supplier');
   const mySupplierId = profile?.supplier_id ?? null;
 
@@ -133,6 +139,25 @@ export default function RFQDetail() {
     fetchData();
   };
 
+  const handleCancelRfq = async () => {
+    if (!id || !cancelReason.trim()) return;
+    setCancelling(true);
+    const { error } = await supabase.from('rfqs').update({
+      status: 'closed' as any,
+      notes: `[ยกเลิกการจัดซื้อ] ${cancelReason.trim()}${rfq?.notes ? `\n\n${rfq.notes}` : ''}`,
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    setCancelling(false);
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: 'ยกเลิกการจัดซื้อแล้ว', description: 'สถานะเปลี่ยนเป็น Closed' });
+    setCancelOpen(false);
+    setCancelReason('');
+    fetchData();
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
   if (accessDenied) return (
     <div className="text-center py-16 space-y-3">
@@ -192,6 +217,35 @@ export default function RFQDetail() {
                 <AlertCircle className="h-3 w-3" />
                 ยังไม่ได้เลือก winner — ไปที่ Bid Comparison
               </span>
+            )}
+            {rfq.status !== 'closed' && rfq.status !== 'awarded' && (
+              <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50 gap-1">
+                    <XOctagon className="w-3.5 h-3.5" />ยกเลิกการจัดซื้อ
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-md">
+                  <DialogHeader><DialogTitle>ยกเลิกการจัดซื้อ</DialogTitle></DialogHeader>
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      ยกเลิก RFQ นี้โดยไม่ประกาศผู้ชนะ — สถานะจะเปลี่ยนเป็น Closed
+                    </p>
+                    <div className="space-y-1">
+                      <Label>เหตุผลที่ยกเลิก *</Label>
+                      <Textarea rows={3} value={cancelReason} onChange={e => setCancelReason(e.target.value)}
+                        placeholder="เช่น งบประมาณไม่เพียงพอ, เปลี่ยนแผนจัดซื้อ, ราคาสูงเกินงบ..." />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setCancelOpen(false)}>ยกเลิก</Button>
+                      <Button onClick={handleCancelRfq} disabled={cancelling || !cancelReason.trim()}
+                        className="bg-red-600 hover:bg-red-700">
+                        {cancelling ? 'กำลังบันทึก...' : 'ยืนยันยกเลิก'}
+                      </Button>
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
             )}
           </div>
         )}
@@ -262,7 +316,7 @@ export default function RFQDetail() {
               </Button>
             </Link>
           </div>
-          <RFQComparisonInline rfqId={id!} />
+          <RFQComparisonInline rfqId={id!} onWinnerSelected={fetchData} />
         </TabsContent>
 
         <TabsContent value="ebidding">
@@ -288,13 +342,14 @@ import { scoreQuotations } from '@/lib/scoring';
 import RiskBadge from '@/components/RiskBadge';
 import type { RiskLevel } from '@/types/procurement';
 
-function RFQComparisonInline({ rfqId }: { rfqId: string }) {
+function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWinnerSelected?: () => void }) {
   const [rows, setRows] = useSt<any[]>([]);
   const [supMap, setSupMap] = useSt<Record<string, any>>({});
   const [loading, setLoading] = useSt(true);
   const [rfqData, setRfqData] = useSt<any>(null);
   const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
   const [sendingFQ, setSendingFQ] = useSt<string | null>(null);
+  const [selectingWinner, setSelectingWinner] = useSt<string | null>(null);
   const { user, hasRole: hr } = useAuth();
   const { toast: t } = useToast();
   const canMng = hr('admin') || hr('procurement_officer');
@@ -352,6 +407,32 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
     setSendingFQ(null);
   };
 
+  const handleSelectWinner = async (q: any) => {
+    if (!user) return;
+    setSelectingWinner(q.id);
+    try {
+      // Clear previous winner
+      await sb.from('quotations').update({ is_recommended_winner: false }).eq('rfq_id', rfqId);
+      // Set new winner
+      const { error } = await sb.from('quotations').update({ is_recommended_winner: true }).eq('id', q.id);
+      if (error) throw error;
+      // Update RFQ status to awarded + create award record
+      await sb.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
+      const { data: existing } = await sb.from('awards').select('id').eq('rfq_id', rfqId).eq('supplier_id', q.supplier_id).maybeSingle();
+      if (!existing) {
+        await sb.from('awards').insert({
+          rfq_id: rfqId, supplier_id: q.supplier_id,
+          status: 'pending' as any, award_lifecycle_status: 'pending_approval' as any,
+          awarded_at: new Date().toISOString(),
+        } as any);
+      }
+      setRows(prev => prev.map(r => ({ ...r, is_recommended_winner: r.id === q.id })));
+      t({ title: 'เลือกผู้ชนะแล้ว', description: `${supMap[q.supplier_id]?.company_name} — สถานะเปลี่ยนเป็น Awarded` });
+      onWinnerSelected?.();
+    } catch (err: any) { t({ title: 'Error', description: err.message, variant: 'destructive' }); }
+    setSelectingWinner(null);
+  };
+
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
   if (rows.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">No quotations yet.</p>;
 
@@ -387,15 +468,27 @@ function RFQComparisonInline({ rfqId }: { rfqId: string }) {
                 <td className="p-3 text-center text-muted-foreground">#{q.rank ?? (idx + 1)}</td>
                 {canMng && (
                   <td className="p-3 text-center">
-                    {sentToFQ.has(q.id) ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
-                        <CheckCircle className="w-3.5 h-3.5" /> ส่งแล้ว
-                      </span>
-                    ) : (
-                      <Button variant="outline" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs">
-                        <Send className="w-3.5 h-3.5 mr-1" />{sendingFQ === q.id ? '...' : 'ส่ง Final'}
-                      </Button>
-                    )}
+                    <div className="flex items-center justify-center gap-1.5">
+                      {q.is_recommended_winner ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                          <Trophy className="w-3.5 h-3.5" /> ผู้ชนะ
+                        </span>
+                      ) : (
+                        <Button variant="outline" size="sm" disabled={selectingWinner === q.id}
+                          onClick={() => handleSelectWinner(q)} className="text-xs">
+                          <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
+                        </Button>
+                      )}
+                      {sentToFQ.has(q.id) ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <CheckCircle className="w-3 h-3" />
+                        </span>
+                      ) : (
+                        <Button variant="ghost" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs px-1.5" title="ส่ง Final Quotation">
+                          <Send className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 )}
               </tr>
