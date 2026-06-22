@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -101,9 +101,15 @@ export default function SupplierForm() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scannedDocs, setScannedDocs] = useState<ScannedDoc[]>([]);
+  const scannedDocsRef = useRef<ScannedDoc[]>([]);
+  const formRef = useRef(form);
   const [aiScanned, setAiScanned] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+
+  // Keep ref in sync so async handlers always see latest docs
+  useEffect(() => { scannedDocsRef.current = scannedDocs; }, [scannedDocs]);
+  useEffect(() => { formRef.current = form; }, [form]);
 
   const handleChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -212,7 +218,8 @@ export default function SupplierForm() {
   const handleConfirmSave = async () => {
     setShowConfirm(false);
     setLoading(true);
-    const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = form;
+    const currentForm = formRef.current;
+    const { company_name, tax_id, address, city, country, phone, email, website, contact_person, tier, notes } = currentForm;
 
     const { data: inserted, error } = await supabase.from('suppliers').insert({
       company_name, tax_id, address, city, country, phone, email, website, contact_person,
@@ -230,12 +237,13 @@ export default function SupplierForm() {
 
     const supplierId = inserted.id;
 
-    console.log('[SupplierForm] scannedDocs count:', scannedDocs.length, scannedDocs.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
-    if (scannedDocs.length > 0) {
-      toast({ title: `กำลังอัปโหลด ${scannedDocs.length} เอกสาร...` });
+    const docsToUpload = scannedDocsRef.current;
+    console.log('[SupplierForm] scannedDocs from ref:', docsToUpload.length, docsToUpload.map(d => ({ name: d.name, label: d.docLabel, size: d.file?.size })));
+    if (docsToUpload.length > 0) {
+      toast({ title: `กำลังอัปโหลด ${docsToUpload.length} เอกสาร...` });
       let certCount = 0;
       let docCount = 0;
-      for (const doc of scannedDocs) {
+      for (const doc of docsToUpload) {
         console.log('[SupplierForm] processing doc:', doc.name, 'label:', doc.docLabel, 'isCert:', CERT_DOC_LABELS.has(doc.docLabel), 'fileValid:', !!doc.file, 'fileSize:', doc.file?.size);
         const isCert = CERT_DOC_LABELS.has(doc.docLabel);
         try {
