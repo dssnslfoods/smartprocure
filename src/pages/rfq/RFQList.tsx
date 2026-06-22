@@ -52,6 +52,7 @@ export default function RFQList() {
       } else {
         filteredQuery = filteredQuery.in('id', myRfqIds);
       }
+      filteredQuery = filteredQuery.neq('status', 'draft');
     }
     return filteredQuery;
   }, [search, statusFilter, isSupplier, myRfqIds]);
