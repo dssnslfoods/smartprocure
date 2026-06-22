@@ -30,26 +30,41 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
 
 export default function RFQDetail() {
   const { id } = useParams<{ id: string }>();
-  const { hasRole } = useAuth();
+  const navigate = useNavigate();
+  const { hasRole, profile } = useAuth();
   const { toast } = useToast();
   const [rfq, setRfq] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [invitedCount, setInvitedCount] = useState(0);
   const [winner, setWinner] = useState<{ supplier_id: string; company_name: string; final_score: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const isSupplier = hasRole('supplier');
+  const mySupplierId = profile?.supplier_id ?? null;
 
   const fetchData = async () => {
     if (!id) return;
     const [rfqRes, itemsRes, invRes, winRes] = await Promise.all([
       supabase.from('rfqs').select('*').eq('id', id).single(),
       supabase.from('rfq_items').select('*').eq('rfq_id', id).order('created_at'),
-      supabase.from('rfq_suppliers').select('id').eq('rfq_id', id),
+      supabase.from('rfq_suppliers').select('id, supplier_id').eq('rfq_id', id),
       supabase.from('quotations')
         .select('supplier_id, final_score, suppliers(company_name)')
         .eq('rfq_id', id)
         .eq('is_recommended_winner', true)
         .maybeSingle(),
     ]);
+
+    // Access check: supplier can only see RFQs they're invited to
+    if (isSupplier && mySupplierId && invRes.data) {
+      const invited = invRes.data.some((r: any) => r.supplier_id === mySupplierId);
+      if (!invited) {
+        setAccessDenied(true);
+        setLoading(false);
+        return;
+      }
+    }
+
     if (rfqRes.data) setRfq(rfqRes.data);
     if (itemsRes.data) setItems(itemsRes.data);
     setInvitedCount(invRes.data?.length || 0);
@@ -119,6 +134,13 @@ export default function RFQDetail() {
   };
 
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
+  if (accessDenied) return (
+    <div className="text-center py-16 space-y-3">
+      <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground" />
+      <p className="text-muted-foreground">คุณไม่ได้รับเชิญในรายการจัดซื้อนี้</p>
+      <Link to="/rfq"><Button variant="outline">กลับไปรายการ RFQ</Button></Link>
+    </div>
+  );
   if (!rfq) return <div className="text-center py-16 text-muted-foreground">RFQ not found</div>;
 
   const canManage = hasRole('admin') || hasRole('procurement_officer');
