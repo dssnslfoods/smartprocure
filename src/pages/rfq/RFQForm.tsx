@@ -11,7 +11,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
@@ -47,6 +48,7 @@ export default function RFQForm() {
   const { user, tenantId } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', deadline: '', notes: '' });
   const [items, setItems] = useState<LineItem[]>([
     { item_name: '', description: '', quantity: '', unit: '', specifications: '', catalog_item_id: null },
@@ -114,17 +116,22 @@ export default function RFQForm() {
       )
     : suppliers;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const validateForm = () => {
     if (items.filter(i => i.item_name.trim()).length === 0) {
       toast({ title: 'กรุณาเพิ่ม Line Item', description: 'ต้องมีอย่างน้อย 1 รายการ', variant: 'destructive' });
-      return;
+      return false;
     }
     if (selectedSuppliers.size === 0) {
       toast({ title: 'กรุณาเลือก Supplier', description: 'ต้องเลือกผู้จัดจำหน่ายอย่างน้อย 1 ราย', variant: 'destructive' });
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const handleSubmit = async (status: 'draft' | 'published') => {
+    if (!validateForm()) return;
     setSaving(true);
+    setPublishConfirmOpen(false);
 
     const rfqNumber = `RFQ-${Date.now().toString(36).toUpperCase()}`;
     const { data: rfq, error } = await supabase.from('rfqs').insert({
@@ -133,7 +140,7 @@ export default function RFQForm() {
       description: form.description,
       deadline: form.deadline || null,
       notes: form.notes,
-      status: 'draft',
+      status,
       created_by: user?.id,
     }).select().single();
 
@@ -169,7 +176,8 @@ export default function RFQForm() {
       );
     }
 
-    toast({ title: 'สร้าง RFQ สำเร็จ', description: `${rfqNumber} — ${validItems.length} รายการ, ${selectedSuppliers.size} ผู้จัดจำหน่าย` });
+    const statusLabel = status === 'published' ? 'Published' : 'Draft';
+    toast({ title: 'สร้าง RFQ สำเร็จ', description: `${rfqNumber} — ${statusLabel} · ${validItems.length} รายการ, ${selectedSuppliers.size} ผู้จัดจำหน่าย` });
     setSaving(false);
     navigate(`/rfq/${rfq.id}`);
   };
@@ -184,7 +192,7 @@ export default function RFQForm() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={e => e.preventDefault()} className="space-y-4">
         {/* General Info */}
         <Card>
           <CardHeader><CardTitle className="text-base">ข้อมูลทั่วไป</CardTitle></CardHeader>
@@ -330,10 +338,33 @@ export default function RFQForm() {
 
         <div className="flex justify-end gap-3">
           <Link to="/rfq"><Button variant="outline">ยกเลิก</Button></Link>
-          <Button type="submit" disabled={saving}>
-            {saving ? 'กำลังสร้าง...' : 'สร้าง RFQ'}
+          <Button variant="secondary" disabled={saving} onClick={() => handleSubmit('draft')} className="gap-1.5">
+            <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก Draft'}
+          </Button>
+          <Button disabled={saving} onClick={() => { if (validateForm()) setPublishConfirmOpen(true); }} className="gap-1.5">
+            <Send className="w-4 h-4" />Publish ทันที
           </Button>
         </div>
+
+        <Dialog open={publishConfirmOpen} onOpenChange={setPublishConfirmOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Publish RFQ ทันที?</DialogTitle>
+              <DialogDescription>
+                เมื่อ Publish แล้ว Supplier ที่ถูกเชิญจะเห็นรายการนี้และสามารถส่งใบเสนอราคาได้ทันที
+                หาก Draft ไว้ก่อน Supplier จะยังไม่เห็นรายการจนกว่าจะเปลี่ยนสถานะเป็น Published
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => { setPublishConfirmOpen(false); handleSubmit('draft'); }}>
+                <Save className="w-4 h-4 mr-1.5" />Draft ก่อน
+              </Button>
+              <Button onClick={() => handleSubmit('published')} disabled={saving}>
+                <Send className="w-4 h-4 mr-1.5" />{saving ? 'กำลังสร้าง...' : 'Publish เลย'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </form>
     </div>
   );
