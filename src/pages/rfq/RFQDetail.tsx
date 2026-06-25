@@ -3,11 +3,12 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon, Lightbulb, ArrowRight } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon, Lightbulb, ArrowRight, Pencil, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -51,6 +52,21 @@ export default function RFQDetail() {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [tab, setTab] = useState('details');
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  const saveTitle = async () => {
+    const next = titleDraft.trim();
+    if (!next) { toast({ title: 'กรุณาใส่ชื่อ RFQ', variant: 'destructive' }); return; }
+    setSavingTitle(true);
+    const { error } = await supabase.from('rfqs').update({ title: next, updated_at: new Date().toISOString() }).eq('id', id);
+    setSavingTitle(false);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    setRfq((prev: any) => ({ ...prev, title: next }));
+    setEditingTitle(false);
+    toast({ title: 'แก้ไขชื่อ RFQ แล้ว' });
+  };
   const isSupplier = hasRole('supplier');
   const mySupplierId = profile?.supplier_id ?? null;
 
@@ -184,7 +200,29 @@ export default function RFQDetail() {
           <Link to="/rfq"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold">{rfq.title}</h1>
+              {editingTitle ? (
+                <div className="flex items-center gap-1">
+                  <Input value={titleDraft} autoFocus className="h-9 text-xl font-bold w-[280px] sm:w-[360px]"
+                    onChange={e => setTitleDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') setEditingTitle(false); }} />
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-emerald-600" disabled={savingTitle} onClick={saveTitle} title="บันทึก">
+                    <Check className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground" onClick={() => setEditingTitle(false)} title="ยกเลิก">
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <h1 className="text-2xl font-bold">{rfq.title}</h1>
+                  {canManage && (
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => { setTitleDraft(rfq.title); setEditingTitle(true); }} title="แก้ไขชื่อ RFQ">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </>
+              )}
               <Badge variant="secondary" className={statusColors[rfq.status] || ''}>{rfq.status}</Badge>
             </div>
             <p className="text-sm text-muted-foreground">{rfq.rfq_number} · Deadline: {rfq.deadline ? new Date(rfq.deadline).toLocaleString() : 'None'}</p>
