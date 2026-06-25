@@ -9,8 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle } from 'lucide-react';
 import { RISK_FACTORS } from '@/types/procurement';
@@ -25,12 +26,18 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 const CATEGORY_ORDER = ['_global', 'raw_material', 'packaging', 'service', 'other'];
 
-type Draft = Partial<RiskCriterion> & { keywordsText?: string };
-
-const EMPTY: Draft = {
-  category: null, dimension: 'food_safety_risk', name_th: '', description: '',
-  weight: 1, match_type: 'certificate', keywordsText: '', is_mandatory: false, sort_order: 10, active: true,
+// Per-risk detail entered inside the checklist. One entry => one risk_criteria row.
+type FactorDetail = {
+  name_th: string;
+  description: string;
+  match_type: 'certificate' | 'document';
+  keywordsText: string;
+  weight: number;
+  is_mandatory: boolean;
 };
+const emptyDetail = (): FactorDetail => ({
+  name_th: '', description: '', match_type: 'certificate', keywordsText: '', weight: 1, is_mandatory: false,
+});
 
 export default function RiskCriteria() {
   const { toast } = useToast();
@@ -40,9 +47,14 @@ export default function RiskCriteria() {
   const [rows, setRows] = useState<RiskCriterion[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<Draft>(EMPTY);
-  const [editId, setEditId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Form state. editId === null => "add many" checklist; otherwise edit one row.
+  const [editId, setEditId] = useState<string | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
+  const [active, setActive] = useState(true);
+  // presence of a key = that risk factor is checked; value = its detail.
+  const [factors, setFactors] = useState<Record<string, FactorDetail>>({});
 
   const load = async () => {
     setLoading(true);
@@ -53,35 +65,64 @@ export default function RiskCriteria() {
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setDraft(EMPTY); setEditId(null); setOpen(true); };
+  const openNew = () => {
+    setEditId(null); setCategory(null); setActive(true); setFactors({}); setOpen(true);
+  };
   const openEdit = (c: RiskCriterion) => {
-    setDraft({ ...c, keywordsText: (c.match_keywords || []).join(', ') });
-    setEditId(c.id); setOpen(true);
+    setEditId(c.id); setCategory(c.category ?? null); setActive(c.active !== false);
+    setFactors({ [c.dimension]: {
+      name_th: c.name_th || '', description: c.description || '',
+      match_type: c.match_type, keywordsText: (c.match_keywords || []).join(', '),
+      weight: c.weight ?? 1, is_mandatory: !!c.is_mandatory,
+    } });
+    setOpen(true);
   };
 
+  const toggleFactor = (key: string, on: boolean) => setFactors(prev => {
+    const next = { ...prev };
+    if (on) next[key] = prev[key] ?? emptyDetail();
+    else delete next[key];
+    return next;
+  });
+  const setDetail = (key: string, patch: Partial<FactorDetail>) =>
+    setFactors(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+
+  const rowFromDetail = (dim: string, det: FactorDetail, i: number) => ({
+    category: category || null,
+    dimension: dim,
+    name_th: det.name_th.trim(),
+    description: det.description?.trim() || null,
+    weight: Number(det.weight) || 1,
+    match_type: det.match_type,
+    match_keywords: (det.keywordsText || '').split(',').map(s => s.trim()).filter(Boolean),
+    is_mandatory: !!det.is_mandatory,
+    sort_order: (i + 1) * 10,
+    active,
+    updated_at: new Date().toISOString(),
+  });
+
   const save = async () => {
-    if (!draft.name_th?.trim()) { toast({ title: 'กรุณาใส่ชื่อเกณฑ์', variant: 'destructive' }); return; }
+    const entries = Object.entries(factors);
+    if (entries.length === 0) { toast({ title: 'เลือกอย่างน้อย 1 ด้านความเสี่ยง', variant: 'destructive' }); return; }
+    const missing = entries.filter(([, d]) => !d.name_th.trim());
+    if (missing.length) {
+      const labels = missing.map(([k]) => RISK_FACTORS.find(f => f.key === k)?.label || k).join(', ');
+      toast({ title: 'กรุณาใส่ชื่อเกณฑ์ให้ครบ', description: `ยังขาดชื่อในด้าน: ${labels}`, variant: 'destructive' });
+      return;
+    }
     setSaving(true);
-    const payload = {
-      category: draft.category || null,
-      dimension: draft.dimension,
-      code: draft.code || null,
-      name_th: draft.name_th.trim(),
-      description: draft.description || null,
-      weight: Number(draft.weight) || 1,
-      match_type: draft.match_type,
-      match_keywords: (draft.keywordsText || '').split(',').map(s => s.trim()).filter(Boolean),
-      is_mandatory: !!draft.is_mandatory,
-      sort_order: Number(draft.sort_order) || 0,
-      active: draft.active !== false,
-      updated_at: new Date().toISOString(),
-    };
-    const { error } = editId
-      ? await supabase.from('risk_criteria').update(payload).eq('id', editId)
-      : await supabase.from('risk_criteria').insert(payload);
+    let error;
+    if (editId) {
+      // Edit mode targets a single existing row.
+      const [dim, det] = entries[0];
+      ({ error } = await supabase.from('risk_criteria').update(rowFromDetail(dim, det, 0)).eq('id', editId));
+    } else {
+      const payload = entries.map(([dim, det], i) => rowFromDetail(dim, det, i));
+      ({ error } = await supabase.from('risk_criteria').insert(payload));
+    }
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: editId ? 'แก้ไขเกณฑ์แล้ว' : 'เพิ่มเกณฑ์แล้ว' });
+    toast({ title: editId ? 'แก้ไขเกณฑ์แล้ว' : `เพิ่ม ${entries.length} เกณฑ์แล้ว` });
     setOpen(false); load();
   };
 
@@ -164,21 +205,21 @@ export default function RiskCriteria() {
       ))}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{editId ? 'แก้ไขเกณฑ์' : 'เพิ่มเกณฑ์ใหม่'}</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editId ? 'แก้ไขเกณฑ์' : 'เพิ่มเกณฑ์ใหม่'}</DialogTitle>
+            <DialogDescription>
+              {editId
+                ? 'แก้ไขรายละเอียดเกณฑ์การประเมินความเสี่ยง'
+                : 'เลือกหมวด catalog แล้วติ๊กด้านความเสี่ยงที่ต้องการ (เลือกได้หลายด้าน) จากนั้นกรอกรายละเอียดของแต่ละด้าน'}
+            </DialogDescription>
+          </DialogHeader>
+
           <div className="space-y-4">
-            <div>
-              <Label>ชื่อเกณฑ์ *</Label>
-              <Input value={draft.name_th || ''} onChange={e => setDraft(d => ({ ...d, name_th: e.target.value }))} placeholder="เช่น แผน HACCP" />
-            </div>
-            <div>
-              <Label>คำอธิบาย</Label>
-              <Textarea rows={2} value={draft.description || ''} onChange={e => setDraft(d => ({ ...d, description: e.target.value }))} />
-            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>หมวดหมู่ catalog</Label>
-                <Select value={draft.category ?? '_global'} onValueChange={v => setDraft(d => ({ ...d, category: v === '_global' ? null : v as any }))}>
+                <Select value={category ?? '_global'} onValueChange={v => setCategory(v === '_global' ? null : v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_global">ทุกหมวด (Global)</SelectItem>
@@ -186,52 +227,90 @@ export default function RiskCriteria() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label>ด้านความเสี่ยง</Label>
-                <Select value={draft.dimension} onValueChange={v => setDraft(d => ({ ...d, dimension: v as any }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {RISK_FACTORS.map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+              <div className="flex items-end">
+                <div className="flex items-center justify-between rounded-lg border p-3 w-full h-10">
+                  <Label className="cursor-pointer text-sm">เปิดใช้งาน</Label>
+                  <Switch checked={active} onCheckedChange={setActive} />
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>ตรวจจาก</Label>
-                <Select value={draft.match_type} onValueChange={v => setDraft(d => ({ ...d, match_type: v as any }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="certificate">ใบรับรอง (Certificate)</SelectItem>
-                    <SelectItem value="document">เอกสาร (Document)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>น้ำหนัก</Label>
-                <Input type="number" min={0.5} step={0.5} value={draft.weight ?? 1} onChange={e => setDraft(d => ({ ...d, weight: parseFloat(e.target.value) }))} />
-              </div>
-            </div>
+
             <div>
-              <Label>คำค้นสำหรับจับคู่ (คั่นด้วยจุลภาค)</Label>
-              <Input value={draft.keywordsText || ''} onChange={e => setDraft(d => ({ ...d, keywordsText: e.target.value }))} placeholder="haccp, gmp, ใบรับรอง" />
-              <p className="text-[11px] text-muted-foreground mt-1">ระบบจะถือว่า "ผ่าน" เมื่อชื่อ{draft.match_type === 'certificate' ? 'ใบรับรอง' : 'เอกสาร'}มีคำเหล่านี้คำใดคำหนึ่ง</p>
-            </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <div>
-                <Label className="cursor-pointer">เกณฑ์บังคับ (Mandatory)</Label>
-                <p className="text-[11px] text-muted-foreground">หากขาด คะแนนความเสี่ยงด้านนี้จะสูงสุด (10)</p>
+              <Label>ด้านความเสี่ยง {!editId && <span className="text-muted-foreground font-normal">(ติ๊กได้มากกว่า 1 ด้าน)</span>}</Label>
+              <div className="mt-2 space-y-2">
+                {RISK_FACTORS
+                  .filter(f => !editId || f.key in factors)
+                  .map(f => {
+                    const det = factors[f.key];
+                    const checked = !!det;
+                    return (
+                      <div key={f.key} className={`rounded-lg border p-3 transition-colors ${checked ? 'border-teal-300 bg-teal-50/40' : ''}`}>
+                        <div className="flex items-start gap-3">
+                          {!editId && (
+                            <Checkbox className="mt-0.5" checked={checked} onCheckedChange={v => toggleFactor(f.key, !!v)} />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium">{f.label} <span className="text-muted-foreground font-normal">— {DIMENSION_LABEL[f.key] || f.key}</span></div>
+                            <p className="text-[11px] text-muted-foreground">{f.description}</p>
+                          </div>
+                        </div>
+
+                        {checked && (
+                          <div className="mt-3 space-y-3 pl-0 sm:pl-7">
+                            <div>
+                              <Label className="text-xs">ชื่อเกณฑ์ *</Label>
+                              <Input value={det.name_th} placeholder="เช่น แผน HACCP"
+                                onChange={e => setDetail(f.key, { name_th: e.target.value })} />
+                            </div>
+                            <div>
+                              <Label className="text-xs">คำอธิบาย</Label>
+                              <Textarea rows={2} value={det.description}
+                                onChange={e => setDetail(f.key, { description: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs">ตรวจจาก</Label>
+                                <Select value={det.match_type} onValueChange={v => setDetail(f.key, { match_type: v as FactorDetail['match_type'] })}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="certificate">ใบรับรอง (Certificate)</SelectItem>
+                                    <SelectItem value="document">เอกสาร (Document)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-xs">น้ำหนัก</Label>
+                                <Input type="number" min={0.5} step={0.5} value={det.weight}
+                                  onChange={e => setDetail(f.key, { weight: parseFloat(e.target.value) })} />
+                              </div>
+                            </div>
+                            <div>
+                              <Label className="text-xs">คำค้นสำหรับจับคู่ (คั่นด้วยจุลภาค)</Label>
+                              <Input value={det.keywordsText} placeholder="haccp, gmp, ใบรับรอง"
+                                onChange={e => setDetail(f.key, { keywordsText: e.target.value })} />
+                              <p className="text-[11px] text-muted-foreground mt-1">ระบบจะถือว่า "ผ่าน" เมื่อชื่อ{det.match_type === 'certificate' ? 'ใบรับรอง' : 'เอกสาร'}มีคำเหล่านี้คำใดคำหนึ่ง</p>
+                            </div>
+                            <div className="flex items-center justify-between rounded-lg border p-2.5 bg-background">
+                              <div>
+                                <Label className="cursor-pointer text-xs">เกณฑ์บังคับ (Mandatory)</Label>
+                                <p className="text-[11px] text-muted-foreground">หากขาด คะแนนความเสี่ยงด้านนี้จะสูงสุด (10)</p>
+                              </div>
+                              <Switch checked={det.is_mandatory} onCheckedChange={v => setDetail(f.key, { is_mandatory: v })} />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
-              <Switch checked={!!draft.is_mandatory} onCheckedChange={v => setDraft(d => ({ ...d, is_mandatory: v }))} />
-            </div>
-            <div className="flex items-center justify-between rounded-lg border p-3">
-              <Label className="cursor-pointer">เปิดใช้งาน</Label>
-              <Switch checked={draft.active !== false} onCheckedChange={v => setDraft(d => ({ ...d, active: v }))} />
             </div>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>ยกเลิก</Button>
-            <Button onClick={save} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+            <Button onClick={save} disabled={saving}>
+              {saving ? 'กำลังบันทึก...' : editId ? 'บันทึก' : `เพิ่ม ${Object.keys(factors).length || ''} เกณฑ์`}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
