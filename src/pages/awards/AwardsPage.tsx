@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal, ListChecks } from 'lucide-react';
+import AwardSelectionSummary from '@/components/AwardSelectionSummary';
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -40,6 +41,7 @@ export default function AwardsPage() {
   const [search, setSearch] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<any>(null);
+  const [criteriaAward, setCriteriaAward] = useState<any>(null);
   const [decisionReason, setDecisionReason] = useState('');
   const [handoffAwards, setHandoffAwards] = useState<any[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
@@ -301,6 +303,11 @@ export default function AwardsPage() {
                             <Button variant="ghost" size="sm" onClick={() => { setSelected(a); setDetailOpen(true); }}>
                               <Eye className="w-3 h-3" />
                             </Button>
+                            {a.selection_snapshot && (
+                              <Button variant="ghost" size="sm" title="เกณฑ์ที่ใช้คัดเลือกผู้ชนะ" onClick={() => setCriteriaAward(a)}>
+                                <ListChecks className="w-3 h-3" />
+                              </Button>
+                            )}
                             {a.rfq_id && (
                               <Button variant="ghost" size="sm" onClick={() => navigate(`/rfq/${a.rfq_id}`)}>
                                 <Trophy className="w-3 h-3" />
@@ -423,6 +430,22 @@ export default function AwardsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!criteriaAward} onOpenChange={o => !o && setCriteriaAward(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>เกณฑ์ที่ใช้คัดเลือกผู้ชนะ</DialogTitle>
+            {criteriaAward && (
+              <p className="text-sm text-muted-foreground">
+                {criteriaAward.rfqs?.rfq_number} · {criteriaAward.rfqs?.title}
+              </p>
+            )}
+          </DialogHeader>
+          {criteriaAward?.selection_snapshot
+            ? <AwardSelectionSummary snap={criteriaAward.selection_snapshot} />
+            : <p className="text-sm text-muted-foreground py-6 text-center">ไม่มีข้อมูลเกณฑ์การคัดเลือก (เป็น award ที่สร้างก่อนเปิดใช้ฟีเจอร์นี้)</p>}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent>
