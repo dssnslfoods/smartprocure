@@ -3,13 +3,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Copy } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
+import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/i18n';
 
 const statusColors: Record<string, string> = {
@@ -25,10 +26,53 @@ const RFQ_STATUSES = ['draft', 'published', 'closed', 'evaluation', 'awarded'];
 export default function RFQList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const { hasRole, profile } = useAuth();
+  const { hasRole, profile, user } = useAuth();
   const { t } = useTranslation();
+  const { toast } = useToast();
+  const navigate = useNavigate();
   const isSupplier = hasRole('supplier');
+  const canManage = hasRole('admin') || hasRole('procurement_officer');
   const mySupplierId = profile?.supplier_id ?? null;
+  const [duplicating, setDuplicating] = useState<string | null>(null);
+
+  // Clone an RFQ as a new draft — copies items, technical checklist, and invited
+  // suppliers, but not quotations/awards. Saves re-entering everything.
+  const duplicateRfq = async (id: string) => {
+    setDuplicating(id);
+    try {
+      const { data: src, error: srcErr } = await supabase.from('rfqs').select('*').eq('id', id).single();
+      if (srcErr || !src) throw srcErr || new Error('RFQ not found');
+
+      const rfqNumber = `RFQ-${Date.now().toString(36).toUpperCase()}`;
+      const { data: newRfq, error } = await supabase.from('rfqs').insert({
+        rfq_number: rfqNumber,
+        title: `${src.title} (สำเนา)`,
+        description: src.description,
+        notes: src.notes,
+        deadline: src.deadline,
+        status: 'draft',
+        created_by: user?.id,
+      }).select().single();
+      if (error || !newRfq) throw error || new Error('create failed');
+
+      const [{ data: items }, { data: crit }, { data: sups }] = await Promise.all([
+        supabase.from('rfq_items').select('item_name, description, quantity, unit, specifications, source_price_list_item_id').eq('rfq_id', id),
+        supabase.from('rfq_technical_criteria').select('label, description, weight, sort_order').eq('rfq_id', id),
+        supabase.from('rfq_suppliers').select('supplier_id').eq('rfq_id', id),
+      ]);
+      await Promise.all([
+        items?.length ? supabase.from('rfq_items').insert(items.map((i: any) => ({ ...i, rfq_id: newRfq.id }))) : null,
+        crit?.length ? supabase.from('rfq_technical_criteria').insert(crit.map((c: any) => ({ ...c, rfq_id: newRfq.id }))) : null,
+        sups?.length ? supabase.from('rfq_suppliers').insert(sups.map((s: any) => ({ rfq_id: newRfq.id, supplier_id: s.supplier_id }))) : null,
+      ].filter(Boolean) as any);
+
+      toast({ title: 'คัดลอก RFQ แล้ว', description: `สร้าง ${rfqNumber} เป็น Draft — แก้ไขรายละเอียดแล้วเผยแพร่ได้เลย` });
+      navigate(`/rfq/${newRfq.id}`);
+    } catch (e: any) {
+      toast({ title: 'คัดลอกไม่สำเร็จ', description: e.message, variant: 'destructive' });
+    }
+    setDuplicating(null);
+  };
 
   // For supplier users: only show RFQs they're invited to
   const [myRfqIds, setMyRfqIds] = useState<string[] | null>(null);
@@ -98,13 +142,14 @@ export default function RFQList() {
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.rfqTitle')}</th>
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.deadline')}</th>
                 <th className="text-left p-3 font-medium text-muted-foreground">{t('rfq.status')}</th>
+                {canManage && <th className="text-right p-3 font-medium text-muted-foreground">{t('common.actions')}</th>}
               </tr>
             </thead>
             <tbody>
               {pagination.loading ? (
-                <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">{t('common.loading')}</td></tr>
+                <tr><td colSpan={canManage ? 5 : 4} className="p-8 text-center text-muted-foreground">{t('common.loading')}</td></tr>
               ) : pagination.items.length === 0 ? (
-                <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">{t('common.noData')}</td></tr>
+                <tr><td colSpan={canManage ? 5 : 4} className="p-8 text-center text-muted-foreground">{t('common.noData')}</td></tr>
               ) : (
                 pagination.items.map((r) => (
                   <tr key={r.id} className="border-b hover:bg-muted/30">
@@ -114,6 +159,15 @@ export default function RFQList() {
                     <td className="p-3">{r.title}</td>
                     <td className="p-3 text-muted-foreground">{r.deadline ? new Date(r.deadline).toLocaleDateString() : '—'}</td>
                     <td className="p-3"><Badge variant="secondary" className={statusColors[r.status] || ''}>{r.status}</Badge></td>
+                    {canManage && (
+                      <td className="p-3 text-right">
+                        <Button variant="ghost" size="sm" className="text-xs" disabled={duplicating === r.id}
+                          title="คัดลอก RFQ นี้เป็น Draft ใหม่ (รวมรายการ, เกณฑ์เทคนิค, supplier ที่เชิญ)"
+                          onClick={() => duplicateRfq(r.id)}>
+                          <Copy className="w-3.5 h-3.5 mr-1" />{duplicating === r.id ? 'กำลังคัดลอก...' : 'Duplicate'}
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
