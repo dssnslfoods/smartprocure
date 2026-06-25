@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon, Lightbulb, ArrowRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -50,6 +50,7 @@ export default function RFQDetail() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [tab, setTab] = useState('details');
   const isSupplier = hasRole('supplier');
   const mySupplierId = profile?.supplier_id ?? null;
 
@@ -243,7 +244,9 @@ export default function RFQDetail() {
         )}
       </div>
 
-      <Tabs defaultValue="details" className="space-y-4">
+      {canManage && <NextStepBanner status={rfq.status} hasWinner={!!winner} invitedCount={invitedCount} onGo={setTab} />}
+
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="details">Details & Items</TabsTrigger>
           <TabsTrigger value="suppliers">Invited Suppliers ({invitedCount})</TabsTrigger>
@@ -325,6 +328,54 @@ function Row({ label, value }: { label: string; value?: string | null }) {
     <div className="flex justify-between">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium text-right max-w-[60%]">{value || '—'}</span>
+    </div>
+  );
+}
+
+// Contextual "what to do next" guidance based on the RFQ's current stage.
+type NextStep = { title: string; desc: string; action?: { label: string; tab?: string; to?: string } };
+function getNextStep(status: string, hasWinner: boolean, invitedCount: number): NextStep | null {
+  switch (status) {
+    case 'draft':
+      return { title: 'RFQ ยังเป็น Draft', desc: 'supplier ยังไม่เห็น RFQ นี้ — ตรวจรายละเอียดและรายการสินค้าให้ครบ แล้วเผยแพร่เพื่อเริ่มรับใบเสนอราคา', action: { label: 'ดู Details', tab: 'details' } };
+    case 'published':
+      if (invitedCount === 0)
+        return { title: 'ขั้นต่อไป: เชิญ Supplier', desc: 'ยังไม่ได้เชิญผู้จัดจำหน่าย — ไปที่แท็บ Invited Suppliers เพื่อเชิญเข้าร่วมเสนอราคา', action: { label: 'เชิญ Supplier', tab: 'suppliers' } };
+      return { title: 'เผยแพร่แล้ว — รอใบเสนอราคา', desc: 'รอ supplier เสนอราคา บันทึก/ติดตามได้ที่แท็บ Quotations (อัปโหลดเอกสารให้ AI อ่านอัตโนมัติได้) — สถานะจะเป็น Evaluation เองเมื่อ supplier ตอบครบ', action: { label: 'ไปที่ Quotations', tab: 'quotations' } };
+    case 'evaluation':
+      if (!hasWinner)
+        return { title: 'ขั้นต่อไป: เลือกผู้ชนะ', desc: 'เปรียบเทียบคะแนน Commercial / Technical / Risk ที่แท็บ Bid Comparison แล้วกด "เลือก" ผู้ชนะ (ดูสูตรได้ที่ไอคอน ⓘ บนหัวคอลัมน์)', action: { label: 'ไปที่ Bid Comparison', tab: 'comparison' } };
+      return { title: 'เลือกผู้ชนะแล้ว — ขั้นต่อไป: ส่ง Final', desc: 'กดไอคอน ✈️ ที่แถวผู้ชนะเพื่อส่งไป Final Quotation แล้วไปสร้าง Award/PO ต่อ', action: { label: 'ไปที่ Bid Comparison', tab: 'comparison' } };
+    case 'awarded':
+      return { title: 'ประกาศผู้ชนะแล้ว', desc: 'ดำเนินการต่อที่เมนู Final Quotations → Awards เพื่อสร้าง Award และส่งฝ่ายบัญชีออกใบสั่งซื้อ (PO)', action: { label: 'ไปที่ Final Quotations', to: '/final-quotations' } };
+    case 'closed':
+      return { title: 'RFQ ปิด/ยกเลิกแล้ว', desc: 'การจัดซื้อนี้สิ้นสุดแล้ว ไม่มีขั้นตอนต่อ' };
+    default:
+      return null;
+  }
+}
+
+function NextStepBanner({ status, hasWinner, invitedCount, onGo }: { status: string; hasWinner: boolean; invitedCount: number; onGo: (tab: string) => void }) {
+  const step = getNextStep(status, hasWinner, invitedCount);
+  if (!step) return null;
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-teal-200 bg-teal-50/60 p-3">
+      <Lightbulb className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-teal-900">{step.title}</p>
+        <p className="text-xs text-teal-800/80 mt-0.5">{step.desc}</p>
+      </div>
+      {step.action && (
+        step.action.to ? (
+          <Link to={step.action.to} className="shrink-0">
+            <Button size="sm" variant="outline">{step.action.label}<ArrowRight className="w-3.5 h-3.5 ml-1" /></Button>
+          </Link>
+        ) : (
+          <Button size="sm" variant="outline" className="shrink-0" onClick={() => step.action!.tab && onGo(step.action!.tab)}>
+            {step.action.label}<ArrowRight className="w-3.5 h-3.5 ml-1" />
+          </Button>
+        )
+      )}
     </div>
   );
 }
@@ -511,7 +562,8 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
                         </span>
                       ) : (
                         <Button variant="outline" size="sm" disabled={selectingWinner === q.id}
-                          onClick={() => handleSelectWinner(q)} className="text-xs">
+                          onClick={() => handleSelectWinner(q)} className="text-xs"
+                          title="เลือก supplier นี้เป็นผู้ชนะ — RFQ จะเปลี่ยนเป็น Awarded และสร้าง Award (บันทึกเกณฑ์ที่ใช้ไว้ด้วย)">
                           <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
                         </Button>
                       )}
