@@ -89,6 +89,12 @@ export default function RFQBidComparison() {
 
   const handleSendToFinalQuotation = async (q: any) => {
     if (!id || !user) return;
+    // Only the selected winner is sent to Final Quotations.
+    const isWinnerQ = scored.find(s => s.quotation_id === q.id)?.is_recommended_winner;
+    if (!isWinnerQ) {
+      toast({ title: 'ส่งได้เฉพาะผู้ชนะ', description: 'ผู้ชนะถูกเลือกตั้งแต่ขั้นเปรียบเทียบใบเสนอราคา', variant: 'destructive' });
+      return;
+    }
     setSendingFQ(q.id);
     try {
       // Check if already exists
@@ -117,7 +123,9 @@ export default function RFQBidComparison() {
         payment_terms: q.payment_term || q.payment_terms || '',
         delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
         notes: `จาก RFQ ${rfq?.rfq_number || ''} — ${rfq?.title || ''} | Score: ${q.final_score ?? '—'}`,
-        status: 'pending',
+        // Winner already chosen here — arrives selected, skipping re-selection in Final Quotations.
+        status: 'selected',
+        is_selected: true,
         created_by: user.id,
       });
 
@@ -379,7 +387,9 @@ export default function RFQBidComparison() {
                     </td>
                     {canManage && (
                       <td className="p-3 text-center">
-                        {sentToFQ.has(q.id) ? (
+                        {!isWinner ? (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        ) : sentToFQ.has(q.id) ? (
                           <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
                             <CheckCircle className="w-3.5 h-3.5" /> ส่งแล้ว
                           </span>
@@ -392,7 +402,7 @@ export default function RFQBidComparison() {
                             className="text-xs"
                           >
                             <Send className="w-3.5 h-3.5 mr-1" />
-                            {sendingFQ === q.id ? 'กำลังส่ง...' : 'ส่ง Final'}
+                            {sendingFQ === q.id ? 'กำลังส่ง...' : 'ส่งผู้ชนะ Final'}
                           </Button>
                         )}
                       </td>

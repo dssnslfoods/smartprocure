@@ -409,6 +409,11 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
 
   const handleSendFQ = async (q: any) => {
     if (!user) return;
+    // Only the selected winner is sent to Final Quotations (the winner is decided here at RFQ).
+    if (!q.is_recommended_winner) {
+      t({ title: 'ส่งได้เฉพาะผู้ชนะ', description: 'กรุณาเลือกผู้ชนะก่อน แล้วจึงส่งไป Final Quotation', variant: 'destructive' });
+      return;
+    }
     setSendingFQ(q.id);
     try {
       const { data: existing } = await sb.from('final_quotations').select('id').eq('rfq_id', rfqId).eq('quotation_id', q.id).maybeSingle();
@@ -420,11 +425,12 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
         payment_terms: q.payment_term || q.payment_terms || '',
         delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
         notes: `จาก RFQ ${rfqData?.rfq_number || ''} — ${rfqData?.title || ''} | Score: ${q.final_score ?? '—'}`,
-        status: 'pending', created_by: user.id,
+        // Winner already chosen at RFQ — arrives selected, skipping re-selection.
+        status: 'selected', is_selected: true, created_by: user.id,
       });
       if (error) throw error;
       setSentToFQ(prev => new Set(prev).add(q.id));
-      t({ title: 'ส่งไป Final Quotation แล้ว', description: supMap[q.supplier_id]?.company_name });
+      t({ title: 'ส่งผู้ชนะไป Final Quotation แล้ว', description: supMap[q.supplier_id]?.company_name });
     } catch (err: any) { t({ title: 'Error', description: err.message, variant: 'destructive' }); }
     setSendingFQ(null);
   };
@@ -522,14 +528,16 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
                           <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
                         </Button>
                       )}
-                      {sentToFQ.has(q.id) ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <CheckCircle className="w-3 h-3" />
-                        </span>
-                      ) : (
-                        <Button variant="ghost" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs px-1.5" title="ส่ง Final Quotation">
-                          <Send className="w-3.5 h-3.5" />
-                        </Button>
+                      {q.is_recommended_winner && (
+                        sentToFQ.has(q.id) ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="ส่งไป Final Quotation แล้ว">
+                            <CheckCircle className="w-3 h-3" />
+                          </span>
+                        ) : (
+                          <Button variant="ghost" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs px-1.5" title="ส่งผู้ชนะไป Final Quotation">
+                            <Send className="w-3.5 h-3.5" />
+                          </Button>
+                        )
                       )}
                     </div>
                   </td>
