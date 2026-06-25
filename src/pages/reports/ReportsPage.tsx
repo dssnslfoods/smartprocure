@@ -41,13 +41,19 @@ export default function ReportsPage() {
   const [supplierStats, setSupplierStats] = useState({ total: 0, approved: 0, pending: 0, draft: 0, rejected: 0 });
   const [rfqStats, setRfqStats] = useState({ total: 0, open: 0, closed: 0, awarded: 0 });
   const [_awardCount, setAwardCount] = useState(0);
+  const [overrideAwards, setOverrideAwards] = useState<any[]>([]);
   useEffect(() => {
     const load = async () => {
-      const [{ data: suppliers }, { data: rfqs }, { data: awards }] = await Promise.all([
+      const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: overrides }] = await Promise.all([
         supabase.from('suppliers').select('status'),
         supabase.from('rfqs').select('status'),
         supabase.from('awards').select('id'),
+        supabase.from('awards')
+          .select('id, awarded_at, selection_reason, selection_snapshot, suppliers(company_name), rfqs(rfq_number, title)')
+          .eq('is_override_selection', true)
+          .order('awarded_at', { ascending: false }),
       ]);
+      if (overrides) setOverrideAwards(overrides);
 
       if (suppliers) {
         setSupplierStats({
@@ -154,6 +160,9 @@ export default function ReportsPage() {
           <TabsTrigger value="spending">Spending Trends</TabsTrigger>
           <TabsTrigger value="rfq">RFQ Analytics</TabsTrigger>
           <TabsTrigger value="suppliers">Supplier Performance</TabsTrigger>
+          <TabsTrigger value="compliance">
+            การคัดเลือกนอกเกณฑ์{overrideAwards.length > 0 ? ` (${overrideAwards.length})` : ''}
+          </TabsTrigger>
         </TabsList>
 
         {/* Spending Tab */}
@@ -261,6 +270,61 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* Award Compliance Tab — selections that did not follow the top score */}
+        <TabsContent value="compliance" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">การคัดเลือกผู้ชนะนอกเหนือผลคะแนน</CardTitle>
+              <CardDescription>
+                รายการจัดซื้อที่เลือกผู้ชนะซึ่ง<strong>ไม่ใช่</strong>ผู้ที่ได้คะแนนรวมสูงสุด พร้อมเหตุผลประกอบ — เพื่อการตรวจสอบและธรรมาภิบาลการจัดซื้อ
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {overrideAwards.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">
+                  ไม่มีรายการ — การจัดซื้อทั้งหมดเลือกผู้ชนะตามคะแนนสูงสุด ✓
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left p-3 font-medium text-muted-foreground">RFQ</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">ผู้ชนะที่เลือก</th>
+                        <th className="text-right p-3 font-medium text-muted-foreground">Final ที่เลือก</th>
+                        <th className="text-right p-3 font-medium text-muted-foreground">Final สูงสุด</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">เหตุผล</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">วันที่</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overrideAwards.map((a: any) => {
+                        const snap = a.selection_snapshot || {};
+                        const winnerFinal = snap?.winner?.scores?.final ?? null;
+                        const topFinal = Array.isArray(snap?.ranking) && snap.ranking.length
+                          ? Math.max(...snap.ranking.map((r: any) => r.final ?? 0)) : null;
+                        return (
+                          <tr key={a.id} className="border-b hover:bg-muted/30 align-top">
+                            <td className="p-3">
+                              <div className="font-mono text-xs text-muted-foreground">{a.rfqs?.rfq_number || '—'}</div>
+                              <div className="text-xs">{a.rfqs?.title || '—'}</div>
+                            </td>
+                            <td className="p-3 font-medium">{a.suppliers?.company_name || '—'}</td>
+                            <td className="p-3 text-right tabular-nums font-semibold text-amber-700">{winnerFinal ?? '—'}</td>
+                            <td className="p-3 text-right tabular-nums text-muted-foreground">{topFinal ?? '—'}</td>
+                            <td className="p-3 text-xs max-w-[280px]">{a.selection_reason || <span className="text-muted-foreground">—</span>}</td>
+                            <td className="p-3 text-xs text-muted-foreground">{a.awarded_at ? new Date(a.awarded_at).toLocaleDateString('th-TH') : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

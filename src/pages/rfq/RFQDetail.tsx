@@ -398,6 +398,8 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
   const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
   const [sendingFQ, setSendingFQ] = useSt<string | null>(null);
   const [selectingWinner, setSelectingWinner] = useSt<string | null>(null);
+  const [pendingWinner, setPendingWinner] = useSt<any>(null);
+  const [overrideReason, setOverrideReason] = useSt('');
   const { user, hasRole: hr } = useAuth();
   const { toast: t } = useToast();
   const canMng = hr('admin') || hr('procurement_officer');
@@ -473,34 +475,54 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
     setSendingFQ(null);
   };
 
-  const handleSelectWinner = async (q: any) => {
+  const topFinal = rows.length ? Math.max(...rows.map((r: any) => r.final_score ?? 0)) : 0;
+
+  // Off-score selection (final score below the top bidder) requires a written justification.
+  const requestSelectWinner = (q: any) => {
+    const isOverride = (q.final_score ?? 0) < topFinal;
+    if (isOverride) {
+      setOverrideReason('');
+      setPendingWinner(q);
+    } else {
+      doSelectWinner(q, null, false);
+    }
+  };
+
+  const doSelectWinner = async (q: any, reason: string | null, isOverride: boolean) => {
     if (!user) return;
     setSelectingWinner(q.id);
     try {
-      // Clear previous winner
+      // Mark the chosen quotation as the winner.
       await sb.from('quotations').update({ is_recommended_winner: false }).eq('rfq_id', rfqId);
-      // Set new winner
       const { error } = await sb.from('quotations').update({ is_recommended_winner: true }).eq('id', q.id);
       if (error) throw error;
-      // Update RFQ status to awarded + create award record
       await sb.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
       // Freeze the winner + selection criteria/scores for later lookup.
       const snapshot = await buildAwardSnapshot(rfqId, q.supplier_id, q.id);
+      const awardFields: any = {
+        selection_snapshot: snapshot,
+        selection_reason: reason,
+        is_override_selection: isOverride,
+      };
       const { data: existing } = await sb.from('awards').select('id').eq('rfq_id', rfqId).eq('supplier_id', q.supplier_id).maybeSingle();
       if (!existing) {
         await sb.from('awards').insert({
           rfq_id: rfqId, supplier_id: q.supplier_id,
           status: 'pending' as any, award_lifecycle_status: 'pending_approval' as any,
           awarded_at: new Date().toISOString(),
-          selection_snapshot: snapshot as any,
+          ...awardFields,
         } as any);
       } else {
-        await sb.from('awards').update({ selection_snapshot: snapshot as any }).eq('id', existing.id);
+        await sb.from('awards').update(awardFields).eq('id', existing.id);
       }
       setRows(prev => prev.map(r => ({ ...r, is_recommended_winner: r.id === q.id })));
-      t({ title: 'เลือกผู้ชนะแล้ว', description: `${supMap[q.supplier_id]?.company_name} — สถานะเปลี่ยนเป็น Awarded` });
+      setPendingWinner(null);
+      t({
+        title: 'บันทึกการคัดเลือกผู้ชนะแล้ว',
+        description: `${supMap[q.supplier_id]?.company_name} — สถานะ RFQ เปลี่ยนเป็น Awarded${isOverride ? ' (บันทึกเป็นการคัดเลือกนอกเหนือผลคะแนน)' : ''}`,
+      });
       onWinnerSelected?.();
-    } catch (err: any) { t({ title: 'Error', description: err.message, variant: 'destructive' }); }
+    } catch (err: any) { t({ title: 'บันทึกไม่สำเร็จ', description: err.message, variant: 'destructive' }); }
     setSelectingWinner(null);
   };
 
@@ -508,6 +530,7 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
   if (rows.length === 0) return <p className="text-sm text-muted-foreground text-center py-8">No quotations yet.</p>;
 
   return (
+    <>
     <div className="overflow-x-auto rounded-lg border text-sm">
       <table className="w-full">
         <thead>
@@ -562,7 +585,7 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
                         </span>
                       ) : (
                         <Button variant="outline" size="sm" disabled={selectingWinner === q.id}
-                          onClick={() => handleSelectWinner(q)} className="text-xs"
+                          onClick={() => requestSelectWinner(q)} className="text-xs"
                           title="เลือก supplier นี้เป็นผู้ชนะ — RFQ จะเปลี่ยนเป็น Awarded และสร้าง Award (บันทึกเกณฑ์ที่ใช้ไว้ด้วย)">
                           <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
                         </Button>
@@ -587,6 +610,38 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
         </tbody>
       </table>
     </div>
+
+    {/* Justification required when the chosen winner is not the top-scored bidder */}
+    <Dialog open={!!pendingWinner} onOpenChange={o => !o && setPendingWinner(null)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>ยืนยันการคัดเลือกผู้ชนะ (คะแนนไม่สูงสุด)</DialogTitle></DialogHeader>
+        {pendingWinner && (
+          <div className="space-y-3">
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              <p className="font-medium">{supMap[pendingWinner.supplier_id]?.company_name}</p>
+              <p className="text-xs mt-1">
+                ผู้จัดจำหน่ายรายนี้มีคะแนนรวม (Final) <strong>{pendingWinner.final_score ?? '—'}</strong> ซึ่ง<strong>ต่ำกว่า</strong>ผู้ที่ได้คะแนนสูงสุด ({topFinal})
+                การคัดเลือกนี้ถือเป็นการตัดสินใจ<strong>นอกเหนือผลคะแนนปกติ</strong> และจะถูกบันทึกไว้เพื่อการตรวจสอบย้อนหลัง
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label>เหตุผลประกอบการคัดเลือก *</Label>
+              <Textarea rows={3} value={overrideReason} onChange={e => setOverrideReason(e.target.value)}
+                placeholder="เช่น คุณภาพและความน่าเชื่อถือสูงกว่า, เคยมีประวัติส่งมอบตรงเวลา, เงื่อนไขการชำระเงินเหมาะสมกว่า..." />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPendingWinner(null)}>ยกเลิก</Button>
+              <Button onClick={() => doSelectWinner(pendingWinner, overrideReason.trim(), true)}
+                disabled={!overrideReason.trim() || selectingWinner === pendingWinner.id}
+                className="bg-amber-600 hover:bg-amber-700">
+                {selectingWinner === pendingWinner.id ? 'กำลังบันทึก...' : 'ยืนยันการคัดเลือก'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
