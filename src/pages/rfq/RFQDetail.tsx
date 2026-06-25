@@ -339,12 +339,15 @@ function Row({ label, value }: { label: string; value?: string | null }) {
 import { useEffect as useEff, useState as useSt } from 'react';
 import { supabase as sb } from '@/integrations/supabase/client';
 import { scoreQuotations } from '@/lib/scoring';
+import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { DIMENSION_LABEL } from '@/lib/riskCriteria';
 import RiskBadge from '@/components/RiskBadge';
 import type { RiskLevel } from '@/types/procurement';
 
 function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWinnerSelected?: () => void }) {
   const [rows, setRows] = useSt<any[]>([]);
   const [supMap, setSupMap] = useSt<Record<string, any>>({});
+  const [bidRisk, setBidRisk] = useSt<BidRiskResult | null>(null);
   const [loading, setLoading] = useSt(true);
   const [rfqData, setRfqData] = useSt<any>(null);
   const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
@@ -369,11 +372,19 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
         const sm: Record<string, any> = {};
         qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
         setSupMap(sm);
+        // BRC criteria-based risk scoped to this RFQ's catalog categories.
+        const risk = await computeRfqBidRisk(rfqId, qRes.data.map((q: any) => q.supplier_id));
+        setBidRisk(risk);
+        const override = risk.hasCriteria
+          ? Object.fromEntries(Object.entries(risk.bySupplier).map(([sid, r]) => [sid, r.riskScore]))
+          : undefined;
         const hasScores = qRes.data.some((q: any) => q.final_score != null);
-        if (hasScores) {
+        // Recompute when criteria exist so risk-based scores are reflected live; otherwise
+        // fall back to stored scores.
+        if (hasScores && !risk.hasCriteria) {
           setRows(qRes.data.sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
         } else {
-          const scored = scoreQuotations(qRes.data, sm);
+          const scored = scoreQuotations(qRes.data, sm, undefined, override);
           setRows(qRes.data.map((q: any) => {
             const s = scored.find(x => x.quotation_id === q.id);
             return { ...q, ...(s ?? {}) };
@@ -460,7 +471,23 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
               <tr key={q.id} className={`border-b ${idx === 0 ? 'bg-emerald-50/50' : 'hover:bg-muted/30'}`}>
                 <td className="p-3 font-medium">{sup?.company_name || '—'}</td>
                 <td className="p-3 text-right tabular-nums">{ep > 0 ? ep.toLocaleString() : '—'}</td>
-                <td className="p-3 text-center"><RiskBadge level={sup?.risk_level as RiskLevel} /></td>
+                <td className="p-3 text-center">
+                  {(() => {
+                    const r = bidRisk?.bySupplier[q.supplier_id];
+                    if (bidRisk?.hasCriteria && r) {
+                      const failing = Object.values(r.dims)
+                        .filter(d => d.score != null && (d.mandatoryUnmet || (d.score as number) >= 6))
+                        .map(d => `${DIMENSION_LABEL[d.dimension] || d.dimension}: ${d.score}/10`);
+                      return (
+                        <div className="flex flex-col items-center gap-0.5" title={failing.length ? `จุดเสี่ยง — ${failing.join(' · ')}` : 'ผ่านเกณฑ์ความเสี่ยงทุกด้าน'}>
+                          <RiskBadge level={r.level} />
+                          {r.assessed && <span className="text-[10px] text-muted-foreground">BRC {r.risk10.toFixed(1)}/10</span>}
+                        </div>
+                      );
+                    }
+                    return <RiskBadge level={sup?.risk_level as RiskLevel} />;
+                  })()}
+                </td>
                 <td className="p-3 text-right tabular-nums">{q.commercial_score ?? '—'}</td>
                 <td className="p-3 text-right tabular-nums">{q.technical_score ?? '—'}</td>
                 <td className="p-3 text-right tabular-nums">{q.risk_score ?? '—'}</td>

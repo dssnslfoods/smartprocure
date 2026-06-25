@@ -63,6 +63,10 @@ export function scoreQuotations(
   quotations: QuotationInput[],
   supplierMap: Record<string, SupplierInput>,
   weights: ScoringWeights = DEFAULT_WEIGHTS,
+  // Optional 0..100 risk score per supplier_id (higher = safer). When provided for a
+  // supplier, it overrides the risk_level-derived score — used to feed the BRC
+  // criteria-based risk into bid scoring.
+  riskScoreOverride?: Record<string, number>,
 ): ScoredQuotation[] {
   if (quotations.length === 0) return [];
 
@@ -89,7 +93,10 @@ export function scoreQuotations(
     const technicalScore = Math.round(specScore);
 
     const supplier = supplierMap[q.supplier_id];
-    const riskScore = riskLevelToScore(supplier?.risk_level ?? 'low');
+    const overridden = riskScoreOverride?.[q.supplier_id];
+    const riskScore = overridden != null
+      ? overridden
+      : riskLevelToScore(supplier?.risk_level ?? 'low');
 
     const finalScore = Math.round(
       (commercialScore * weights.commercial +

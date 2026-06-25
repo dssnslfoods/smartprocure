@@ -9,6 +9,8 @@ import { ArrowLeft, Calculator, Trophy, AlertTriangle, CheckCircle, Send } from 
 import RiskBadge from '@/components/RiskBadge';
 import { scoreQuotations } from '@/lib/scoring';
 import type { ScoredQuotation } from '@/lib/scoring';
+import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { DIMENSION_LABEL } from '@/lib/riskCriteria';
 import type { RiskLevel } from '@/types/procurement';
 
 export default function RFQBidComparison() {
@@ -21,6 +23,7 @@ export default function RFQBidComparison() {
   const [quotations, setQuotations] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<Record<string, any>>({});
   const [scored, setScored] = useState<ScoredQuotation[]>([]);
+  const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -45,7 +48,13 @@ export default function RFQBidComparison() {
         const sm: Record<string, any> = {};
         qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
         setSuppliers(sm);
-        const result = scoreQuotations(qRes.data, sm);
+        // BRC criteria-based risk for this RFQ's catalog categories.
+        const risk = await computeRfqBidRisk(id, qRes.data.map((q: any) => q.supplier_id));
+        setBidRisk(risk);
+        const override = risk.hasCriteria
+          ? Object.fromEntries(Object.entries(risk.bySupplier).map(([sid, r]) => [sid, r.riskScore]))
+          : undefined;
+        const result = scoreQuotations(qRes.data, sm, undefined, override);
         setScored(result);
         const hasScores = qRes.data.some((q: any) => q.final_score != null);
         setSaved(hasScores);
@@ -327,7 +336,21 @@ export default function RFQBidComparison() {
                       {q.payment_term || q.payment_terms || '—'}
                     </td>
                     <td className="p-3 text-center">
-                      <RiskBadge level={sup?.risk_level as RiskLevel} />
+                      {(() => {
+                        const r = bidRisk?.bySupplier[s.supplier_id];
+                        if (bidRisk?.hasCriteria && r) {
+                          const failing = Object.values(r.dims)
+                            .filter(d => d.score != null && (d.mandatoryUnmet || (d.score as number) >= 6))
+                            .map(d => `${DIMENSION_LABEL[d.dimension] || d.dimension}: ${d.score}/10`);
+                          return (
+                            <div className="flex flex-col items-center gap-0.5" title={failing.length ? `จุดเสี่ยง — ${failing.join(' · ')}` : 'ผ่านเกณฑ์ความเสี่ยงทุกด้าน'}>
+                              <RiskBadge level={r.level} />
+                              {r.assessed && <span className="text-[10px] text-muted-foreground">BRC {r.risk10.toFixed(1)}/10</span>}
+                            </div>
+                          );
+                        }
+                        return <RiskBadge level={sup?.risk_level as RiskLevel} />;
+                      })()}
                     </td>
                     <td className="p-3 text-right tabular-nums text-muted-foreground">
                       {q.spec_compliance_score != null ? `${q.spec_compliance_score}%` : '—'}
@@ -380,7 +403,13 @@ export default function RFQBidComparison() {
         <CardContent className="text-sm text-muted-foreground space-y-1">
           <p><strong>Commercial (60%)</strong> = Price 60% + Lead Time 30% + Payment Term 10%</p>
           <p><strong>Technical (25%)</strong> = Specification Compliance Score</p>
-          <p><strong>Risk (15%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0</p>
+          {bidRisk?.hasCriteria ? (
+            <p><strong>Risk (15%)</strong> = คะแนนจากเกณฑ์ความเสี่ยง (BRC) ของหมวด catalog ที่ดึง item มา
+              {bidRisk.categories.length > 0 && <span className="text-xs"> — หมวด: {bidRisk.categories.join(', ')}</span>}
+              {' '}(คะแนน 10/10 = เสี่ยงสูงสุด → risk score 0)</p>
+          ) : (
+            <p><strong>Risk (15%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0 <span className="text-xs">(ยังไม่มีเกณฑ์ความเสี่ยงในหมวดนี้ — ใช้ระดับความเสี่ยงรวมของ supplier)</span></p>
+          )}
           <p><strong>Final Score</strong> = Commercial × 0.60 + Technical × 0.25 + Risk × 0.15</p>
           <p className="text-xs mt-2">Lower price → higher price score (min price ÷ candidate price × 100)</p>
         </CardContent>
