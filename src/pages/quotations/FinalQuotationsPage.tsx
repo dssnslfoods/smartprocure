@@ -253,6 +253,7 @@ export default function FinalQuotationsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">
+                      <th className="text-left p-3 font-medium text-muted-foreground">RFQ Number</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">Supplier</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">RFQ</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">Amount</th>
@@ -264,14 +265,15 @@ export default function FinalQuotationsPage() {
                   </thead>
                   <tbody>
                     {pagination.loading ? (
-                      <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
+                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Loading...</td></tr>
                     ) : filteredItems.length === 0 ? (
-                      <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">{search ? 'ไม่พบผลลัพธ์ที่ค้นหา' : 'No final quotations'}</td></tr>
+                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">{search ? 'ไม่พบผลลัพธ์ที่ค้นหา' : 'No final quotations'}</td></tr>
                     ) : (
                       filteredItems.map((q) => {
                         const sc = statusConfig[q.status] || statusConfig.pending;
                         return (
                           <tr key={q.id} className="border-b hover:bg-muted/30">
+                            <td className="p-3 font-mono text-xs text-muted-foreground">{q.rfqs?.rfq_number || '—'}</td>
                             <td className="p-3 font-medium">{q.suppliers?.company_name || '—'}</td>
                             <td className="p-3 text-muted-foreground">{q.rfqs?.title || '—'}</td>
                             <td className="p-3 font-semibold">{q.total_amount ? `${q.currency} ${Number(q.total_amount).toLocaleString()}` : '—'}</td>
