@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
 import RFQTechnicalCriteria from './RFQTechnicalCriteria';
+import { ScoreInfo } from '@/components/ScoreFormulaTooltip';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -457,10 +458,10 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
             <th className="text-left p-3 font-medium text-muted-foreground">Supplier</th>
             <th className="text-right p-3 font-medium text-muted-foreground">Net Price</th>
             <th className="text-center p-3 font-medium text-muted-foreground">Risk</th>
-            <th className="text-right p-3 font-medium text-muted-foreground">Commercial</th>
-            <th className="text-right p-3 font-medium text-muted-foreground">Technical</th>
-            <th className="text-right p-3 font-medium text-muted-foreground">Risk Score</th>
-            <th className="text-right p-3 font-medium text-muted-foreground">Final</th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Commercial<ScoreInfo k="commercial" /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Technical<ScoreInfo k="technical" /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Risk Score<ScoreInfo k="risk" /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Final<ScoreInfo k="final" /></th>
             <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
             {canMng && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
           </tr>

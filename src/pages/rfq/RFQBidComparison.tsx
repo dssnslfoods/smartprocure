@@ -11,6 +11,7 @@ import { scoreQuotations } from '@/lib/scoring';
 import type { ScoredQuotation } from '@/lib/scoring';
 import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
 import { DIMENSION_LABEL } from '@/lib/riskCriteria';
+import { ScoreInfo } from '@/components/ScoreFormulaTooltip';
 import type { RiskLevel } from '@/types/procurement';
 
 export default function RFQBidComparison() {
@@ -275,10 +276,10 @@ export default function RFQBidComparison() {
                 <th className="text-left p-3 font-medium text-muted-foreground">Payment</th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Risk</th>
                 <th className="text-right p-3 font-medium text-muted-foreground">Spec %</th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-blue-50">Commercial</th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-purple-50">Technical</th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50">Risk Score</th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50">Final Score</th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-blue-50 whitespace-nowrap">Commercial<ScoreInfo k="commercial" /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-purple-50 whitespace-nowrap">Technical<ScoreInfo k="technical" /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50 whitespace-nowrap">Risk Score<ScoreInfo k="risk" /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50 whitespace-nowrap">Final Score<ScoreInfo k="final" /></th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
                 {canManage && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
               </tr>
