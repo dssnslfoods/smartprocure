@@ -8,7 +8,11 @@ import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2 } 
 import { useToast } from '@/hooks/use-toast';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
+import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { DIMENSION_LABEL } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
+
+interface ExpiredCert { certificate_type: string | null; expiry_date: string | null; }
 
 interface Props {
   rfqId: string;
@@ -35,6 +39,8 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
   const [inviteMeta, setInviteMeta] = useState<Record<string, { responded: boolean; declined_at: string | null; declined_reason: string | null }>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
+  const [expiredCerts, setExpiredCerts] = useState<Record<string, ExpiredCert[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { hasRole } = useAuth();
@@ -60,8 +66,9 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
         }));
         setAllSuppliers(enriched);
       }
+      const invitedIdList: string[] = (invRes.data || []).map((r: any) => r.supplier_id);
       if (invRes.data) {
-        setInvitedIds(new Set(invRes.data.map((r: any) => r.supplier_id)));
+        setInvitedIds(new Set(invitedIdList));
         const meta: Record<string, any> = {};
         invRes.data.forEach((r: any) => {
           meta[r.supplier_id] = {
@@ -72,10 +79,29 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
         });
         setInviteMeta(meta);
       }
+
+      // BRC risk (from เกณฑ์ความเสี่ยง of this RFQ's catalog) + expired certificates.
+      if (invitedIdList.length > 0) {
+        const [risk, certRes] = await Promise.all([
+          computeRfqBidRisk(rfqId, invitedIdList),
+          supabase.from('supplier_certificates')
+            .select('supplier_id, certificate_type, expiry_date').in('supplier_id', invitedIdList),
+        ]);
+        setBidRisk(risk);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const exp: Record<string, ExpiredCert[]> = {};
+        (certRes.data || []).forEach((c: any) => {
+          if (c.expiry_date && new Date(c.expiry_date) < today) (exp[c.supplier_id] ??= []).push(c);
+        });
+        setExpiredCerts(exp);
+      } else {
+        setBidRisk(null);
+        setExpiredCerts({});
+      }
       setLoading(false);
     };
     fetch();
-  }, [rfqId]);
+  }, [rfqId, invitedIds.size]);
 
   const toggle = (id: string, canInvite: boolean) => {
     if (!canInvite) return;
@@ -157,7 +183,18 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{s.company_name}</p>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            <RiskBadge level={s.risk_level as any} />
+                            {(() => {
+                              const r = bidRisk?.bySupplier[s.id];
+                              if (bidRisk?.hasCriteria && r) {
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    <RiskBadge level={r.level} />
+                                    {r.assessed && <span className="text-[10px] text-muted-foreground">BRC {r.risk10.toFixed(1)}/10</span>}
+                                  </span>
+                                );
+                              }
+                              return <RiskBadge level={s.risk_level as any} />;
+                            })()}
                             <EligibilityBadge status={s.eligibility.status} />
                             {isDeclined ? (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700">
@@ -189,6 +226,49 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                         </div>
                       </div>
                     )}
+
+                    {/* Expired certificates */}
+                    {(expiredCerts[s.id]?.length ?? 0) > 0 && (
+                      <div className="mt-2 pt-2 border-t text-[11px]">
+                        <p className="flex items-center gap-1 text-red-600 font-medium">
+                          <AlertTriangle className="w-3 h-3" />ใบรับรองหมดอายุ ({expiredCerts[s.id].length})
+                        </p>
+                        <ul className="mt-0.5 space-y-0.5">
+                          {expiredCerts[s.id].map((c, i) => (
+                            <li key={i} className="text-red-600/90 flex items-center justify-between gap-2">
+                              <span>{c.certificate_type || 'ใบรับรอง'}</span>
+                              <span className="text-red-500/80">หมดอายุ {c.expiry_date && new Date(c.expiry_date).toLocaleDateString('th-TH')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* BRC risk breakdown — dimensions that fail / lack evidence */}
+                    {(() => {
+                      const r = bidRisk?.hasCriteria ? bidRisk.bySupplier[s.id] : null;
+                      if (!r || !r.assessed) return null;
+                      const dims = Object.values(r.dims).filter(d => d.score != null);
+                      if (dims.length === 0) return null;
+                      return (
+                        <div className="mt-2 pt-2 border-t text-[11px] space-y-1">
+                          <p className="text-muted-foreground font-medium">รายละเอียดความเสี่ยง (BRC)</p>
+                          {dims.map((d, i) => {
+                            const unmet = d.criteria.filter(c => !c.met);
+                            return (
+                              <div key={i} className="flex items-start justify-between gap-2">
+                                <span className={d.mandatoryUnmet || (d.score as number) >= 6 ? 'text-red-600' : 'text-muted-foreground'}>
+                                  {DIMENSION_LABEL[d.dimension] || d.dimension}
+                                  {unmet.length > 0 && <span className="text-muted-foreground"> — ขาด: {unmet.map(c => c.name_th).join(', ')}</span>}
+                                  {d.mandatoryUnmet && <span className="text-red-600 font-medium"> (ขาดเกณฑ์บังคับ)</span>}
+                                </span>
+                                <span className={`shrink-0 tabular-nums ${(d.score as number) >= 6 ? 'text-red-600 font-medium' : 'text-muted-foreground'}`}>{d.score}/10</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
                 })}
