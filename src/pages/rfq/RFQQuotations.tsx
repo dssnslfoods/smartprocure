@@ -9,7 +9,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2, Trash2, Eye, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { computeTechnicalScore, type TechCriterion } from '@/lib/technicalScore';
+import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2, Trash2, Eye, ExternalLink, ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 
@@ -50,6 +52,14 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     notes: '',
   });
   const [itemPrices, setItemPrices] = useState<Record<string, string>>({});
+
+  // Technical checklist (per-RFQ criteria + this quotation's responses)
+  const [techCriteria, setTechCriteria] = useState<TechCriterion[]>([]);
+  const [techResp, setTechResp] = useState<Record<string, { value: string; met: boolean }>>({});
+  const techScore = computeTechnicalScore(
+    techCriteria,
+    Object.fromEntries(techCriteria.map(c => [c.id, !!techResp[c.id]?.met])),
+  );
 
   // AI scan state
   const [scanning, setScanning] = useState(false);
@@ -132,6 +142,8 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
   useEffect(() => {
     fetchQuotations();
     fetchInvitedSuppliers();
+    supabase.from('rfq_technical_criteria').select('*').eq('rfq_id', rfqId).order('sort_order')
+      .then(({ data }) => setTechCriteria((data as TechCriterion[]) || []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rfqId, mySupplierId]);
 
@@ -324,7 +336,9 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       validity_days: parseInt(form.validity_days) || 30,
       lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
       warranty: form.warranty || null,
-      spec_compliance_score: form.spec_compliance_score ? parseFloat(form.spec_compliance_score) : null,
+      spec_compliance_score: techCriteria.length > 0
+        ? techScore
+        : (form.spec_compliance_score ? parseFloat(form.spec_compliance_score) : null),
       remark: form.remark || null,
       notes: form.notes || null,
       attachment_url: attachmentUrl,
@@ -353,6 +367,18 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       await supabase.from('quotation_items').insert(qItems);
     }
 
+    // Persist technical checklist responses
+    if (techCriteria.length > 0) {
+      await supabase.from('quotation_technical_responses').insert(
+        techCriteria.map(c => ({
+          quotation_id: quotation.id,
+          criterion_id: c.id,
+          value: techResp[c.id]?.value?.trim() || null,
+          is_met: !!techResp[c.id]?.met,
+        }))
+      );
+    }
+
     // Mark supplier as responded
     await supabase.from('rfq_suppliers').update({ responded: true }).eq('rfq_id', rfqId).eq('supplier_id', form.supplier_id);
 
@@ -373,6 +399,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     setOpen(false);
     setForm({ supplier_id: '', currency: 'USD', payment_term: '', delivery_terms: '', validity_days: '30', lead_time_days: '', warranty: '', discount: '0', vat: '0', spec_compliance_score: '', remark: '', notes: '' });
     setItemPrices({});
+    setTechResp({});
     setScanFile(null);
     setScanConfidence(null);
     setScanSupplierName(null);
@@ -597,11 +624,42 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     <Label className="text-xs">Payment Term</Label>
                     <Input value={form.payment_term} onChange={e => setForm(p => ({ ...p, payment_term: e.target.value }))} placeholder="Net 30" />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Spec Compliance % (0–100)</Label>
-                    <Input type="number" min="0" max="100" value={form.spec_compliance_score} onChange={e => setForm(p => ({ ...p, spec_compliance_score: e.target.value }))} placeholder="85" />
-                  </div>
+                  {techCriteria.length === 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Spec Compliance % (0–100)</Label>
+                      <Input type="number" min="0" max="100" value={form.spec_compliance_score} onChange={e => setForm(p => ({ ...p, spec_compliance_score: e.target.value }))} placeholder="85" />
+                    </div>
+                  )}
                 </div>
+
+                {techCriteria.length > 0 && (
+                  <div className="space-y-2 rounded-lg border p-3 bg-purple-50/30">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs flex items-center gap-1.5"><ListChecks className="w-3.5 h-3.5 text-purple-600" />เกณฑ์เทคนิค (Spec) — กรอกและติ๊กข้อที่ตรงตามข้อกำหนด</Label>
+                      <Badge variant="outline" className="text-xs">Technical {techScore ?? 0}%</Badge>
+                    </div>
+                    {techCriteria.map(c => {
+                      const r = techResp[c.id] || { value: '', met: false };
+                      return (
+                        <div key={c.id} className="grid grid-cols-[1fr_auto] gap-2 items-start border-b last:border-b-0 pb-2 last:pb-0">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{c.label}</span>
+                              <Badge variant="secondary" className="text-[10px]">น้ำหนัก {c.weight}</Badge>
+                            </div>
+                            {c.description && <p className="text-[11px] text-muted-foreground">{c.description}</p>}
+                            <Input className="h-8 text-xs" placeholder="ค่า spec ของคุณ" value={r.value}
+                              onChange={e => setTechResp(p => ({ ...p, [c.id]: { ...r, value: e.target.value } }))} />
+                          </div>
+                          <label className="flex flex-col items-center gap-1 pt-1 cursor-pointer">
+                            <Checkbox checked={r.met} onCheckedChange={v => setTechResp(p => ({ ...p, [c.id]: { ...r, met: !!v } }))} />
+                            <span className="text-[10px] text-muted-foreground">ตรงตาม</span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="grid gap-3 grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Delivery Terms</Label>
@@ -638,6 +696,11 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
           <div className="space-y-3">
             {quotations.map(q => {
               const isExpanded = expandedId === q.id;
+              // Headline amount = ยอดก่อน VAT (net of discount, excluding VAT).
+              const vatAmt = parseFloat(q.vat) || 0;
+              const preVat = q.total_amount != null
+                ? (q.total_amount as number) - vatAmt
+                : (q.price ?? 0) - (parseFloat(q.discount) || 0);
               const qItems = quotationItems[q.id] || [];
               return (
               <div key={q.id} className="border rounded-lg overflow-hidden">
@@ -654,13 +717,14 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     <div>
                       <p className="font-medium text-sm">{q.suppliers?.company_name || 'Unknown'}</p>
                       <p className="text-xs text-muted-foreground">
-                        {q.currency} {q.total_amount?.toLocaleString()} · {q.payment_term || q.payment_terms || '—'} · v{q.version}
+                        {q.currency} {preVat.toLocaleString()} · {q.payment_term || q.payment_terms || '—'} · v{q.version}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
-                      <p className="font-bold text-lg">{q.currency} {q.total_amount?.toLocaleString()}</p>
+                      <p className="font-bold text-lg">{q.currency} {preVat.toLocaleString()}</p>
+                      <p className="text-[10px] text-muted-foreground">ก่อน VAT</p>
                       <p className="text-xs text-muted-foreground">{q.submitted_at ? new Date(q.submitted_at).toLocaleDateString() : '—'}</p>
                     </div>
                     {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
