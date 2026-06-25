@@ -67,7 +67,16 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
   const [scanConfidence, setScanConfidence] = useState<string | null>(null);
   const [scanSupplierName, setScanSupplierName] = useState<string | null>(null);
   const [scanRejected, setScanRejected] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Object URL for previewing the uploaded document alongside the form.
+  useEffect(() => {
+    if (!scanFile) { setPreviewUrl(null); return; }
+    const url = URL.createObjectURL(scanFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [scanFile]);
 
   // Expand/view quotation state
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -484,12 +493,16 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="w-4 h-4 mr-1" />Submit Quotation</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-              <DialogHeader><DialogTitle>Submit Quotation</DialogTitle></DialogHeader>
-              <div className="space-y-4">
+            <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Submit Quotation</DialogTitle>
+                <p className="text-sm text-muted-foreground">อัปโหลดใบเสนอราคาให้ AI อ่านและกรอกข้อมูลให้ แล้วตรวจสอบเทียบกับเอกสารต้นฉบับด้านซ้ายก่อนกดส่ง</p>
+              </DialogHeader>
 
-                {/* AI Scan Upload */}
-                <div className="space-y-2">
+              <div className="grid lg:grid-cols-2 gap-5">
+
+                {/* ── LEFT: upload + document preview ── */}
+                <div className="space-y-3 lg:sticky lg:top-0 lg:self-start">
                   <Label className="flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-amber-500" />
                     อัปโหลดใบเสนอราคา (AI อ่านอัตโนมัติ)
@@ -506,59 +519,75 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={scanning}
-                      className="w-full border-2 border-dashed rounded-lg p-4 flex flex-col items-center gap-2 text-sm text-muted-foreground hover:border-primary/50 hover:bg-accent/50 transition-colors cursor-pointer"
+                      className="w-full border-2 border-dashed rounded-lg py-16 px-4 flex flex-col items-center gap-2 text-sm text-muted-foreground hover:border-primary/50 hover:bg-accent/50 transition-colors cursor-pointer"
                     >
-                      <Upload className="w-6 h-6" />
-                      <span>คลิกเพื่ออัปโหลด PDF หรือรูปภาพ</span>
+                      <Upload className="w-8 h-8" />
+                      <span className="font-medium">คลิกเพื่ออัปโหลด PDF หรือรูปภาพ</span>
                       <span className="text-xs">AI จะอ่านราคา, เงื่อนไข และกรอกข้อมูลให้อัตโนมัติ</span>
                     </button>
                   ) : (
-                    <div className={`border rounded-lg p-3 ${scanRejected ? 'bg-red-50 border-red-200' : 'bg-accent/30'}`}>
-                      <div className="flex items-center gap-2">
-                        <FileText className={`w-5 h-5 shrink-0 ${scanRejected ? 'text-red-500' : 'text-primary'}`} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{scanFile.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {(scanFile.size / 1024).toFixed(0)} KB
-                            {scanConfidence && !scanRejected && (
-                              <Badge variant={scanConfidence === 'high' ? 'default' : scanConfidence === 'medium' ? 'secondary' : 'destructive'}
-                                className="ml-2 text-[10px] py-0">
-                                ความมั่นใจ: {scanConfidence}
-                              </Badge>
-                            )}
-                          </p>
+                    <div className="space-y-2">
+                      <div className={`border rounded-lg p-3 ${scanRejected ? 'bg-red-50 border-red-200' : 'bg-accent/30'}`}>
+                        <div className="flex items-center gap-2">
+                          <FileText className={`w-5 h-5 shrink-0 ${scanRejected ? 'text-red-500' : 'text-primary'}`} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{scanFile.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {(scanFile.size / 1024).toFixed(0)} KB
+                              {scanConfidence && !scanRejected && (
+                                <Badge variant={scanConfidence === 'high' ? 'default' : scanConfidence === 'medium' ? 'secondary' : 'destructive'}
+                                  className="ml-2 text-[10px] py-0">
+                                  ความมั่นใจ: {scanConfidence}
+                                </Badge>
+                              )}
+                            </p>
+                          </div>
+                          {scanning ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                          ) : (
+                            <Button type="button" variant="ghost" size="sm" className="text-xs"
+                              onClick={() => { setScanFile(null); setScanConfidence(null); setScanSupplierName(null); setScanRejected(false); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
+                              เปลี่ยนไฟล์
+                            </Button>
+                          )}
                         </div>
-                        {scanning ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                        ) : (
-                          <Button type="button" variant="ghost" size="sm" className="text-xs"
-                            onClick={() => { setScanFile(null); setScanConfidence(null); setScanSupplierName(null); setScanRejected(false); if (fileInputRef.current) fileInputRef.current.value = ''; }}>
-                            เปลี่ยนไฟล์
-                          </Button>
+                        {scanning && (
+                          <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" /> AI กำลังอ่านใบเสนอราคา...
+                          </p>
+                        )}
+                        {scanRejected && scanSupplierName && (
+                          <div className="mt-2 p-2 rounded bg-red-100 border border-red-200">
+                            <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
+                              <XCircle className="w-3.5 h-3.5" />
+                              Supplier ไม่ตรงกับรายชื่อที่เชิญ
+                            </p>
+                            <p className="text-xs text-red-600 mt-1">
+                              AI อ่านได้: <span className="font-medium">"{scanSupplierName}"</span>
+                            </p>
+                            <p className="text-xs text-red-600">
+                              Supplier ที่เชิญ: {suppliers.map(s => s.company_name).join(', ')}
+                            </p>
+                          </div>
                         )}
                       </div>
-                      {scanning && (
-                        <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
-                          <Sparkles className="w-3 h-3" /> AI กำลังอ่านใบเสนอราคา...
-                        </p>
-                      )}
-                      {scanRejected && scanSupplierName && (
-                        <div className="mt-2 p-2 rounded bg-red-100 border border-red-200">
-                          <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
-                            <XCircle className="w-3.5 h-3.5" />
-                            Supplier ไม่ตรงกับรายชื่อที่เชิญ
-                          </p>
-                          <p className="text-xs text-red-600 mt-1">
-                            AI อ่านได้: <span className="font-medium">"{scanSupplierName}"</span>
-                          </p>
-                          <p className="text-xs text-red-600">
-                            Supplier ที่เชิญ: {suppliers.map(s => s.company_name).join(', ')}
-                          </p>
-                        </div>
+
+                      {/* Document preview — verify AI-extracted values against the source */}
+                      {previewUrl && (
+                        scanFile.type.startsWith('image/') ? (
+                          <img src={previewUrl} alt="quotation preview"
+                            className="w-full max-h-[64vh] object-contain rounded-lg border bg-muted/20" />
+                        ) : (
+                          <iframe src={previewUrl} title="quotation preview"
+                            className="w-full h-[64vh] rounded-lg border bg-muted/20" />
+                        )
                       )}
                     </div>
                   )}
                 </div>
+
+                {/* ── RIGHT: form fields ── */}
+                <div className="space-y-4">
 
                 <div className="space-y-1">
                   <Label>Supplier *</Label>
@@ -697,6 +726,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                 <Button onClick={handleSubmit} disabled={saving || scanning || scanRejected || !form.supplier_id} className="w-full">
                   {saving ? 'Submitting...' : 'Submit Quotation'}
                 </Button>
+                </div>
               </div>
             </DialogContent>
           </Dialog>
