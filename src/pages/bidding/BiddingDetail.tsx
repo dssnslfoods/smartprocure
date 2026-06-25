@@ -10,7 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { ArrowLeft, Play, Square, SkipForward, Trophy, Clock, Users, TrendingDown, Send, CheckCircle } from 'lucide-react';
+import RiskBadge from '@/components/RiskBadge';
+import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { DIMENSION_LABEL } from '@/lib/riskCriteria';
+import { ArrowLeft, Play, Square, SkipForward, Trophy, Clock, Users, TrendingDown, Send, CheckCircle, AlertTriangle } from 'lucide-react';
 
 const statusColor: Record<string, string> = {
   scheduled: 'bg-blue-100 text-blue-800',
@@ -24,6 +27,7 @@ export default function BiddingDetail() {
   const navigate = useNavigate();
   const [event, setEvent] = useState<any>(null);
   const [bids, setBids] = useState<any[]>([]);
+  const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [bidForm, setBidForm] = useState({ supplier_id: '', bid_amount: '' });
@@ -43,6 +47,15 @@ export default function BiddingDetail() {
     if (evRes.data) setEvent(evRes.data);
     if (bidRes.data) setBids(bidRes.data);
     if (supRes.data) setSuppliers(supRes.data);
+
+    // BRC criteria-based risk from the linked RFQ's catalog categories (if any).
+    if (evRes.data?.rfq_id && bidRes.data?.length) {
+      const supplierIds = Array.from(new Set(bidRes.data.map((b: any) => b.supplier_id)));
+      const risk = await computeRfqBidRisk(evRes.data.rfq_id, supplierIds);
+      setBidRisk(risk);
+    } else {
+      setBidRisk(null);
+    }
 
     // Check if winner already sent to Final Quotation
     const { data: fqData } = await supabase
@@ -279,6 +292,21 @@ export default function BiddingDetail() {
 
         {/* Ranking Tab */}
         <TabsContent value="ranking">
+          {(() => {
+            // Warn when the cheapest bidder carries high BRC risk for this catalog.
+            const leadRisk = bidRisk?.hasCriteria && ranked[0] ? bidRisk.bySupplier[ranked[0].supplier_id] : null;
+            if (leadRisk && (leadRisk.level === 'high' || leadRisk.level === 'critical')) {
+              return (
+                <div className="mb-3 flex items-start gap-3 p-3 rounded-lg border border-orange-200 bg-orange-50">
+                  <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                  <p className="text-sm text-orange-800">
+                    ผู้เสนอราคาต่ำสุด ({ranked[0].suppliers?.company_name}) มีความเสี่ยงสูงตามเกณฑ์ความเสี่ยง (BRC {leadRisk.risk10.toFixed(1)}/10) — ควรพิจารณาก่อนเลือกเป็นผู้ชนะ
+                  </p>
+                </div>
+              );
+            }
+            return null;
+          })()}
           <Card>
             <CardHeader><CardTitle className="text-base">Round {currentRound} — Ranking</CardTitle></CardHeader>
             <CardContent className="p-0">
@@ -288,21 +316,36 @@ export default function BiddingDetail() {
                     <th className="text-left p-3 font-medium text-muted-foreground w-16">Rank</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Supplier</th>
                     <th className="text-right p-3 font-medium text-muted-foreground">Bid Amount</th>
+                    <th className="text-center p-3 font-medium text-muted-foreground">Risk</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Time</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ranked.length === 0 ? (
-                    <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No bids yet for this round</td></tr>
+                    <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No bids yet for this round</td></tr>
                   ) : (
-                    ranked.map((b, i) => (
-                      <tr key={b.id} className={`border-b ${i === 0 ? 'bg-green-50 dark:bg-green-950/20' : 'hover:bg-muted/30'}`}>
-                        <td className="p-3 font-bold">{i === 0 ? <span className="text-green-600">🏆 1</span> : i + 1}</td>
-                        <td className="p-3 font-medium">{b.suppliers?.company_name || '—'}</td>
-                        <td className="p-3 text-right font-mono font-semibold">${b.bid_amount.toLocaleString()}</td>
-                        <td className="p-3 text-muted-foreground text-xs">{new Date(b.submitted_at).toLocaleTimeString()}</td>
-                      </tr>
-                    ))
+                    ranked.map((b, i) => {
+                      const r = bidRisk?.hasCriteria ? bidRisk.bySupplier[b.supplier_id] : null;
+                      const failing = r ? Object.values(r.dims)
+                        .filter(d => d.score != null && (d.mandatoryUnmet || (d.score as number) >= 6))
+                        .map(d => `${DIMENSION_LABEL[d.dimension] || d.dimension}: ${d.score}/10`) : [];
+                      return (
+                        <tr key={b.id} className={`border-b ${i === 0 ? 'bg-green-50 dark:bg-green-950/20' : 'hover:bg-muted/30'}`}>
+                          <td className="p-3 font-bold">{i === 0 ? <span className="text-green-600">🏆 1</span> : i + 1}</td>
+                          <td className="p-3 font-medium">{b.suppliers?.company_name || '—'}</td>
+                          <td className="p-3 text-right font-mono font-semibold">${b.bid_amount.toLocaleString()}</td>
+                          <td className="p-3 text-center">
+                            {r ? (
+                              <div className="flex flex-col items-center gap-0.5" title={failing.length ? `จุดเสี่ยง — ${failing.join(' · ')}` : 'ผ่านเกณฑ์ความเสี่ยงทุกด้าน'}>
+                                <RiskBadge level={r.level} />
+                                {r.assessed && <span className="text-[10px] text-muted-foreground">BRC {r.risk10.toFixed(1)}/10</span>}
+                              </div>
+                            ) : <span className="text-muted-foreground text-xs">—</span>}
+                          </td>
+                          <td className="p-3 text-muted-foreground text-xs">{new Date(b.submitted_at).toLocaleTimeString()}</td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
