@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, CheckCircle2, XCircle, Clock, Trophy, AlertTriangle, RefreshCw } from 'lucide-react';
 import RiskBadge from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
+import { buildAwardSnapshot } from '@/lib/awardSnapshot';
 import type { ApprovalLevel, ApprovalDecision, RiskLevel } from '@/types/procurement';
 
 interface ApprovalRow {
@@ -228,6 +229,8 @@ export default function RFQAwardApproval() {
     if (!id || !recommendedQuotation || !supplier) return;
 
     const awardNo = 'AWD-' + Date.now().toString().slice(-6);
+    // Freeze the winner + selection criteria/scores for later lookup.
+    const snapshot = await buildAwardSnapshot(id, supplier.id, recommendedQuotation.id);
     const { error } = await supabase.from('awards').insert({
       rfq_id: id,
       supplier_id: supplier.id,
@@ -242,6 +245,7 @@ export default function RFQAwardApproval() {
       awarded_by: user?.id,
       recommendation: `Awarded to ${supplier.company_name} via Best Value scoring.`,
       ready_for_po: true,
+      selection_snapshot: snapshot as any,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });

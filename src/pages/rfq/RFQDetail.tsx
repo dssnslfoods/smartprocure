@@ -17,6 +17,7 @@ import RFQQuotations from './RFQQuotations';
 import RFQTechnicalCriteria from './RFQTechnicalCriteria';
 import { ScoreInfo } from '@/components/ScoreFormulaTooltip';
 import { loadScoringWeights, DEFAULT_SCORING_WEIGHTS } from '@/lib/scoringWeights';
+import { buildAwardSnapshot } from '@/lib/awardSnapshot';
 import type { ScoringWeights } from '@/types/procurement';
 
 const statusColors: Record<string, string> = {
@@ -439,13 +440,18 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
       if (error) throw error;
       // Update RFQ status to awarded + create award record
       await sb.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
+      // Freeze the winner + selection criteria/scores for later lookup.
+      const snapshot = await buildAwardSnapshot(rfqId, q.supplier_id, q.id);
       const { data: existing } = await sb.from('awards').select('id').eq('rfq_id', rfqId).eq('supplier_id', q.supplier_id).maybeSingle();
       if (!existing) {
         await sb.from('awards').insert({
           rfq_id: rfqId, supplier_id: q.supplier_id,
           status: 'pending' as any, award_lifecycle_status: 'pending_approval' as any,
           awarded_at: new Date().toISOString(),
+          selection_snapshot: snapshot as any,
         } as any);
+      } else {
+        await sb.from('awards').update({ selection_snapshot: snapshot as any }).eq('id', existing.id);
       }
       setRows(prev => prev.map(r => ({ ...r, is_recommended_winner: r.id === q.id })));
       t({ title: 'เลือกผู้ชนะแล้ว', description: `${supMap[q.supplier_id]?.company_name} — สถานะเปลี่ยนเป็น Awarded` });
