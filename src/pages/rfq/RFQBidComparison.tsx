@@ -12,7 +12,8 @@ import type { ScoredQuotation } from '@/lib/scoring';
 import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
 import { DIMENSION_LABEL } from '@/lib/riskCriteria';
 import { ScoreInfo } from '@/components/ScoreFormulaTooltip';
-import type { RiskLevel } from '@/types/procurement';
+import { loadScoringWeights, DEFAULT_SCORING_WEIGHTS } from '@/lib/scoringWeights';
+import type { RiskLevel, ScoringWeights } from '@/types/procurement';
 
 export default function RFQBidComparison() {
   const { id } = useParams<{ id: string }>();
@@ -25,6 +26,7 @@ export default function RFQBidComparison() {
   const [suppliers, setSuppliers] = useState<Record<string, any>>({});
   const [scored, setScored] = useState<ScoredQuotation[]>([]);
   const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
+  const [weights, setWeights] = useState<ScoringWeights>(DEFAULT_SCORING_WEIGHTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -50,12 +52,16 @@ export default function RFQBidComparison() {
         qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
         setSuppliers(sm);
         // BRC criteria-based risk for this RFQ's catalog categories.
-        const risk = await computeRfqBidRisk(id, qRes.data.map((q: any) => q.supplier_id));
+        const [risk, w] = await Promise.all([
+          computeRfqBidRisk(id, qRes.data.map((q: any) => q.supplier_id)),
+          loadScoringWeights(),
+        ]);
         setBidRisk(risk);
+        setWeights(w);
         const override = risk.hasCriteria
           ? Object.fromEntries(Object.entries(risk.bySupplier).map(([sid, r]) => [sid, r.riskScore]))
           : undefined;
-        const result = scoreQuotations(qRes.data, sm, undefined, override);
+        const result = scoreQuotations(qRes.data, sm, w, override);
         setScored(result);
         const hasScores = qRes.data.some((q: any) => q.final_score != null);
         setSaved(hasScores);
@@ -148,9 +154,9 @@ export default function RFQBidComparison() {
       rfq_id: id,
       quotation_id: s.quotation_id,
       supplier_id: s.supplier_id,
-      commercial_weight: 60,
-      technical_weight: 25,
-      risk_weight: 15,
+      commercial_weight: weights.commercial,
+      technical_weight: weights.technical,
+      risk_weight: weights.risk,
       price_score: s.price_score,
       lead_time_score: s.lead_time_score,
       payment_term_score: s.payment_term_score,
@@ -254,7 +260,7 @@ export default function RFQBidComparison() {
 
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         <CheckCircle className="w-3.5 h-3.5" />
-        Scoring formula: Commercial {60}% + Technical {25}% + Risk {15}%
+        Scoring formula: Commercial {weights.commercial}% + Technical {weights.technical}% + Risk {weights.risk}%
       </div>
 
       {quotations.length === 0 ? (
@@ -276,10 +282,10 @@ export default function RFQBidComparison() {
                 <th className="text-left p-3 font-medium text-muted-foreground">Payment</th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Risk</th>
                 <th className="text-right p-3 font-medium text-muted-foreground">Spec %</th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-blue-50 whitespace-nowrap">Commercial<ScoreInfo k="commercial" /></th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-purple-50 whitespace-nowrap">Technical<ScoreInfo k="technical" /></th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50 whitespace-nowrap">Risk Score<ScoreInfo k="risk" /></th>
-                <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50 whitespace-nowrap">Final Score<ScoreInfo k="final" /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-blue-50 whitespace-nowrap">Commercial<ScoreInfo k="commercial" weights={weights} /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-purple-50 whitespace-nowrap">Technical<ScoreInfo k="technical" weights={weights} /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50 whitespace-nowrap">Risk Score<ScoreInfo k="risk" weights={weights} /></th>
+                <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50 whitespace-nowrap">Final Score<ScoreInfo k="final" weights={weights} /></th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
                 {canManage && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
               </tr>
@@ -402,16 +408,16 @@ export default function RFQBidComparison() {
       <Card>
         <CardHeader><CardTitle className="text-base">Scoring Methodology</CardTitle></CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-1">
-          <p><strong>Commercial (60%)</strong> = Price 60% + Lead Time 30% + Payment Term 10%</p>
-          <p><strong>Technical (25%)</strong> = Specification Compliance Score</p>
+          <p><strong>Commercial ({weights.commercial}%)</strong> = Price 60% + Lead Time 30% + Payment Term 10%</p>
+          <p><strong>Technical ({weights.technical}%)</strong> = Specification Compliance Score</p>
           {bidRisk?.hasCriteria ? (
-            <p><strong>Risk (15%)</strong> = คะแนนจากเกณฑ์ความเสี่ยง (BRC) ของหมวด catalog ที่ดึง item มา
+            <p><strong>Risk ({weights.risk}%)</strong> = คะแนนจากเกณฑ์ความเสี่ยง (BRC) ของหมวด catalog ที่ดึง item มา
               {bidRisk.categories.length > 0 && <span className="text-xs"> — หมวด: {bidRisk.categories.join(', ')}</span>}
               {' '}(คะแนน 10/10 = เสี่ยงสูงสุด → risk score 0)</p>
           ) : (
-            <p><strong>Risk (15%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0 <span className="text-xs">(ยังไม่มีเกณฑ์ความเสี่ยงในหมวดนี้ — ใช้ระดับความเสี่ยงรวมของ supplier)</span></p>
+            <p><strong>Risk ({weights.risk}%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0 <span className="text-xs">(ยังไม่มีเกณฑ์ความเสี่ยงในหมวดนี้ — ใช้ระดับความเสี่ยงรวมของ supplier)</span></p>
           )}
-          <p><strong>Final Score</strong> = Commercial × 0.60 + Technical × 0.25 + Risk × 0.15</p>
+          <p><strong>Final Score</strong> = Commercial × {(weights.commercial / 100).toFixed(2)} + Technical × {(weights.technical / 100).toFixed(2)} + Risk × {(weights.risk / 100).toFixed(2)}</p>
           <p className="text-xs mt-2">Lower price → higher price score (min price ÷ candidate price × 100)</p>
         </CardContent>
       </Card>
