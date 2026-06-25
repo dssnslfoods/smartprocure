@@ -192,24 +192,11 @@ export default function RFQDetail() {
         {canManage && (
           <div className="flex flex-col items-end gap-1.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">เปลี่ยนสถานะ:</span>
-              <Select value={rfq.status} onValueChange={handleStatusChange}>
-                <SelectTrigger className="h-9 w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map(opt => (
-                    <SelectItem
-                      key={opt.value}
-                      value={opt.value}
-                      disabled={opt.value === 'awarded' && awardedDisabled}
-                    >
-                      {opt.label}
-                      {opt.value === 'awarded' && awardedDisabled && ' (ต้องเลือก winner ก่อน)'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <span className="text-xs text-muted-foreground">สถานะ:</span>
+              <Badge variant="secondary" className={statusColors[rfq.status] || ''}>
+                {STATUS_OPTIONS.find(o => o.value === rfq.status)?.label || rfq.status}
+              </Badge>
+              <span className="text-[11px] text-muted-foreground">(เปลี่ยนอัตโนมัติตามขั้นตอน)</span>
             </div>
             {winner ? (
               <span className="text-xs text-emerald-700 flex items-center gap-1">
