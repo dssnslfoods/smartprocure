@@ -16,6 +16,8 @@ import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
 import RFQTechnicalCriteria from './RFQTechnicalCriteria';
 import { ScoreInfo } from '@/components/ScoreFormulaTooltip';
+import { loadScoringWeights, DEFAULT_SCORING_WEIGHTS } from '@/lib/scoringWeights';
+import type { ScoringWeights } from '@/types/procurement';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -351,6 +353,7 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
   const [rows, setRows] = useSt<any[]>([]);
   const [supMap, setSupMap] = useSt<Record<string, any>>({});
   const [bidRisk, setBidRisk] = useSt<BidRiskResult | null>(null);
+  const [weights, setWeights] = useSt<ScoringWeights>(DEFAULT_SCORING_WEIGHTS);
   const [loading, setLoading] = useSt(true);
   const [rfqData, setRfqData] = useSt<any>(null);
   const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
@@ -376,8 +379,12 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
         qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
         setSupMap(sm);
         // BRC criteria-based risk scoped to this RFQ's catalog categories.
-        const risk = await computeRfqBidRisk(rfqId, qRes.data.map((q: any) => q.supplier_id));
+        const [risk, w] = await Promise.all([
+          computeRfqBidRisk(rfqId, qRes.data.map((q: any) => q.supplier_id)),
+          loadScoringWeights(),
+        ]);
         setBidRisk(risk);
+        setWeights(w);
         const override = risk.hasCriteria
           ? Object.fromEntries(Object.entries(risk.bySupplier).map(([sid, r]) => [sid, r.riskScore]))
           : undefined;
@@ -387,7 +394,7 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
         if (hasScores && !risk.hasCriteria) {
           setRows(qRes.data.sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
         } else {
-          const scored = scoreQuotations(qRes.data, sm, undefined, override);
+          const scored = scoreQuotations(qRes.data, sm, w, override);
           setRows(qRes.data.map((q: any) => {
             const s = scored.find(x => x.quotation_id === q.id);
             return { ...q, ...(s ?? {}) };
@@ -458,10 +465,10 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
             <th className="text-left p-3 font-medium text-muted-foreground">Supplier</th>
             <th className="text-right p-3 font-medium text-muted-foreground">Net Price</th>
             <th className="text-center p-3 font-medium text-muted-foreground">Risk</th>
-            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Commercial<ScoreInfo k="commercial" /></th>
-            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Technical<ScoreInfo k="technical" /></th>
-            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Risk Score<ScoreInfo k="risk" /></th>
-            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Final<ScoreInfo k="final" /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Commercial<ScoreInfo k="commercial" weights={weights} /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Technical<ScoreInfo k="technical" weights={weights} /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Risk Score<ScoreInfo k="risk" weights={weights} /></th>
+            <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Final<ScoreInfo k="final" weights={weights} /></th>
             <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
             {canMng && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
           </tr>

@@ -17,6 +17,8 @@ import {
   DEFAULT_CYCLE, loadPricelistCycle, savePricelistCycle,
   type PricelistCycleSettings,
 } from '@/lib/pricelistCycle';
+import { DEFAULT_SCORING_WEIGHTS, loadScoringWeights, SCORING_WEIGHTS_KEY } from '@/lib/scoringWeights';
+import type { ScoringWeights } from '@/types/procurement';
 
 interface EmailConfig {
   email_enabled: boolean;
@@ -93,6 +95,11 @@ export default function AdminSettingsPage() {
   // ── Email config state ───────────────────────────────────────
   const [emailConfig, setEmailConfig] = useState<EmailConfig>(DEFAULT_EMAIL_CONFIG);
   const [savingEmail, setSavingEmail] = useState(false);
+
+  // ── Scoring weights state ────────────────────────────────────
+  const [weights, setWeights] = useState<ScoringWeights>(DEFAULT_SCORING_WEIGHTS);
+  const [savingWeights, setSavingWeights] = useState(false);
+  const weightsTotal = weights.commercial + weights.technical + weights.risk;
 
   // ── Pricelist cycle state ────────────────────────────────────
   const [cycle, setCycle] = useState<PricelistCycleSettings>(DEFAULT_CYCLE);
@@ -195,6 +202,27 @@ export default function AdminSettingsPage() {
   };
 
   const updateEmail = (key: keyof EmailConfig, val: any) => setEmailConfig(prev => ({ ...prev, [key]: val }));
+
+  // ── Scoring weights ──────────────────────────────────────────
+  useEffect(() => { loadScoringWeights().then(setWeights); }, []);
+
+  const saveWeights = async () => {
+    if (weightsTotal !== 100) {
+      toast({ title: 'น้ำหนักต้องรวมกันได้ 100%', description: `ตอนนี้รวม ${weightsTotal}%`, variant: 'destructive' });
+      return;
+    }
+    setSavingWeights(true);
+    const { error } = await supabase.from('system_settings').upsert(
+      { key: SCORING_WEIGHTS_KEY, value: weights as any, updated_at: new Date().toISOString() } as any,
+      { onConflict: 'key' },
+    );
+    setSavingWeights(false);
+    if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    else toast({ title: 'บันทึกสำเร็จ', description: 'น้ำหนักการให้คะแนนถูกบันทึกแล้ว' });
+  };
+
+  const updateWeight = (key: keyof ScoringWeights, val: string) =>
+    setWeights(prev => ({ ...prev, [key]: Math.max(0, Math.min(100, parseInt(val) || 0)) }));
 
   // ── Pricelist cycle ──────────────────────────────────────────
   useEffect(() => { loadPricelistCycle().then(setCycle); }, []);
@@ -649,20 +677,52 @@ export default function AdminSettingsPage() {
         {/* ── Config Tab ── */}
         <TabsContent value="config">
           <Card>
-            <CardHeader><CardTitle className="text-base">Scoring Weights</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                {[
-                  { label: 'Service Score', val: '40%' },
-                  { label: 'Commercial Score', val: '25%' },
-                  { label: 'ESG Score', val: '20%' },
-                  { label: 'Reliability', val: '15%' },
-                ].map(({ label, val }) => (
-                  <div key={label} className="flex items-center justify-between p-3 rounded-md bg-muted/50">
-                    <span className="text-sm">{label}</span>
-                    <span className="font-semibold">{val}</span>
+            <CardHeader>
+              <CardTitle className="text-base">น้ำหนักการให้คะแนนจัดซื้อ (Scoring Weights)</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                กำหนดน้ำหนักของแต่ละด้านที่ใช้คิด Final Score ในการเปรียบเทียบใบเสนอราคา — ต้องรวมกันได้ <strong>100%</strong>
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                {([
+                  { key: 'commercial', label: 'Commercial', desc: 'ราคา + Lead Time + Payment Term' },
+                  { key: 'technical',  label: 'Technical',  desc: 'จาก Technical checklist' },
+                  { key: 'risk',       label: 'Risk Score', desc: 'จากเกณฑ์ความเสี่ยง (BRC)' },
+                ] as const).map(({ key, label, desc }) => (
+                  <div key={key} className="p-3 rounded-lg border space-y-2">
+                    <div>
+                      <Label className="text-sm font-medium">{label}</Label>
+                      <p className="text-[11px] text-muted-foreground">{desc}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input type="number" min={0} max={100} value={weights[key]}
+                        onChange={e => updateWeight(key, e.target.value)} className="text-right font-semibold" />
+                      <span className="text-muted-foreground">%</span>
+                    </div>
                   </div>
                 ))}
+              </div>
+
+              <div className={`flex items-center justify-between rounded-lg border p-3 text-sm ${weightsTotal === 100 ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-300 bg-amber-50'}`}>
+                <span className="font-medium">รวมทั้งหมด</span>
+                <span className={`font-bold ${weightsTotal === 100 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {weightsTotal}% {weightsTotal !== 100 && `(ต้องเป็น 100%)`}
+                </span>
+              </div>
+
+              <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground mb-1">สูตร Final Score</p>
+                <p>Final = Commercial×{weights.commercial}% + Technical×{weights.technical}% + Risk×{weights.risk}%</p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setWeights(DEFAULT_SCORING_WEIGHTS)}>
+                  ค่าเริ่มต้น (60/25/15)
+                </Button>
+                <Button onClick={saveWeights} disabled={savingWeights || weightsTotal !== 100}>
+                  <Save className="w-4 h-4 mr-2" />{savingWeights ? 'กำลังบันทึก...' : 'บันทึก'}
+                </Button>
               </div>
             </CardContent>
           </Card>
