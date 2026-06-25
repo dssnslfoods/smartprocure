@@ -38,6 +38,14 @@ Output ONLY valid JSON with this structure:
   "quotation_no": "<quotation/reference number>" (string or null),
   "quotation_date": "<date in YYYY-MM-DD format>" (string or null),
   "remark": "<any additional notes from the quotation>" (string or null),
+  "technical": [
+    {
+      "criterion_index": <0-based index matching the Technical Criteria list provided, or null>,
+      "met": <true if the quotation document clearly satisfies/states this technical requirement, false otherwise>,
+      "value": "<the actual spec value found in the document for this criterion, or null>",
+      "evidence": "<short quote or where in the document this was found, or null>"
+    }
+  ],
   "confidence": "high|medium|low"
 }
 
@@ -51,7 +59,8 @@ Rules:
 - If a field is not found in the document, return null (not empty string).
 - Include ALL line items found in the quotation, even if they don't match RFQ items.
 - supplier_name: Extract the SELLER/VENDOR company name (the one offering the price), NOT the buyer/customer. For Thai documents look for "ผู้ขาย", "บริษัท" at the top or letterhead.
-- supplier_tax_id: Look for "เลขประจำตัวผู้เสียภาษี", "Tax ID", "VAT No.", or a 13-digit number near the seller info.`;
+- supplier_tax_id: Look for "เลขประจำตัวผู้เสียภาษี", "Tax ID", "VAT No.", or a 13-digit number near the seller info.
+- technical: You may receive a list of Technical Criteria (spec requirements the buyer wants). For EACH criterion, inspect the document and decide whether the quotation meets/states it. Set met=true ONLY when there is clear evidence in the document; otherwise met=false. Put the actual value you found in "value" (e.g. a thickness, material, certification), and a short "evidence" snippet. Keep the same order/index as the provided criteria list. If no Technical Criteria are provided, return an empty array.`;
 
 const MODEL = "gemini-2.5-flash";
 
@@ -64,7 +73,7 @@ Deno.serve(async (req) => {
       return json({ error: "GEMINI_API_KEY not configured" }, 500);
     }
 
-    const { file_base64, mime_type, rfq_items } = await req.json();
+    const { file_base64, mime_type, rfq_items, tech_criteria } = await req.json();
     if (!file_base64 || !mime_type) {
       return json({ error: "missing file_base64 or mime_type" }, 400);
     }
@@ -79,10 +88,17 @@ Deno.serve(async (req) => {
       `${idx}. ${it.item_name} (${it.quantity ?? '?'} ${it.unit ?? ''})`
     ).join("\n");
 
+    const criteriaList = (tech_criteria || []).map((c: any, idx: number) =>
+      `${idx}. ${c.label}${c.description ? ` — ${c.description}` : ''}`
+    ).join("\n");
+
     const userPrompt = `Extract quotation/pricing data from this document.
 
 RFQ Line Items to match against:
 ${itemsList || "(no items provided)"}
+
+Technical Criteria to verify against the document:
+${criteriaList || "(no technical criteria provided)"}
 
 Return the JSON object with extracted data.`;
 
@@ -100,7 +116,7 @@ Return the JSON object with extracted data.`;
       generationConfig: {
         temperature: 0,
         responseMimeType: "application/json",
-        maxOutputTokens: 2048,
+        maxOutputTokens: 3072,
       },
     };
 
@@ -142,6 +158,7 @@ Return the JSON object with extracted data.`;
       quotation_no:          parsed.quotation_no ?? null,
       quotation_date:        parsed.quotation_date ?? null,
       remark:                parsed.remark ?? null,
+      technical:             Array.isArray(parsed.technical) ? parsed.technical : [],
       confidence:            parsed.confidence ?? "medium",
     });
   } catch (e) {
