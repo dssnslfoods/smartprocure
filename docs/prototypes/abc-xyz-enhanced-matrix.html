@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ABC-XYZ Supplier Risk Matrix · Enhanced Sub-Tier</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        font-family: 'IBM Plex Sans Thai', 'Inter', sans-serif;
+      }
+      .num {
+        font-variant-numeric: tabular-nums;
+      }
+      .cell {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      .cell:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.18);
+      }
+      /* Risk gradient — used for sub-tier shading */
+      .r-1 { background: #fef2f2; border-color: #fca5a5; }   /* P1 — Critical */
+      .r-2 { background: #fee2e2; border-color: #f87171; }
+      .r-3 { background: #ffedd5; border-color: #fdba74; }   /* P2 — High */
+      .r-4 { background: #fff7ed; border-color: #fdba74; }
+      .r-5 { background: #fef9c3; border-color: #fcd34d; }   /* P3 — Medium */
+      .r-6 { background: #fefce8; border-color: #fde68a; }
+      .r-7 { background: #ecfccb; border-color: #bef264; }   /* P4 — Low */
+      .r-8 { background: #f0fdf4; border-color: #86efac; }
+      .r-9 { background: #f0fdfa; border-color: #5eead4; }   /* P5 — Routine */
+    </style>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <div class="mx-auto max-w-[1480px] p-6 space-y-6">
+      <!-- Header -->
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-rose-500 text-2xl">⚠️</span>
+          <h1 class="text-2xl font-bold tracking-tight">
+            ABC-XYZ Supplier Risk Matrix
+            <span class="text-sm font-medium text-slate-500 ml-2">v2 · Enhanced Sub-Tier</span>
+          </h1>
+        </div>
+        <p class="text-sm text-slate-600 mt-1">
+          แบ่งกลุ่ม supplier 2 มิติ — <b>ABC</b> (มูลค่าซื้อสะสม %) × <b>XYZ</b>
+          (จำนวนคู่ค้า + ความผันผวนของ demand) แต่ละมิติแบ่งเป็น 3 sub-tier
+          เพื่อให้กระจายตัวและคำนวณ <b>P-Score</b> สำหรับวางแผนความเสี่ยง
+        </p>
+      </div>
+
+      <!-- KPI -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="rounded-xl border bg-white p-4">
+          <div class="text-xs text-slate-500">Total Spend (ปี 2025)</div>
+          <div class="text-xl font-bold num mt-1">฿3,715,181,534</div>
+          <div class="text-[11px] text-slate-500">รวมทุกหมวดวัตถุดิบ</div>
+        </div>
+        <div class="rounded-xl border bg-white p-4">
+          <div class="text-xs text-slate-500">Suppliers</div>
+          <div class="text-xl font-bold num mt-1">310</div>
+          <div class="text-[11px] text-slate-500">ทั้งหมดในระบบ</div>
+        </div>
+        <div class="rounded-xl border bg-white p-4">
+          <div class="text-xs text-slate-500">SKUs / Items</div>
+          <div class="text-xl font-bold num mt-1">1,884</div>
+          <div class="text-[11px] text-slate-500">รหัสวัตถุดิบ + บรรจุภัณฑ์</div>
+        </div>
+        <div class="rounded-xl border bg-white p-4">
+          <div class="text-xs text-slate-500">P1 · Critical</div>
+          <div class="text-xl font-bold text-rose-600 num mt-1" id="kpi-p1">—</div>
+          <div class="text-[11px] text-slate-500">ต้อง mitigation plan</div>
+        </div>
+        <div class="rounded-xl border bg-white p-4">
+          <div class="text-xs text-slate-500">P-Score Coverage</div>
+          <div class="text-xl font-bold text-emerald-600 num mt-1" id="kpi-cov">—</div>
+          <div class="text-[11px] text-slate-500">items ที่จัด tier ได้</div>
+        </div>
+      </div>
+
+      <!-- Method explainer -->
+      <div class="rounded-xl border bg-white">
+        <div class="p-5 border-b">
+          <h2 class="text-base font-semibold">นิยามแกน &amp; เกณฑ์แบ่ง sub-tier</h2>
+          <p class="text-xs text-slate-500 mt-1">
+            สองมิติอิสระ ใช้เกณฑ์เชิงปริมาณ — ทำให้ทุก item ถูกจัดเข้า tier ได้ ไม่กระจุก
+          </p>
+        </div>
+        <div class="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x">
+          <div class="p-5">
+            <div class="text-sm font-semibold mb-2">
+              แกน ABC · มูลค่าซื้อสะสม (Pareto)
+            </div>
+            <table class="text-xs w-full">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th class="py-1 w-16">Tier</th>
+                  <th class="py-1">เกณฑ์ (cumulative spend %)</th>
+                  <th class="py-1 text-right">ตัวอย่าง</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                <tr><td class="py-1 font-bold text-rose-700">A+</td><td>0 – 50%</td><td class="text-right text-slate-500">vital few</td></tr>
+                <tr><td class="py-1 font-bold text-rose-600">A</td><td>50 – 70%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-rose-500">A−</td><td>70 – 80%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-amber-700">B+</td><td>80 – 87%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-amber-600">B</td><td>87 – 93%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-amber-500">B−</td><td>93 – 95%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-emerald-700">C+</td><td>95 – 98%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-emerald-600">C</td><td>98 – 99.5%</td><td class="text-right text-slate-500"></td></tr>
+                <tr><td class="py-1 font-bold text-emerald-500">C−</td><td>99.5 – 100%</td><td class="text-right text-slate-500">long tail</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="p-5">
+            <div class="text-sm font-semibold mb-2">
+              แกน XYZ · ผสม 2 ปัจจัย → Supply Risk Score
+            </div>
+            <p class="text-[11px] text-slate-600 mb-2">
+              <code class="bg-slate-100 px-1 rounded">Supply Risk = 0.6·(1/n_supplier) + 0.4·CV(demand)</code>
+              <br />
+              n_supplier = จำนวนคู่ค้า active 12 เดือน · CV = ส่วนเบี่ยงเบน/ค่าเฉลี่ยของ
+              demand รายเดือน
+            </p>
+            <table class="text-xs w-full">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th class="py-1 w-16">Tier</th>
+                  <th class="py-1">เกณฑ์ Supply Risk</th>
+                  <th class="py-1 text-right">ตีความ</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                <tr><td class="py-1 font-bold text-rose-700">X+</td><td>≥ 0.85</td><td class="text-right text-slate-500">รายเดียว + ผันผวน</td></tr>
+                <tr><td class="py-1 font-bold text-rose-600">X</td><td>0.70 – 0.85</td><td class="text-right text-slate-500">รายเดียว</td></tr>
+                <tr><td class="py-1 font-bold text-rose-500">X−</td><td>0.55 – 0.70</td><td class="text-right text-slate-500">รายเดียว stable</td></tr>
+                <tr><td class="py-1 font-bold text-amber-700">Y+</td><td>0.45 – 0.55</td><td class="text-right text-slate-500">2 ราย ผันผวน</td></tr>
+                <tr><td class="py-1 font-bold text-amber-600">Y</td><td>0.30 – 0.45</td><td class="text-right text-slate-500">2–3 ราย</td></tr>
+                <tr><td class="py-1 font-bold text-amber-500">Y−</td><td>0.20 – 0.30</td><td class="text-right text-slate-500">3–4 ราย stable</td></tr>
+                <tr><td class="py-1 font-bold text-emerald-700">Z+</td><td>0.15 – 0.20</td><td class="text-right text-slate-500">5+ ราย ผันผวน</td></tr>
+                <tr><td class="py-1 font-bold text-emerald-600">Z</td><td>0.08 – 0.15</td><td class="text-right text-slate-500">5+ ราย</td></tr>
+                <tr><td class="py-1 font-bold text-emerald-500">Z−</td><td>&lt; 0.08</td><td class="text-right text-slate-500">commodity / stable</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 9x9 Matrix -->
+      <div class="rounded-xl border bg-white p-5">
+        <div class="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h2 class="text-base font-semibold">9 × 9 Sub-Tier Matrix</h2>
+            <p class="text-xs text-slate-500">
+              คลิกที่ช่องเพื่อดูรายการ · สีจางลง = ความเสี่ยงต่ำลง · ตัวเลขในช่องคือ
+              จำนวน items / มูลค่ารวม
+            </p>
+          </div>
+          <div class="flex items-center gap-2 text-[11px]">
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-rose-400"></span>P1 Critical</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-400"></span>P2 High</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400"></span>P3 Medium</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-lime-400"></span>P4 Low</span>
+            <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-teal-400"></span>P5 Routine</span>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto mt-4">
+          <table class="border-separate border-spacing-1 text-xs w-full">
+            <thead>
+              <tr>
+                <th class="w-20"></th>
+                <th colspan="3" class="text-center text-slate-500 py-1">X · Single / High Risk</th>
+                <th colspan="3" class="text-center text-slate-500 py-1">Y · 2–4 ราย</th>
+                <th colspan="3" class="text-center text-slate-500 py-1">Z · &gt; 4 ราย / Commodity</th>
+              </tr>
+              <tr class="text-center text-slate-500">
+                <th></th>
+                <th class="py-0.5">X+</th><th>X</th><th>X−</th>
+                <th>Y+</th><th>Y</th><th>Y−</th>
+                <th>Z+</th><th>Z</th><th>Z−</th>
+              </tr>
+            </thead>
+            <tbody id="grid"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- P-Score Distribution -->
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="rounded-xl border bg-white p-5 md:col-span-2">
+          <h2 class="text-base font-semibold">การกระจายตัวของ Priority (P-Score)</h2>
+          <p class="text-xs text-slate-500 mb-4">
+            P-Score = 0.55 × ABC_score + 0.35 × XYZ_score + 0.10 × Criticality_flag
+            (ESG / lead-time / regulated) → จัดเป็น 5 ระดับ
+          </p>
+          <div id="pbars" class="space-y-2"></div>
+        </div>
+        <div class="rounded-xl border bg-white p-5">
+          <h2 class="text-base font-semibold">Action Plan ต่อ Tier</h2>
+          <ul class="text-xs space-y-2 mt-3">
+            <li class="border-l-2 border-rose-500 pl-2">
+              <b>P1 · Critical</b><br />
+              <span class="text-slate-600">หา 2nd source, dual-sourcing, safety stock 60–90 วัน, BCP</span>
+            </li>
+            <li class="border-l-2 border-orange-500 pl-2">
+              <b>P2 · High</b><br />
+              <span class="text-slate-600">เจรจา long-term contract, SLA, qualify backup supplier</span>
+            </li>
+            <li class="border-l-2 border-yellow-500 pl-2">
+              <b>P3 · Medium</b><br />
+              <span class="text-slate-600">RFQ ทุก 6–12 เดือน, monitor demand variance</span>
+            </li>
+            <li class="border-l-2 border-lime-500 pl-2">
+              <b>P4 · Low</b><br />
+              <span class="text-slate-600">Frame agreement, e-catalog, ลด admin cost</span>
+            </li>
+            <li class="border-l-2 border-teal-500 pl-2">
+              <b>P5 · Routine</b><br />
+              <span class="text-slate-600">Auto-PO, vendor consolidation</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Comparison: old vs new -->
+      <div class="rounded-xl border bg-white p-5">
+        <h2 class="text-base font-semibold">เทียบการกระจายตัว — ก่อน vs หลังเพิ่ม sub-tier</h2>
+        <div class="grid md:grid-cols-2 gap-6 mt-3 text-xs">
+          <div>
+            <div class="font-medium mb-2">เดิม · 3×3 (9 ช่อง)</div>
+            <div id="old-stats" class="space-y-1"></div>
+          </div>
+          <div>
+            <div class="font-medium mb-2">ใหม่ · 9×9 (81 ช่อง)</div>
+            <div id="new-stats" class="space-y-1"></div>
+          </div>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-3">
+          วัดด้วย Gini coefficient ของจำนวน items ต่อช่อง — ค่าต่ำลง = กระจายตัวสม่ำเสมอขึ้น
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // ---- Synthetic data generator (matches the totals in the screenshot) ----
+      const TOTAL_ITEMS = 1884;
+      const TOTAL_SPEND = 3_715_181_534;
+      const TOTAL_SUPPLIERS = 310;
+
+      // Seeded RNG for reproducibility
+      let seed = 20260429;
+      const rnd = () => {
+        seed = (seed * 9301 + 49297) % 233280;
+        return seed / 233280;
+      };
+
+      // Generate item-level dataset (spend amount + supplier_count + CV)
+      const items = [];
+      // Use Pareto-ish distribution for spend so ABC tiering is realistic
+      // 80/20 with long tail
+      let cum = 0;
+      const rawSpend = [];
+      for (let i = 0; i < TOTAL_ITEMS; i++) {
+        // Pareto: y = x^(-alpha)
+        const r = (i + 1) / TOTAL_ITEMS;
+        const v = Math.pow(r, -1.4) * (0.6 + rnd() * 0.8);
+        rawSpend.push(v);
+        cum += v;
+      }
+      // Normalize so total spend matches
+      const scale = TOTAL_SPEND / cum;
+      const spends = rawSpend
+        .map((v) => v * scale)
+        .sort((a, b) => b - a); // descending
+
+      for (let i = 0; i < TOTAL_ITEMS; i++) {
+        // Supplier count: high-spend items more likely diversified
+        // but with realistic skew (most still 1–3 suppliers)
+        const spendRank = i / TOTAL_ITEMS; // 0 = top
+        let n_sup;
+        const u = rnd();
+        if (spendRank < 0.05) {
+          // Top 5% — operations push to dual-source
+          n_sup = u < 0.4 ? 1 : u < 0.85 ? 2 : u < 0.97 ? 3 : 4 + Math.floor(rnd() * 3);
+        } else if (spendRank < 0.3) {
+          n_sup = u < 0.55 ? 1 : u < 0.85 ? 2 : u < 0.95 ? 3 : 4 + Math.floor(rnd() * 2);
+        } else if (spendRank < 0.7) {
+          n_sup = u < 0.65 ? 1 : u < 0.88 ? 2 : 3 + Math.floor(rnd() * 3);
+        } else {
+          // Long tail — but commodities can have many suppliers
+          n_sup = u < 0.55 ? 1 : u < 0.75 ? 2 : u < 0.88 ? 3 + Math.floor(rnd() * 2) : 5 + Math.floor(rnd() * 6);
+        }
+
+        // CV — coefficient of variation of monthly demand
+        // High value items more carefully forecasted (lower CV)
+        const cvBase = spendRank < 0.1 ? 0.15 : spendRank < 0.5 ? 0.35 : 0.55;
+        const cv = Math.max(0.05, cvBase + (rnd() - 0.5) * 0.6);
+
+        // Criticality flag (ESG / lead-time / regulated) — 12% of items
+        const crit = rnd() < 0.12 ? 1 : 0;
+
+        items.push({
+          id: i,
+          spend: spends[i],
+          n_sup,
+          cv,
+          crit,
+        });
+      }
+
+      // ---- Classification ----
+      // ABC by cumulative spend
+      const totalSpend = items.reduce((s, x) => s + x.spend, 0);
+      let running = 0;
+      const ABC_BREAKS = [0.5, 0.7, 0.8, 0.87, 0.93, 0.95, 0.98, 0.995, 1.0];
+      const ABC_LABELS = ['A+', 'A', 'A−', 'B+', 'B', 'B−', 'C+', 'C', 'C−'];
+      items.forEach((it) => {
+        running += it.spend;
+        const p = running / totalSpend;
+        let idx = ABC_BREAKS.findIndex((b) => p <= b);
+        if (idx === -1) idx = ABC_LABELS.length - 1;
+        it.abc = ABC_LABELS[idx];
+        it.abcIdx = idx; // 0..8
+      });
+
+      // Supply Risk Score → XYZ
+      const XYZ_BREAKS = [0.85, 0.7, 0.55, 0.45, 0.3, 0.2, 0.15, 0.08, 0.0];
+      const XYZ_LABELS = ['X+', 'X', 'X−', 'Y+', 'Y', 'Y−', 'Z+', 'Z', 'Z−'];
+      items.forEach((it) => {
+        const sr = 0.6 * (1 / it.n_sup) + 0.4 * Math.min(1, it.cv);
+        it.sr = sr;
+        let idx = XYZ_BREAKS.findIndex((b) => sr >= b);
+        if (idx === -1) idx = XYZ_LABELS.length - 1;
+        it.xyz = XYZ_LABELS[idx];
+        it.xyzIdx = idx;
+      });
+
+      // P-Score (continuous) and P-Tier (1–5)
+      items.forEach((it) => {
+        const abcScore = 1 - it.abcIdx / 8; // A+ = 1.00, C- ≈ 0
+        const xyzScore = 1 - it.xyzIdx / 8;
+        it.p = 0.55 * abcScore + 0.35 * xyzScore + 0.1 * it.crit;
+        it.pTier =
+          it.p >= 0.75 ? 1 : it.p >= 0.55 ? 2 : it.p >= 0.4 ? 3 : it.p >= 0.25 ? 4 : 5;
+      });
+
+      // ---- Aggregate to 9x9 grid ----
+      const grid = Array.from({ length: 9 }, () =>
+        Array.from({ length: 9 }, () => ({ count: 0, spend: 0, suppliers: new Set(), pTier: 5 })),
+      );
+      items.forEach((it) => {
+        const c = grid[it.abcIdx][it.xyzIdx];
+        c.count++;
+        c.spend += it.spend;
+        c.pTier = Math.min(c.pTier, it.pTier);
+      });
+
+      // Color scheme based on (abcIdx + xyzIdx) — diagonal heat
+      function tierColor(abcIdx, xyzIdx) {
+        const score = abcIdx + xyzIdx; // 0 = A+/X+ (worst), 16 = C−/Z−
+        if (score <= 2) return { cls: 'r-1', label: 'P1' };
+        if (score <= 4) return { cls: 'r-2', label: 'P1' };
+        if (score <= 6) return { cls: 'r-3', label: 'P2' };
+        if (score <= 8) return { cls: 'r-4', label: 'P2' };
+        if (score <= 10) return { cls: 'r-5', label: 'P3' };
+        if (score <= 12) return { cls: 'r-6', label: 'P3' };
+        if (score <= 13) return { cls: 'r-7', label: 'P4' };
+        if (score <= 15) return { cls: 'r-8', label: 'P4' };
+        return { cls: 'r-9', label: 'P5' };
+      }
+
+      // ---- Render grid ----
+      const rowLabels = ABC_LABELS;
+      const gridEl = document.getElementById('grid');
+      let html = '';
+      for (let r = 0; r < 9; r++) {
+        html += '<tr>';
+        html += `<td class="text-right pr-2 align-middle text-slate-500 font-medium">${rowLabels[r]}</td>`;
+        for (let c = 0; c < 9; c++) {
+          const cell = grid[r][c];
+          const t = tierColor(r, c);
+          const pct = ((cell.spend / TOTAL_SPEND) * 100).toFixed(1);
+          const spendM = cell.spend >= 1e9
+            ? `฿${(cell.spend / 1e9).toFixed(2)}B`
+            : cell.spend >= 1e6
+            ? `฿${(cell.spend / 1e6).toFixed(1)}M`
+            : cell.spend >= 1e3
+            ? `฿${(cell.spend / 1e3).toFixed(0)}K`
+            : `฿${Math.round(cell.spend)}`;
+          html += `
+            <td>
+              <div class="cell border rounded-md px-2 py-2 ${t.cls}" title="${rowLabels[r]} × ${XYZ_LABELS[c]} · ${t.label}">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-[11px]">${cell.count}</span>
+                  <span class="text-[9px] text-slate-500">${pct}%</span>
+                </div>
+                <div class="text-[9px] text-slate-600 num">${spendM}</div>
+                <div class="text-[8px] text-slate-400">${t.label}</div>
+              </div>
+            </td>`;
+        }
+        html += '</tr>';
+      }
+      gridEl.innerHTML = html;
+
+      // ---- KPI ----
+      const p1Count = items.filter((x) => x.pTier === 1).length;
+      const p1Spend = items.filter((x) => x.pTier === 1).reduce((s, x) => s + x.spend, 0);
+      document.getElementById('kpi-p1').textContent = `${p1Count} · ฿${(p1Spend / 1e6).toFixed(0)}M`;
+      const occupied = grid.flat().filter((c) => c.count > 0).length;
+      document.getElementById('kpi-cov').textContent = `${occupied}/81 ช่อง`;
+
+      // ---- P-Score bars ----
+      const pCounts = [0, 0, 0, 0, 0];
+      const pSpend = [0, 0, 0, 0, 0];
+      items.forEach((it) => {
+        pCounts[it.pTier - 1]++;
+        pSpend[it.pTier - 1] += it.spend;
+      });
+      const pColors = ['bg-rose-500', 'bg-orange-500', 'bg-yellow-400', 'bg-lime-500', 'bg-teal-500'];
+      const pNames = ['P1 Critical', 'P2 High', 'P3 Medium', 'P4 Low', 'P5 Routine'];
+      const pbars = document.getElementById('pbars');
+      const maxC = Math.max(...pCounts);
+      pbars.innerHTML = pCounts
+        .map((c, i) => {
+          const pct = ((c / TOTAL_ITEMS) * 100).toFixed(1);
+          const spendPct = ((pSpend[i] / TOTAL_SPEND) * 100).toFixed(1);
+          return `
+            <div>
+              <div class="flex justify-between text-xs mb-0.5">
+                <span class="font-medium">${pNames[i]}</span>
+                <span class="text-slate-500 num">${c} items · ${pct}% · spend ${spendPct}%</span>
+              </div>
+              <div class="h-3 bg-slate-100 rounded overflow-hidden">
+                <div class="${pColors[i]} h-full" style="width:${(c / maxC) * 100}%"></div>
+              </div>
+            </div>`;
+        })
+        .join('');
+
+      // ---- Distribution comparison ----
+      function gini(arr) {
+        const n = arr.length;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const total = sorted.reduce((s, x) => s + x, 0);
+        if (total === 0) return 0;
+        let cum = 0;
+        let weighted = 0;
+        sorted.forEach((v, i) => {
+          cum += v;
+          weighted += cum;
+        });
+        return (n + 1 - (2 * weighted) / total) / n;
+      }
+
+      // Old 3x3 — collapse 9 sub-tiers to 3
+      const old = Array.from({ length: 3 }, () => Array.from({ length: 3 }, () => 0));
+      items.forEach((it) => {
+        const r = it.abcIdx <= 2 ? 0 : it.abcIdx <= 5 ? 1 : 2;
+        const c = it.xyzIdx <= 2 ? 0 : it.xyzIdx <= 5 ? 1 : 2;
+        old[r][c]++;
+      });
+      const oldFlat = old.flat();
+      const newFlat = grid.flat().map((x) => x.count);
+      const oldOccupied = oldFlat.filter((x) => x > 0).length;
+      const newOccupied = newFlat.filter((x) => x > 0).length;
+      const oldMax = Math.max(...oldFlat);
+      const newMax = Math.max(...newFlat);
+
+      document.getElementById('old-stats').innerHTML = `
+        <div>ช่องที่มีข้อมูล: <b>${oldOccupied}/9</b> (${((oldOccupied / 9) * 100).toFixed(0)}%)</div>
+        <div>ช่องที่มี items มากสุด: <b>${oldMax}</b> items (${((oldMax / TOTAL_ITEMS) * 100).toFixed(1)}%)</div>
+        <div>Gini coefficient: <b>${gini(oldFlat).toFixed(3)}</b> <span class="text-slate-500">(สูง = กระจุก)</span></div>
+        <div>จำนวน P-tier ที่ matrix แยกได้: <b>4</b> (Critical, Bottleneck, Important, Routine)</div>`;
+      document.getElementById('new-stats').innerHTML = `
+        <div>ช่องที่มีข้อมูล: <b>${newOccupied}/81</b> (${((newOccupied / 81) * 100).toFixed(0)}%)</div>
+        <div>ช่องที่มี items มากสุด: <b>${newMax}</b> items (${((newMax / TOTAL_ITEMS) * 100).toFixed(1)}%)</div>
+        <div>Gini coefficient: <b>${gini(newFlat).toFixed(3)}</b> <span class="text-emerald-600">(ต่ำลง = กระจายขึ้น)</span></div>
+        <div>จำนวน P-tier ที่จัดได้: <b>5</b> (P1–P5) + P-Score ต่อเนื่อง 0–1</div>`;
+    </script>
+  </body>
+</html>

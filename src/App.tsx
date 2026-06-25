@@ -34,6 +34,7 @@ import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import SupplierApprovalPage from "@/pages/admin/SupplierApprovalPage";
 import VendorRiskPage from "@/pages/vendors/VendorRiskPage";
 import VendorRiskForm from "@/pages/vendors/VendorRiskForm";
+import RiskCriteria from "@/pages/admin/RiskCriteria";
 import RFQBidComparison from "@/pages/rfq/RFQBidComparison";
 import RFQAwardApproval from "@/pages/rfq/RFQAwardApproval";
 import TenantSelector from "@/pages/TenantSelector";
@@ -106,6 +107,7 @@ const App = () => (
               <Route path="/suppliers" element={<SupplierList />} />
               <Route path="/vendor-risk" element={<VendorRiskPage />} />
               <Route path="/vendor-risk/:supplierId" element={<VendorRiskForm />} />
+              <Route path="/risk-criteria" element={<RiskCriteria />} />
               <Route path="/suppliers/new" element={<SupplierForm />} />
               <Route path="/suppliers/import" element={<SupplierImport />} />
               <Route path="/suppliers/:id" element={<SupplierDetail />} />
