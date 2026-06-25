@@ -222,6 +222,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
           file_base64: base64,
           mime_type: file.type,
           rfq_items: rfqItems.map(i => ({ item_name: i.item_name, quantity: i.quantity, unit: i.unit })),
+          tech_criteria: techCriteria.map(c => ({ label: c.label, description: c.description })),
         },
       });
       if (error) throw error;
@@ -284,10 +285,25 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
           setItemPrices(prev => ({ ...prev, ...newPrices }));
         }
       }
+      // Auto-fill the technical checklist from the AI's per-criterion assessment.
+      let techFilled = 0;
+      if (Array.isArray(data.technical) && data.technical.length > 0 && techCriteria.length > 0) {
+        const updates: Record<string, { value: string; met: boolean }> = {};
+        for (const t of data.technical) {
+          const idx = t.criterion_index;
+          if (idx != null && idx >= 0 && idx < techCriteria.length) {
+            const c = techCriteria[idx];
+            updates[c.id] = { value: t.value != null ? String(t.value) : '', met: !!t.met };
+            techFilled++;
+          }
+        }
+        if (Object.keys(updates).length > 0) setTechResp(prev => ({ ...prev, ...updates }));
+      }
       setScanConfidence(data.confidence || 'medium');
       toast({
         title: 'AI อ่านใบเสนอราคาสำเร็จ',
-        description: `Supplier: ${matched?.company_name || extractedName} · ความมั่นใจ: ${data.confidence || 'medium'}`,
+        description: `Supplier: ${matched?.company_name || extractedName} · ความมั่นใจ: ${data.confidence || 'medium'}`
+          + (techFilled > 0 ? ` · ตรวจ Technical checklist ${techFilled} ข้อ (กรุณาตรวจทานก่อนส่ง)` : ''),
       });
     } catch (err: any) {
       toast({ title: 'AI สแกนไม่สำเร็จ', description: err.message || 'ลองใหม่อีกครั้ง', variant: 'destructive' });
