@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import RFQInviteSuppliers from './RFQInviteSuppliers';
 import RFQQuotations from './RFQQuotations';
+import RFQTechnicalCriteria from './RFQTechnicalCriteria';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -296,6 +297,7 @@ export default function RFQDetail() {
                 )}
               </CardContent>
             </Card>
+            <RFQTechnicalCriteria rfqId={id!} canManage={canManage} />
           </div>
         </TabsContent>
 
