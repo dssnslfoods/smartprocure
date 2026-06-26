@@ -13,7 +13,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { RISK_FACTORS } from '@/types/procurement';
 import { DIMENSION_LABEL, CATEGORY_OPTIONS, type RiskCriterion } from '@/lib/riskCriteria';
 
@@ -170,7 +171,16 @@ export default function RiskCriteria() {
                       <Badge variant="outline" className="text-[10px]">{DIMENSION_LABEL[c.dimension] || c.dimension}</Badge>
                       {c.is_mandatory && <Badge className="bg-red-500/10 text-red-600 text-[10px] gap-1"><AlertTriangle className="w-3 h-3" />บังคับ</Badge>}
                       {!c.active && <Badge variant="secondary" className="text-[10px]">ปิดใช้งาน</Badge>}
-                      <span className="text-xs text-muted-foreground">น้ำหนัก {c.weight}</span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-xs text-muted-foreground cursor-help flex items-center gap-0.5">น้ำหนัก {c.weight} <HelpCircle className="w-3 h-3" /></span>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-xs">
+                            <p>น้ำหนักกำหนดสัดส่วนของเกณฑ์นี้ในการคำนวณคะแนนความเสี่ยง ยิ่งน้ำหนักสูง เกณฑ์นี้ยิ่งมีผลต่อคะแนนรวมมาก</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                     {c.description && <p className="text-xs text-muted-foreground mt-0.5">{c.description}</p>}
                     {c.match_keywords?.length > 0 && (
@@ -279,7 +289,16 @@ export default function RiskCriteria() {
                                 </Select>
                               </div>
                               <div>
-                                <Label className="text-xs">น้ำหนัก</Label>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Label className="text-xs cursor-help inline-flex items-center gap-1">น้ำหนัก <HelpCircle className="w-3 h-3 text-muted-foreground" /></Label>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs text-xs">
+                                      <p>น้ำหนักกำหนดสัดส่วนของเกณฑ์นี้ในการคำนวณคะแนนความเสี่ยง ยิ่งน้ำหนักสูง เกณฑ์นี้ยิ่งมีผลต่อคะแนนรวมมาก</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
                                 <Input type="number" min={0.5} step={0.5} value={det.weight}
                                   onChange={e => setDetail(f.key, { weight: parseFloat(e.target.value) })} />
                               </div>

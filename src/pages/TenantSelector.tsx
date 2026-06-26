@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Building2, ChevronRight, LogOut } from 'lucide-react';
+import { LogoIcon } from '@/components/Logo';
 
 interface TenantAccess {
   tenant_id: string;
@@ -87,8 +88,8 @@ export default function TenantSelector() {
     <div className="flex items-center justify-center min-h-screen bg-gray-50">
       <div className="w-full max-w-md mx-auto p-6">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span className="text-2xl font-bold text-white">SP</span>
+          <div className="mx-auto mb-4 w-16 h-16 shadow-lg rounded-2xl">
+            <LogoIcon size={64} />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Smart Procurement</h1>
           <p className="text-gray-500 mt-2">เลือกบริษัทที่ต้องการเข้าถึง</p>

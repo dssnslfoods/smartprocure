@@ -9,7 +9,8 @@ import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
-import { LogoFull } from '@/components/Logo';
+import { LogoFull, LogoIcon } from '@/components/Logo';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 type MenuItem = {
   icon: React.ElementType;
@@ -29,6 +30,7 @@ export default function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
+  const [logoOpen, setLogoOpen] = useState(false);
   const { t, i18n } = useTranslation();
 
   const menuGroups: MenuGroup[] = [
@@ -94,9 +96,64 @@ export default function AppSidebar() {
       )}
     >
       {/* Logo */}
-      <div className="px-4 h-16 flex items-center border-b border-sidebar-border">
+      <div className="px-4 h-16 flex items-center border-b border-sidebar-border cursor-pointer" onClick={() => setLogoOpen(true)}>
         <LogoFull collapsed={collapsed} subtitle={tenant?.name ?? 'NSL Foods PLC'} />
       </div>
+
+      <Dialog open={logoOpen} onOpenChange={setLogoOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              <LogoIcon size={40} />
+              <span>Smart Procurement</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <p className="text-muted-foreground">ออกแบบเพื่อสื่อถึงระบบจัดซื้อที่ทันสมัย ขับเคลื่อนด้วยข้อมูล</p>
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-purple-600 shrink-0" />
+                <div>
+                  <p className="font-medium">พื้นหลัง Gradient น้ำเงิน-ม่วง</p>
+                  <p className="text-xs text-muted-foreground">สื่อถึงความเป็น Enterprise ที่น่าเชื่อถือและทันสมัย</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 16 L12 10 L18 16" /><path d="M12 10 L12 22" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-medium">ลูกศรชี้ขึ้น (สีขาว)</p>
+                  <p className="text-xs text-muted-foreground">สื่อถึงกระบวนการจัดซื้อที่มีประสิทธิภาพ — ยกระดับและปรับปรุงอย่างต่อเนื่อง</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="#a78bfa" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 6 L15 12 L9 18" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-medium">ลูกศรชี้ขวา (สีฟ้า-ม่วงอ่อน)</p>
+                  <p className="text-xs text-muted-foreground">สื่อถึง Workflow ที่เคลื่อนไปข้างหน้า — RFQ → Quotation → Award → PO</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5"><circle cx="12" cy="12" r="5" fill="#34d399" /></svg>
+                </div>
+                <div>
+                  <p className="font-medium">จุดสีเขียว (มุมขวาบน)</p>
+                  <p className="text-xs text-muted-foreground">สื่อถึง Data Point — ระบบขับเคลื่อนด้วยข้อมูลเพื่อการตัดสินใจที่แม่นยำ</p>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground border-t pt-3">Smart Procurement — ระบบจัดซื้ออัจฉริยะสำหรับ {tenant?.name ?? 'NSL Foods PLC'}</p>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Nav */}
       <nav className="flex-1 py-3 px-2 overflow-y-auto scrollbar-thin space-y-0">
