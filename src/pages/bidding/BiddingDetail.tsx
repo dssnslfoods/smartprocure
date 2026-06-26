@@ -16,7 +16,7 @@ import RiskBadge from '@/components/RiskBadge';
 import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
 import { DIMENSION_LABEL } from '@/lib/riskCriteria';
 import {
-  ArrowLeft, Play, Square, SkipForward, Trophy, Clock, Users, TrendingDown,
+  ArrowLeft, Play, Square, Trophy, Clock, TrendingDown,
   Send, CheckCircle, AlertTriangle, Settings, RotateCcw, History, Save, Pencil,
 } from 'lucide-react';
 
@@ -174,7 +174,7 @@ export default function BiddingDetail() {
     const { error } = await supabase.from('bidding_events').update({
       title: setupForm.title,
       description: setupForm.description || null,
-      max_rounds: setupForm.max_rounds,
+      max_rounds: 1,
       start_time: new Date(setupForm.start_time).toISOString(),
       end_time: new Date(setupForm.end_time).toISOString(),
       updated_at: new Date().toISOString(),
@@ -195,15 +195,6 @@ export default function BiddingDetail() {
     setRollbackReason('');
   };
 
-  const advanceRound = async () => {
-    if (!event) return;
-    const next = (event.current_round || 1) + 1;
-    if (next > (event.max_rounds || 99)) { toast.error('ถึงจำนวนรอบสูงสุดแล้ว'); return; }
-    const { error } = await supabase.from('bidding_events').update({ current_round: next, updated_at: new Date().toISOString() }).eq('id', id!);
-    if (error) toast.error(error.message);
-    else { toast.success(`เลื่อนไปรอบที่ ${next}`); fetchData(); }
-  };
-
   const submitBid = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bidForm.supplier_id || !bidForm.bid_amount) { toast.error('เลือกผู้จัดจำหน่ายและใส่จำนวนเงิน'); return; }
@@ -219,10 +210,8 @@ export default function BiddingDetail() {
     else { toast.success('บันทึกราคาเสนอแล้ว'); setBidForm({ supplier_id: '', bid_amount: '' }); fetchData(); }
   };
 
-  const currentRound = event?.current_round || 1;
-  const roundBids = bids.filter((b) => b.round_number === currentRound);
   const bestBidBySupplier = new Map<string, any>();
-  roundBids.forEach((b) => {
+  bids.forEach((b) => {
     const existing = bestBidBySupplier.get(b.supplier_id);
     if (!existing || b.bid_amount < existing.bid_amount) bestBidBySupplier.set(b.supplier_id, b);
   });
@@ -244,7 +233,7 @@ export default function BiddingDetail() {
         status: 'pending' as any,
         award_lifecycle_status: 'pending_approval' as any,
         awarded_at: new Date().toISOString(),
-        recommendation: `จากการประมูล "${event.title}"${event.rfqs ? ` — ${event.rfqs.rfq_number}` : ''} | รอบสุดท้าย R${currentRound}`,
+        recommendation: `จากการประมูล "${event.title}"${event.rfqs ? ` — ${event.rfqs.rfq_number}` : ''}`,
       } as any);
       if (error) throw error;
       if (event.rfq_id) {
@@ -301,10 +290,7 @@ export default function BiddingDetail() {
                 <Label>ชื่อการประมูล *</Label>
                 <Input value={setupForm.title} onChange={(e) => setSetupForm({ ...setupForm, title: e.target.value })} />
               </div>
-              <div className="space-y-2">
-                <Label>จำนวนรอบสูงสุด</Label>
-                <Input type="number" min={1} max={20} value={setupForm.max_rounds} onChange={(e) => setSetupForm({ ...setupForm, max_rounds: parseInt(e.target.value) || 1 })} />
-              </div>
+              <div />
               <div className="space-y-2">
                 <Label>วันเวลาเปิดประมูล *</Label>
                 <Input type="datetime-local" value={setupForm.start_time} onChange={(e) => setSetupForm({ ...setupForm, start_time: e.target.value })} />
@@ -320,7 +306,7 @@ export default function BiddingDetail() {
             </div>
             {setupForm.start_time && setupForm.end_time && (
               <p className="text-xs text-muted-foreground mt-3">
-                ระยะเวลาประมูล: {durationDays > 0 ? `${durationDays} วัน ` : ''}{durationHours > 0 ? `${durationHours} ชั่วโมง` : ''}{durationDays === 0 && durationHours === 0 ? 'น้อยกว่า 1 ชั่วโมง' : ''} · {setupForm.max_rounds} รอบ
+                ระยะเวลาประมูล: {durationDays > 0 ? `${durationDays} วัน ` : ''}{durationHours > 0 ? `${durationHours} ชั่วโมง` : ''}{durationDays === 0 && durationHours === 0 ? 'น้อยกว่า 1 ชั่วโมง' : ''}
               </p>
             )}
             <div className="flex gap-2 mt-4">
@@ -346,22 +332,13 @@ export default function BiddingDetail() {
       {/* Stats row — show when not in setup */}
       {!isSetup && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <Card>
               <CardContent className="p-4 flex items-center gap-3">
                 <Clock className="w-5 h-5 text-muted-foreground" />
                 <div>
                   <p className="text-xs text-muted-foreground">เวลาคงเหลือ</p>
                   <p className="font-bold text-sm">{isActive ? timeLeft || 'กำลังคำนวณ...' : '—'}</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 flex items-center gap-3">
-                <Users className="w-5 h-5 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">รอบ</p>
-                  <p className="font-bold text-sm">{currentRound} / {event.max_rounds || '∞'}</p>
                 </div>
               </CardContent>
             </Card>
@@ -390,7 +367,6 @@ export default function BiddingDetail() {
             <div className="flex gap-2 flex-wrap">
               {isActive && (
                 <>
-                  <Button onClick={advanceRound} variant="outline" className="gap-2"><SkipForward className="w-4 h-4" /> รอบถัดไป</Button>
                   <Button onClick={() => updateStatus('closed')} variant="destructive" className="gap-2"><Square className="w-4 h-4" /> ปิดการประมูล</Button>
                   <Button variant="outline" onClick={() => setRollbackOpen(true)} className="gap-2 text-orange-600 border-orange-300 hover:bg-orange-50">
                     <RotateCcw className="w-4 h-4" /> กลับไปตั้งค่าใหม่
@@ -415,7 +391,7 @@ export default function BiddingDetail() {
                     <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">ผู้ชนะการประมูล</p>
                     <p className="text-lg font-bold">{winner.suppliers?.company_name || '—'}</p>
                     <p className="text-sm text-emerald-700">
-                      ราคาประมูล: <span className="font-bold font-mono">{winner.bid_amount.toLocaleString()}</span> · รอบ {currentRound}
+                      ราคาประมูล: <span className="font-bold font-mono">฿{winner.bid_amount.toLocaleString()}</span>
                     </p>
                   </div>
                 </div>
@@ -475,7 +451,7 @@ export default function BiddingDetail() {
               return null;
             })()}
             <Card>
-              <CardHeader><CardTitle className="text-base">รอบที่ {currentRound} — อันดับ</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-base">อันดับการเสนอราคา</CardTitle></CardHeader>
               <CardContent className="p-0">
                 <table className="w-full text-sm">
                   <thead>
@@ -554,7 +530,6 @@ export default function BiddingDetail() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">
-                      <th className="text-left p-3 font-medium text-muted-foreground">รอบ</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">ผู้จัดจำหน่าย</th>
                       <th className="text-right p-3 font-medium text-muted-foreground">ราคา</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">เวลา</th>
@@ -562,11 +537,10 @@ export default function BiddingDetail() {
                   </thead>
                   <tbody>
                     {bids.length === 0 ? (
-                      <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">ยังไม่มีราคาเสนอ</td></tr>
+                      <tr><td colSpan={3} className="p-8 text-center text-muted-foreground">ยังไม่มีราคาเสนอ</td></tr>
                     ) : (
                       bids.map((b) => (
                         <tr key={b.id} className="border-b hover:bg-muted/30">
-                          <td className="p-3"><Badge variant="outline">R{b.round_number}</Badge></td>
                           <td className="p-3 font-medium">{b.suppliers?.company_name || '—'}</td>
                           <td className="p-3 text-right font-mono">฿{b.bid_amount.toLocaleString()}</td>
                           <td className="p-3 text-muted-foreground text-xs">{new Date(b.submitted_at).toLocaleString()}</td>
