@@ -4,8 +4,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2, Trash2, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
 import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
@@ -43,7 +46,10 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [expiredCerts, setExpiredCerts] = useState<Record<string, ExpiredCert[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const { hasRole } = useAuth();
+  const [removeTarget, setRemoveTarget] = useState<SupplierWithEligibility | null>(null);
+  const [removeReason, setRemoveReason] = useState('');
+  const [removals, setRemovals] = useState<{ supplier_id: string; reason: string; removed_at: string; removed_by_name: string | null }[]>([]);
+  const { hasRole, user } = useAuth();
   const { toast } = useToast();
 
   useEffect(() => {
@@ -98,6 +104,30 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
         setBidRisk(null);
         setExpiredCerts({});
       }
+
+      // Fetch removal history
+      const { data: remData } = await supabase.from('rfq_supplier_removals')
+        .select('supplier_id, reason, removed_at, removed_by')
+        .eq('rfq_id', rfqId)
+        .order('removed_at', { ascending: false });
+      if (remData && remData.length > 0) {
+        const userIds = [...new Set(remData.map((r: any) => r.removed_by).filter(Boolean))];
+        let nameMap: Record<string, string> = {};
+        if (userIds.length > 0) {
+          const { data: profiles } = await supabase.from('profiles')
+            .select('id, full_name, email').in('id', userIds);
+          (profiles || []).forEach((p: any) => { nameMap[p.id] = p.full_name || p.email || '—'; });
+        }
+        setRemovals(remData.map((r: any) => ({
+          supplier_id: r.supplier_id,
+          reason: r.reason,
+          removed_at: r.removed_at,
+          removed_by_name: r.removed_by ? (nameMap[r.removed_by] || '—') : null,
+        })));
+      } else {
+        setRemovals([]);
+      }
+
       setLoading(false);
     };
     fetch();
@@ -138,14 +168,25 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
     }
   };
 
-  const handleRemove = async (supplierId: string) => {
-    await supabase.from('rfq_suppliers').delete().eq('rfq_id', rfqId).eq('supplier_id', supplierId);
-    setInvitedIds(prev => { const n = new Set(prev); n.delete(supplierId); return n; });
-    toast({ title: 'Supplier removed from RFQ' });
+  const handleRemove = async () => {
+    if (!removeTarget || !removeReason.trim()) return;
+    setSaving(true);
+    await supabase.from('rfq_supplier_removals').insert({
+      rfq_id: rfqId,
+      supplier_id: removeTarget.id,
+      reason: removeReason.trim(),
+      removed_by: user?.id || null,
+    });
+    await supabase.from('rfq_suppliers').delete().eq('rfq_id', rfqId).eq('supplier_id', removeTarget.id);
+    setSaving(false);
+    setInvitedIds(prev => { const n = new Set(prev); n.delete(removeTarget.id); return n; });
+    toast({ title: 'นำ Supplier ออกแล้ว', description: `${removeTarget.company_name} — ${removeReason.trim()}` });
+    setRemoveTarget(null);
+    setRemoveReason('');
     onUpdate();
   };
 
-  const canEdit = (hasRole('admin') || hasRole('procurement_officer')) && rfqStatus === 'draft';
+  const canEdit = (hasRole('admin') || hasRole('procurement_officer')) && (rfqStatus === 'draft' || rfqStatus === 'published');
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
@@ -213,8 +254,8 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                         </div>
                       </div>
                       {canEdit && (
-                        <Button variant="ghost" size="sm" className="text-xs shrink-0 ml-2" onClick={() => handleRemove(s.id)}>
-                          Remove
+                        <Button variant="ghost" size="sm" className="text-xs shrink-0 ml-2 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => { setRemoveTarget(s); setRemoveReason(''); }}>
+                          <Trash2 className="w-3 h-3 mr-1" />นำออก
                         </Button>
                       )}
                     </div>
@@ -339,6 +380,68 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
           </Card>
         )}
       </div>
+
+      {/* Removal history */}
+      {removals.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              ประวัติการนำออก ({removals.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {removals.map((r, i) => {
+                const sup = allSuppliers.find(s => s.id === r.supplier_id);
+                return (
+                  <div key={i} className="flex items-start gap-3 p-3 border rounded-lg bg-muted/20">
+                    <XCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0 text-sm">
+                      <p className="font-medium">{sup?.company_name || 'Supplier ที่ถูกลบ'}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">เหตุผล: {r.reason}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        นำออกโดย {r.removed_by_name || '—'} · {new Date(r.removed_at).toLocaleString('th-TH')}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Remove confirmation dialog */}
+      <Dialog open={!!removeTarget} onOpenChange={open => { if (!open) setRemoveTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>นำ Supplier ออกจาก RFQ</DialogTitle>
+            <DialogDescription>
+              {removeTarget?.company_name} — กรุณาระบุเหตุผลในการนำออก เพื่อเก็บเป็นประวัติ
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>เหตุผล *</Label>
+            <Textarea
+              value={removeReason}
+              onChange={e => setRemoveReason(e.target.value)}
+              placeholder="เช่น Supplier ถอนตัว, ไม่ผ่านเกณฑ์ BRC, ..."
+              rows={3}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveTarget(null)}>ยกเลิก</Button>
+            <Button
+              variant="destructive"
+              disabled={!removeReason.trim() || saving}
+              onClick={handleRemove}
+            >
+              <Trash2 className="w-4 h-4 mr-1" />{saving ? 'กำลังบันทึก...' : 'ยืนยันนำออก'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
