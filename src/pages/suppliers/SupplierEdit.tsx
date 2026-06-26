@@ -45,13 +45,24 @@ export default function SupplierEdit() {
     const { error } = await supabase.from('suppliers').update({
       ...form, updated_at: new Date().toISOString(),
     } as any).eq('id', id!);
-    setSaving(false);
     if (error) {
+      setSaving(false);
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      return;
+    }
+    // If email was added/changed, ensure auth account exists
+    if (form.email) {
+      const { data: authResult } = await supabase.rpc('create_supplier_auth_accounts', { p_default_password: '123456' });
+      if (authResult?.created > 0) {
+        toast({ title: 'บันทึกแล้ว', description: `สร้าง account login สำหรับ ${form.email} (รหัสผ่านเริ่มต้น: 123456)` });
+      } else {
+        toast({ title: 'Saved', description: 'Supplier updated successfully' });
+      }
     } else {
       toast({ title: 'Saved', description: 'Supplier updated successfully' });
-      navigate(`/suppliers/${id}`);
     }
+    setSaving(false);
+    navigate(`/suppliers/${id}`);
   };
 
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
