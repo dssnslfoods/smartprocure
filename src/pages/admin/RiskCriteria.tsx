@@ -13,7 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle, HelpCircle } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle, HelpCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { RISK_FACTORS } from '@/types/procurement';
 import { DIMENSION_LABEL, CATEGORY_OPTIONS, type RiskCriterion } from '@/lib/riskCriteria';
@@ -133,6 +133,8 @@ export default function RiskCriteria() {
     toast({ title: 'ลบเกณฑ์แล้ว' }); load();
   };
 
+  const [guideOpen, setGuideOpen] = useState(false);
+
   const grouped = CATEGORY_ORDER.map(cat => ({
     cat,
     items: rows.filter(r => (r.category ?? '_global') === cat),
@@ -150,6 +152,94 @@ export default function RiskCriteria() {
         </div>
         {canEdit && <Button onClick={openNew} className="shrink-0"><Plus className="w-4 h-4 mr-2" />เพิ่มเกณฑ์</Button>}
       </div>
+
+      {/* Scoring Guide */}
+      <Card className="border-blue-200 bg-blue-50/30">
+        <CardContent className="p-0">
+          <button
+            onClick={() => setGuideOpen(!guideOpen)}
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-blue-50/50 transition-colors rounded-lg"
+          >
+            <div className="flex items-center gap-2">
+              <Info className="w-5 h-5 text-blue-600" />
+              <span className="font-semibold text-blue-900">คำแนะนำ: ระบบการให้คะแนนความเสี่ยง BRC</span>
+            </div>
+            {guideOpen ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
+          </button>
+
+          {guideOpen && (
+            <div className="px-4 pb-4 space-y-4 text-sm">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-blue-900">ปัจจัยความเสี่ยง ({RISK_FACTORS.length} ด้าน)</h3>
+                  <p className="text-xs text-muted-foreground">ระบบประเมินผู้จัดจำหน่ายจาก {RISK_FACTORS.length} ปัจจัย ตามมาตรฐาน BRC:</p>
+                  <div className="space-y-1">
+                    {RISK_FACTORS.map((f, i) => (
+                      <div key={f.key} className="flex items-start gap-2 text-xs">
+                        <span className="font-mono text-blue-600 w-4 text-right shrink-0">{i + 1}.</span>
+                        <div>
+                          <span className="font-medium">{f.label}</span>
+                          <span className="text-muted-foreground"> — {f.description}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <h3 className="font-semibold text-blue-900">การคำนวณคะแนน</h3>
+                    <div className="bg-white rounded-lg border p-3 space-y-2 text-xs">
+                      <div>
+                        <p className="font-medium">คะแนนรายด้าน (0–10)</p>
+                        <p className="text-muted-foreground">คะแนน = (1 − น้ำหนักที่ผ่าน / น้ำหนักรวม) × 10</p>
+                        <p className="text-muted-foreground mt-0.5">0 = ความเสี่ยงต่ำสุด (ผ่านทุกเกณฑ์), 10 = ความเสี่ยงสูงสุด</p>
+                      </div>
+                      <div className="border-t pt-2">
+                        <p className="font-medium">คะแนนรวม Supplier (0–100)</p>
+                        <p className="text-muted-foreground">คะแนน = (1 − คะแนนเฉลี่ยถ่วงน้ำหนัก / 10) × 100</p>
+                        <p className="text-muted-foreground mt-0.5">100 = ปลอดภัยที่สุด, 0 = ความเสี่ยงสูงสุด</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="font-semibold text-blue-900">ระดับความเสี่ยง</h3>
+                    <div className="grid grid-cols-2 gap-1.5 text-xs">
+                      <div className="flex items-center gap-2 bg-green-50 rounded px-2 py-1.5 border border-green-200">
+                        <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                        <div><span className="font-medium">Low</span> <span className="text-muted-foreground">(0–2.5)</span></div>
+                      </div>
+                      <div className="flex items-center gap-2 bg-amber-50 rounded px-2 py-1.5 border border-amber-200">
+                        <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                        <div><span className="font-medium">Medium</span> <span className="text-muted-foreground">(2.6–5.0)</span></div>
+                      </div>
+                      <div className="flex items-center gap-2 bg-orange-50 rounded px-2 py-1.5 border border-orange-200">
+                        <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                        <div><span className="font-medium">High</span> <span className="text-muted-foreground">(5.1–7.5)</span></div>
+                      </div>
+                      <div className="flex items-center gap-2 bg-red-50 rounded px-2 py-1.5 border border-red-200">
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                        <div><span className="font-medium">Critical</span> <span className="text-muted-foreground">(7.6–10)</span></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="font-semibold text-blue-900">กฎเกณฑ์สำคัญ</h3>
+                    <div className="text-xs space-y-1 text-muted-foreground">
+                      <p>• <span className="font-medium text-red-600">เกณฑ์บังคับ (Mandatory)</span> — หากไม่ผ่านแม้ข้อเดียว คะแนนด้านนั้น = 10 (สูงสุด) ทันที</p>
+                      <p>• <span className="font-medium text-foreground">น้ำหนัก (Weight)</span> — กำหนดความสำคัญของเกณฑ์แต่ละข้อ น้ำหนักยิ่งสูง ยิ่งมีผลต่อคะแนนมาก</p>
+                      <p>• <span className="font-medium text-foreground">การตรวจอัตโนมัติ</span> — ระบบจับคู่ชื่อใบรับรอง/เอกสารของ Supplier กับคำค้น (keywords) ที่กำหนด</p>
+                      <p>• <span className="font-medium text-foreground">ใบรับรองหมดอายุ</span> — ถือว่า "ไม่ผ่าน" เกณฑ์ข้อนั้นโดยอัตโนมัติ</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {loading ? (
         <Card><CardContent className="p-12 text-center text-muted-foreground">กำลังโหลด...</CardContent></Card>
