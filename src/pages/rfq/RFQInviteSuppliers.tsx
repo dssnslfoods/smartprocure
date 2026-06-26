@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2, Trash2, Clock } from 'lucide-react';
+import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2, Trash2, Clock, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -48,6 +49,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [expiredCerts, setExpiredCerts] = useState<Record<string, ExpiredCert[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [availableSearch, setAvailableSearch] = useState('');
   const [removeTarget, setRemoveTarget] = useState<SupplierWithEligibility | null>(null);
   const [removeReason, setRemoveReason] = useState('');
   const [removals, setRemovals] = useState<{ supplier_id: string; reason: string; removed_at: string; removed_by_name: string | null }[]>([]);
@@ -231,6 +233,9 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
     if (sb) return 1;
     return a.company_name.localeCompare(b.company_name);
   });
+  const filteredAvailable = availableSearch
+    ? available.filter(s => s.company_name.toLowerCase().includes(availableSearch.toLowerCase()))
+    : available;
   const warnings = available.filter(s => s.eligibility.status === 'warning' || s.eligibility.status === 'requires_qa' || s.eligibility.status === 'requires_nomination');
 
   return (
@@ -366,12 +371,23 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                 {saving ? 'Inviting...' : `Invite (${selected.size})`}
               </Button>
             </CardHeader>
-            <CardContent>
-              {available.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">All suppliers have been invited</p>
+            <CardContent className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="ค้นหาชื่อผู้จัดจำหน่าย..."
+                  value={availableSearch}
+                  onChange={e => setAvailableSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              {filteredAvailable.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  {available.length === 0 ? 'All suppliers have been invited' : 'ไม่พบผู้จัดจำหน่าย'}
+                </p>
               ) : (
                 <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {available.map(s => {
+                  {filteredAvailable.map(s => {
                     const { canInvite, status, reasons } = s.eligibility;
                     const isBlocked = !canInvite;
 
