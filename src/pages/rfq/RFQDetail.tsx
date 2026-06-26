@@ -1030,7 +1030,7 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
                     {ev.totalBids} bids · รอบสุดท้าย R{ev.maxRound} / {ev.max_rounds || '∞'}
                   </p>
 
-                  {ev.winner ? (
+                  {ev.winner && (
                     <div className="mt-3 flex items-center gap-3 p-3 rounded-lg bg-emerald-50/60 border border-emerald-100">
                       <Trophy className="w-5 h-5 text-emerald-600 shrink-0" />
                       <div>
@@ -1041,33 +1041,30 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
                         </p>
                       </div>
                     </div>
-                  ) : (
+                  )}
+                  {!ev.winner && (
                     <p className="mt-3 text-sm text-muted-foreground">ยังไม่มีผู้เสนอราคา</p>
                   )}
-                </div>
 
-                <div className="shrink-0 flex flex-col gap-2 items-end">
-                  {canMng && ev.winner && (
-                    sent ? (
-                      <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
-                        <CheckCircle className="w-4 h-4" /> ส่งแล้ว
-                      </span>
-                    ) : !closed ? (
-                      <span className="text-xs text-muted-foreground">ปิดการประมูลก่อนจึงส่งได้</span>
-                    ) : (
-                      <Button size="sm" disabled={sending === ev.id} onClick={() => handleSendWinner(ev)}>
-                        <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'สร้าง Award'}
-                      </Button>
-                    )
-                  )}
-                  <div className="flex gap-2">
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
                     <Button size="sm" variant="outline" onClick={() => nav(`/bidding/${ev.id}`)}>
                       <ArrowRight className="w-3.5 h-3.5 mr-1" /> จัดการประมูล
                     </Button>
-                    {canMng && ev.status === 'active' && (
+                    {canMng && (ev.status === 'active' || ev.status === 'scheduled') && (
                       <Button size="sm" variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50" onClick={() => setRollbackTarget(ev.id)}>
                         <RotateCcw className="w-3.5 h-3.5 mr-1" /> กลับไปตั้งค่า
                       </Button>
+                    )}
+                    {canMng && ev.winner && closed && (
+                      sent ? (
+                        <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
+                          <CheckCircle className="w-4 h-4" /> ส่ง Award แล้ว
+                        </span>
+                      ) : (
+                        <Button size="sm" disabled={sending === ev.id} onClick={() => handleSendWinner(ev)}>
+                          <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'สร้าง Award'}
+                        </Button>
+                      )
                     )}
                   </div>
                 </div>
