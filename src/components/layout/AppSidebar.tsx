@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, Building2, FileText, Send, Gavel, ClipboardList,
+  LayoutDashboard, Building2, FileText, Send, ClipboardList,
   Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
   UserCheck, Briefcase, ShieldAlert, Languages, FileUp, ShieldCheck,
 } from 'lucide-react';
@@ -60,7 +60,6 @@ export default function AppSidebar() {
       label: 'จัดซื้อ',
       items: [
         { icon: Send,          label: t('nav.rfq'),             path: '/rfq',              roles: ['admin', 'procurement_officer', 'supplier'],             moduleKey: 'rfq' },
-        { icon: Gavel,         label: t('nav.eBidding'),        path: '/bidding',          roles: ['admin', 'procurement_officer', 'supplier'],             moduleKey: 'e_bidding' },
         { icon: Award,         label: t('nav.awards'),          path: '/awards',           roles: ['admin', 'procurement_officer', 'approver', 'executive'], moduleKey: 'awards' },
       ],
     },
