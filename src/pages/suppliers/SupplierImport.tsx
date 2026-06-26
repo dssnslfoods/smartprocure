@@ -236,12 +236,18 @@ export default function SupplierImport() {
       }
     }
 
+    // Create auth accounts for imported suppliers that have emails
+    if (imported > 0) {
+      const { data: authResult } = await supabase.rpc('create_supplier_auth_accounts', { p_default_password: '123456' });
+      const authCreated = authResult?.created ?? 0;
+      toast({
+        title: `✓ นำเข้าสำเร็จ ${imported} รายการ`,
+        description: authCreated > 0 ? `สร้าง account login ให้ ${authCreated} ราย (รหัสผ่านเริ่มต้น: 123456)` : undefined,
+      });
+    }
+
     setResult({ imported, failed: errors.length, errors });
     setImporting(false);
-
-    if (imported > 0) {
-      toast({ title: `✓ นำเข้าสำเร็จ ${imported} รายการ` });
-    }
   };
 
   const validCount   = rows.filter(r => r.valid).length;
