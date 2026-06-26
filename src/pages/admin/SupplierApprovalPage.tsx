@@ -224,19 +224,25 @@ export default function SupplierApprovalPage() {
       toast({ title: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', variant: 'destructive' });
       return;
     }
+    if (!resetTarget.email) {
+      toast({ title: 'Supplier ไม่มี email', description: 'ต้องมี email ก่อนจึงจะสร้าง account ได้', variant: 'destructive' });
+      return;
+    }
     setResetLoading(true);
-    const { error } = await supabase.rpc('admin_reset_supplier_password', {
-      p_user_id: resetTarget.created_by,
+    const { data, error } = await supabase.rpc('admin_reset_or_create_supplier_login', {
+      p_supplier_id: resetTarget.id,
       p_new_password: newPassword,
     });
     setResetLoading(false);
     if (error) {
       toast({ title: 'เกิดข้อผิดพลาด', description: error.message, variant: 'destructive' });
     } else {
-      toast({ title: 'รีเซ็ตรหัสผ่านสำเร็จ', description: `รหัสผ่านของ ${resetTarget.company_name} ถูกเปลี่ยนแล้ว` });
+      const action = data?.action === 'created' ? 'สร้าง account ใหม่และ' : '';
+      toast({ title: `${action}รีเซ็ตรหัสผ่านสำเร็จ`, description: `${resetTarget.email} — ใช้ login ได้แล้ว` });
       setResetOpen(false);
       setNewPassword('');
       setResetTarget(null);
+      fetchSuppliers();
     }
   };
 
