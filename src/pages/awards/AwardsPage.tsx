@@ -179,39 +179,163 @@ export default function AwardsPage() {
   const pendingHandoff = handoffAwards.filter(a => a.award_lifecycle_status !== 'po_issued' && a.award_lifecycle_status !== 'completed');
   const doneHandoff = handoffAwards.filter(a => a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed');
 
-  const exportHandoffCSV = () => {
-    const rows = handoffAwards.length ? handoffAwards : [];
-    if (rows.length === 0) {
-      toast({ title: 'ไม่มีข้อมูลให้ส่งออก', variant: 'destructive' });
-      return;
-    }
-    const headers = ['Award No', 'ผู้ขาย (Supplier)', 'เลขผู้เสียภาษี', 'RFQ No', 'RFQ', 'จำนวนเงิน', 'สกุลเงิน', 'เงื่อนไขชำระเงิน', 'เงื่อนไขส่งมอบ', 'วันที่อนุมัติ', 'สถานะ'];
-    const escape = (v: any) => {
-      const s = (v ?? '').toString().replace(/"/g, '""');
-      return /[",\n]/.test(s) ? `"${s}"` : s;
-    };
-    const lines = rows.map(a => [
-      a.award_no || a.award_number || '',
-      a.suppliers?.company_name || '',
-      a.suppliers?.tax_id || '',
-      a.rfqs?.rfq_number || '',
-      a.rfqs?.title || '',
-      a.final_amount ?? a.amount ?? '',
-      a.currency || 'THB',
-      a.payment_terms || '',
-      a.delivery_terms || '',
-      (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '',
-      a.award_lifecycle_status === 'po_issued' ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี',
-    ].map(escape).join(','));
-    const csv = '﻿' + [headers.join(','), ...lines].join('\n');  // BOM for Thai in Excel
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const printHandoff = () => {
+    const rows = handoffAwards;
+    if (rows.length === 0) { toast({ title: 'ไม่มีข้อมูลให้พิมพ์', variant: 'destructive' }); return; }
+    const today = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+    const totalAmt = rows.reduce((s, a) => s + (a.final_amount ?? a.amount ?? 0), 0);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>PO Handoff Report</title>
+<style>
+  @page { size: landscape; margin: 15mm; }
+  body { font-family: 'Sarabun', sans-serif; font-size: 11px; color: #1a1a1a; }
+  .header { text-align: center; margin-bottom: 16px; }
+  .header h1 { font-size: 18px; margin: 0; }
+  .header p { color: #666; margin: 4px 0 0; font-size: 12px; }
+  .meta { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 11px; color: #555; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1e3a5f; color: white; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  th.r { text-align: right; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e5e5e5; }
+  td.r { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:nth-child(even) { background: #f8f9fb; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 9px; font-weight: 600; }
+  .badge-pending { background: #fef3c7; color: #92400e; }
+  .badge-done { background: #dbeafe; color: #1e40af; }
+  .footer { margin-top: 16px; display: flex; justify-content: space-between; font-size: 11px; border-top: 2px solid #1e3a5f; padding-top: 8px; }
+  .footer strong { color: #1e3a5f; }
+  .total-row td { font-weight: 700; border-top: 2px solid #1e3a5f; background: #f0f4f8; }
+</style></head><body>
+<div class="header"><h1>รายงานส่งฝ่ายบัญชี (PO Handoff Report)</h1><p>Smart Procurement — NSL Foods PLC</p></div>
+<div class="meta"><span>วันที่พิมพ์: ${today}</span><span>จำนวน ${rows.length} รายการ</span></div>
+<table><thead><tr>
+  <th>#</th><th>Award No</th><th>ผู้ขาย (Supplier)</th><th>เลขผู้เสียภาษี</th>
+  <th>RFQ</th><th class="r">จำนวนเงิน (THB)</th><th>วันที่อนุมัติ</th><th>สถานะ</th>
+</tr></thead><tbody>
+${rows.map((a, i) => {
+  const amt = a.final_amount ?? a.amount ?? 0;
+  const handed = a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed';
+  return `<tr>
+    <td>${i + 1}</td>
+    <td>${a.award_no || '—'}</td>
+    <td>${a.suppliers?.company_name || '—'}</td>
+    <td>${a.suppliers?.tax_id || '—'}</td>
+    <td>${a.rfqs?.title || '—'}<br><small style="color:#888">${a.rfqs?.rfq_number || ''}</small></td>
+    <td class="r">${amt ? Number(amt).toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '—'}</td>
+    <td>${(a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '—'}</td>
+    <td><span class="badge ${handed ? 'badge-done' : 'badge-pending'}">${handed ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี'}</span></td>
+  </tr>`;
+}).join('')}
+<tr class="total-row"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td class="r">${totalAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td><td colspan="2"></td></tr>
+</tbody></table>
+<div class="footer"><span>รอส่งบัญชี: <strong>${pendingHandoff.length}</strong> · ส่งแล้ว: <strong>${doneHandoff.length}</strong></span><span>Smart Procurement © ${new Date().getFullYear()}</span></div>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); w.print(); }
+  };
+
+  const exportHandoffExcel = async () => {
+    const rows = handoffAwards;
+    if (rows.length === 0) { toast({ title: 'ไม่มีข้อมูลให้ส่งออก', variant: 'destructive' }); return; }
+    const ExcelJS = (await import('exceljs')).default;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Smart Procurement';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('PO Handoff', {
+      pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true },
+    });
+
+    // Title row
+    ws.mergeCells('A1:H1');
+    const titleCell = ws.getCell('A1');
+    titleCell.value = 'รายงานส่งฝ่ายบัญชี (PO Handoff Report)';
+    titleCell.font = { name: 'Sarabun', size: 16, bold: true, color: { argb: 'FF1E3A5F' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 30;
+
+    // Subtitle
+    ws.mergeCells('A2:H2');
+    const subCell = ws.getCell('A2');
+    subCell.value = `Smart Procurement — NSL Foods PLC · วันที่ ${new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })} · ${rows.length} รายการ`;
+    subCell.font = { name: 'Sarabun', size: 10, color: { argb: 'FF888888' } };
+    subCell.alignment = { horizontal: 'center' };
+    ws.getRow(2).height = 20;
+
+    // Header row
+    const headers = ['#', 'Award No', 'ผู้ขาย (Supplier)', 'เลขผู้เสียภาษี', 'RFQ', 'จำนวนเงิน (THB)', 'วันที่อนุมัติ', 'สถานะ'];
+    const headerRow = ws.addRow(headers);
+    headerRow.height = 24;
+    headerRow.eachCell((cell, colNumber) => {
+      cell.font = { name: 'Sarabun', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+      cell.alignment = { horizontal: colNumber === 6 ? 'right' : 'left', vertical: 'middle' };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FF1E3A5F' } } };
+    });
+
+    // Data rows
+    rows.forEach((a, i) => {
+      const amt = a.final_amount ?? a.amount ?? 0;
+      const handed = a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed';
+      const row = ws.addRow([
+        i + 1,
+        a.award_no || '—',
+        a.suppliers?.company_name || '—',
+        a.suppliers?.tax_id || '—',
+        `${a.rfqs?.title || '—'} (${a.rfqs?.rfq_number || ''})`,
+        amt || 0,
+        (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '—',
+        handed ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี',
+      ]);
+      row.height = 22;
+      row.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Sarabun', size: 10 };
+        cell.alignment = { horizontal: colNumber === 6 ? 'right' : 'left', vertical: 'middle' };
+        cell.border = { bottom: { style: 'thin', color: { argb: 'FFE5E5E5' } } };
+        if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F9FB' } };
+      });
+      // Format amount column
+      const amtCell = row.getCell(6);
+      if (amt) { amtCell.numFmt = '#,##0.00'; amtCell.font = { name: 'Sarabun', size: 10, bold: true }; }
+      // Color status badge
+      const statusCell = row.getCell(8);
+      statusCell.font = { name: 'Sarabun', size: 9, bold: true, color: { argb: handed ? 'FF1E40AF' : 'FF92400E' } };
+      statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: handed ? 'FFDBEAFE' : 'FFFEF3C7' } };
+      statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+
+    // Total row
+    const totalAmt = rows.reduce((s, a) => s + (a.final_amount ?? a.amount ?? 0), 0);
+    const totalRow = ws.addRow(['', '', '', '', 'รวมทั้งสิ้น', totalAmt, '', '']);
+    totalRow.height = 26;
+    totalRow.eachCell((cell, colNumber) => {
+      cell.font = { name: 'Sarabun', size: 11, bold: true, color: { argb: 'FF1E3A5F' } };
+      cell.border = { top: { style: 'medium', color: { argb: 'FF1E3A5F' } } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F8' } };
+      if (colNumber === 5) cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      if (colNumber === 6) { cell.numFmt = '#,##0.00'; cell.alignment = { horizontal: 'right', vertical: 'middle' }; }
+    });
+
+    // Column widths
+    ws.columns = [
+      { width: 5 }, { width: 18 }, { width: 30 }, { width: 18 },
+      { width: 35 }, { width: 18 }, { width: 16 }, { width: 15 },
+    ];
+
+    // Footer
+    ws.addRow([]);
+    const footerRow = ws.addRow([`รอส่งบัญชี: ${pendingHandoff.length} · ส่งแล้ว: ${doneHandoff.length} · รวม: ${rows.length}`, '', '', '', '', '', '', `Smart Procurement © ${new Date().getFullYear()}`]);
+    footerRow.getCell(1).font = { name: 'Sarabun', size: 9, color: { argb: 'FF888888' } };
+    footerRow.getCell(8).font = { name: 'Sarabun', size: 9, color: { argb: 'FF888888' } };
+    footerRow.getCell(8).alignment = { horizontal: 'right' };
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `PO_Handoff_Report_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `PO_Handoff_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
-    toast({ title: '✓ ส่งออกรายงานแล้ว', description: `${rows.length} รายการ — ส่งไฟล์ CSV ให้ฝ่ายบัญชีได้เลย` });
+    toast({ title: '✓ ส่งออก Excel แล้ว', description: `${rows.length} รายการ — ไฟล์ .xlsx พร้อมส่งฝ่ายบัญชี` });
   };
 
   const markHandedOver = async (id: string) => {
@@ -478,11 +602,11 @@ export default function AwardsPage() {
                 </p>
               </div>
               <div className="flex gap-2 shrink-0">
-                <Button variant="outline" onClick={() => window.print()}>
+                <Button variant="outline" onClick={printHandoff}>
                   <Printer className="w-4 h-4 mr-1" /> พิมพ์
                 </Button>
-                <Button onClick={exportHandoffCSV}>
-                  <Download className="w-4 h-4 mr-1" /> ส่งออก CSV
+                <Button onClick={exportHandoffExcel}>
+                  <Download className="w-4 h-4 mr-1" /> ส่งออก Excel
                 </Button>
               </div>
             </CardContent>
