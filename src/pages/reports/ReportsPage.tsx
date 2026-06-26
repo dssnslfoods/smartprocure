@@ -4,7 +4,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart } from 'recharts';
 import { supabase } from '@/integrations/supabase/client';
-import { TrendingUp, TrendingDown, BarChart3, Activity, Users } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { TrendingUp, TrendingDown, BarChart3, Activity, Users, Trophy, CheckCircle2, AlertCircle, Eye } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import AwardSelectionSummary from '@/components/AwardSelectionSummary';
 
 // Chart configs
 const spendingConfig = {
@@ -40,19 +44,23 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 export default function ReportsPage() {
   const [supplierStats, setSupplierStats] = useState({ total: 0, approved: 0, pending: 0, draft: 0, rejected: 0 });
   const [rfqStats, setRfqStats] = useState({ total: 0, open: 0, closed: 0, awarded: 0 });
-  const [_awardCount, setAwardCount] = useState(0);
+  const [allAwards, setAllAwards] = useState<any[]>([]);
   const [overrideAwards, setOverrideAwards] = useState<any[]>([]);
+  const [snapDialog, setSnapDialog] = useState<any>(null);
   useEffect(() => {
     const load = async () => {
       const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: overrides }] = await Promise.all([
         supabase.from('suppliers').select('status'),
         supabase.from('rfqs').select('status'),
-        supabase.from('awards').select('id'),
+        supabase.from('awards')
+          .select('id, award_no, amount, final_amount, status, award_lifecycle_status, awarded_at, is_override_selection, selection_reason, selection_snapshot, suppliers(company_name), rfqs(rfq_number, title)')
+          .order('awarded_at', { ascending: false }),
         supabase.from('awards')
           .select('id, awarded_at, selection_reason, selection_snapshot, suppliers(company_name), rfqs(rfq_number, title)')
           .eq('is_override_selection', true)
           .order('awarded_at', { ascending: false }),
       ]);
+      if (awards) setAllAwards(awards);
       if (overrides) setOverrideAwards(overrides);
 
       if (suppliers) {
@@ -72,7 +80,6 @@ export default function ReportsPage() {
           awarded: rfqs.filter(r => r.status === 'awarded').length,
         });
       }
-      if (awards) setAwardCount(awards.length);
     };
     load();
   }, []);
@@ -160,6 +167,9 @@ export default function ReportsPage() {
           <TabsTrigger value="spending">Spending Trends</TabsTrigger>
           <TabsTrigger value="rfq">RFQ Analytics</TabsTrigger>
           <TabsTrigger value="suppliers">Supplier Performance</TabsTrigger>
+          <TabsTrigger value="awards" className="flex items-center gap-1">
+            <Trophy className="w-3.5 h-3.5" />ผลการคัดเลือก ({allAwards.length})
+          </TabsTrigger>
           <TabsTrigger value="compliance">
             การคัดเลือกนอกเกณฑ์{overrideAwards.length > 0 ? ` (${overrideAwards.length})` : ''}
           </TabsTrigger>
@@ -272,6 +282,104 @@ export default function ReportsPage() {
           </div>
         </TabsContent>
 
+        {/* Award Results Tab — all awards with scoring compliance */}
+        <TabsContent value="awards" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3 mb-2">
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">ทั้งหมด</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold">{allAwards.length}</div></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-600" />ตามคะแนน</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold text-emerald-700">{allAwards.filter(a => !a.is_override_selection).length}</div></CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-1.5"><AlertCircle className="w-4 h-4 text-amber-600" />นอกเกณฑ์คะแนน</CardTitle></CardHeader>
+              <CardContent><div className="text-2xl font-bold text-amber-700">{allAwards.filter(a => a.is_override_selection).length}</div></CardContent>
+            </Card>
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">รายงานผลการคัดเลือกผู้ชนะ</CardTitle>
+              <CardDescription>แสดงทุกรายการจัดซื้อที่มีการตัดสิน พร้อมระบุว่าเลือกผู้ชนะตามคะแนนสูงสุดหรือไม่</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {allAwards.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">ยังไม่มีรายการ Award</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left p-3 font-medium text-muted-foreground">Award No.</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">RFQ</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">ผู้ชนะ</th>
+                        <th className="text-right p-3 font-medium text-muted-foreground">จำนวนเงิน</th>
+                        <th className="text-center p-3 font-medium text-muted-foreground">คะแนน Final</th>
+                        <th className="text-center p-3 font-medium text-muted-foreground">การคัดเลือก</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">สถานะ</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">วันที่</th>
+                        <th className="text-center p-3 font-medium text-muted-foreground">รายละเอียด</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allAwards.map((a: any) => {
+                        const snap = a.selection_snapshot;
+                        const winnerFinal = snap?.winner?.scores?.final ?? null;
+                        const topFinal = Array.isArray(snap?.ranking) && snap.ranking.length
+                          ? Math.max(...snap.ranking.map((r: any) => r.final ?? 0)) : null;
+                        const isOverride = !!a.is_override_selection;
+                        const statusLabel: Record<string, string> = {
+                          pending: 'รอการอนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ',
+                        };
+                        const lifecycleLabel: Record<string, string> = {
+                          approved: 'รอส่งบัญชี', po_issued: 'ออก PO แล้ว', completed: 'เสร็จสิ้น',
+                        };
+                        const displayStatus = lifecycleLabel[a.award_lifecycle_status] || statusLabel[a.status] || a.status;
+                        return (
+                          <tr key={a.id} className="border-b hover:bg-muted/30 align-top">
+                            <td className="p-3 font-mono text-xs">{a.award_no || '—'}</td>
+                            <td className="p-3">
+                              <div className="font-mono text-xs text-muted-foreground">{a.rfqs?.rfq_number || '—'}</div>
+                              <div className="text-xs">{a.rfqs?.title || '—'}</div>
+                            </td>
+                            <td className="p-3 font-medium">{a.suppliers?.company_name || '—'}</td>
+                            <td className="p-3 text-right tabular-nums">{(a.final_amount || a.amount) ? `฿${(a.final_amount || a.amount).toLocaleString()}` : '—'}</td>
+                            <td className="p-3 text-center tabular-nums">
+                              {winnerFinal != null ? (
+                                <span className={isOverride ? 'text-amber-700 font-semibold' : 'text-emerald-700 font-semibold'}>{winnerFinal}</span>
+                              ) : '—'}
+                              {topFinal != null && winnerFinal != null && topFinal !== winnerFinal && (
+                                <span className="text-[10px] text-muted-foreground block">สูงสุด {topFinal}</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              {isOverride ? (
+                                <Badge className="bg-amber-100 text-amber-700 text-[10px] gap-1"><AlertCircle className="w-3 h-3" />นอกเกณฑ์</Badge>
+                              ) : (
+                                <Badge className="bg-emerald-100 text-emerald-700 text-[10px] gap-1"><CheckCircle2 className="w-3 h-3" />ตามคะแนน</Badge>
+                              )}
+                            </td>
+                            <td className="p-3 text-xs">{displayStatus}</td>
+                            <td className="p-3 text-xs text-muted-foreground">{a.awarded_at ? new Date(a.awarded_at).toLocaleDateString('th-TH') : '—'}</td>
+                            <td className="p-3 text-center">
+                              {snap && (
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSnapDialog(a)}>
+                                  <Eye className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Award Compliance Tab — selections that did not follow the top score */}
         <TabsContent value="compliance" className="space-y-4">
           <Card>
@@ -327,6 +435,25 @@ export default function ReportsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Selection Snapshot Dialog */}
+      <Dialog open={!!snapDialog} onOpenChange={() => setSnapDialog(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-emerald-600" />
+              เกณฑ์การคัดเลือก — {snapDialog?.rfqs?.rfq_number}
+            </DialogTitle>
+          </DialogHeader>
+          {snapDialog?.selection_snapshot && (
+            <AwardSelectionSummary
+              snap={snapDialog.selection_snapshot}
+              isOverride={!!snapDialog.is_override_selection}
+              selectionReason={snapDialog.selection_reason}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
