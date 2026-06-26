@@ -11,10 +11,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save, ShieldCheck } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 
 interface CatalogItem {
   id: string;
@@ -32,6 +33,9 @@ interface SupplierOption {
   category: string | null;
   tier: string | null;
   contact_person: string | null;
+  brcScore: number | null;
+  brcMet: number;
+  brcTotal: number;
 }
 
 interface LineItem {
@@ -73,11 +77,45 @@ export default function RFQForm() {
       setCatalogLoading(false);
     };
     const fetchSuppliers = async () => {
-      const { data } = await supabase.from('suppliers')
-        .select('id, company_name, category, tier, contact_person')
-        .not('is_blacklisted', 'eq', true)
-        .order('company_name');
-      setSuppliers((data as SupplierOption[]) || []);
+      const [supRes, critRes, certRes, docRes] = await Promise.all([
+        supabase.from('suppliers')
+          .select('id, company_name, category, tier, contact_person')
+          .not('is_blacklisted', 'eq', true),
+        supabase.from('risk_criteria').select('*').eq('active', true),
+        supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date'),
+        supabase.from('supplier_documents').select('supplier_id, document_type, document_name'),
+      ]);
+      const allSuppliers = (supRes.data || []) as { id: string; company_name: string; category: string | null; tier: string | null; contact_person: string | null }[];
+      const criteria = (critRes.data as RiskCriterion[]) || [];
+      const certsBy: Record<string, SupplierCert[]> = {};
+      (certRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
+      const docsBy: Record<string, SupplierDoc[]> = {};
+      (docRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
+
+      const enriched: SupplierOption[] = allSuppliers.map(s => {
+        if (criteria.length === 0) {
+          return { ...s, brcScore: null, brcMet: 0, brcTotal: 0 };
+        }
+        const dims = computeDimensionRisks(criteria, certsBy[s.id] || [], docsBy[s.id] || [], 'all');
+        const dimList = Object.values(dims);
+        const totalCriteria = dimList.reduce((a, d) => a + d.criteria.length, 0);
+        const metCriteria = dimList.reduce((a, d) => a + d.criteria.filter(c => c.met).length, 0);
+        const wSum = dimList.reduce((a, d) => a + d.totalWeight, 0);
+        const risk10 = wSum > 0
+          ? dimList.reduce((a, d) => a + (d.score ?? 0) * d.totalWeight, 0) / wSum
+          : 0;
+        const riskScore = Math.round((1 - risk10 / 10) * 100);
+        return { ...s, brcScore: riskScore, brcMet: metCriteria, brcTotal: totalCriteria };
+      });
+
+      enriched.sort((a, b) => {
+        if (a.brcScore !== null && b.brcScore !== null) return b.brcScore - a.brcScore;
+        if (a.brcScore !== null) return -1;
+        if (b.brcScore !== null) return 1;
+        return a.company_name.localeCompare(b.company_name);
+      });
+
+      setSuppliers(enriched);
       setSuppliersLoading(false);
     };
     fetchCatalog();
@@ -324,11 +362,26 @@ export default function RFQForm() {
                         {[s.contact_person, s.category].filter(Boolean).join(' · ') || '—'}
                       </div>
                     </div>
-                    {s.tier && (
-                      <Badge variant="outline" className="text-xs shrink-0">
-                        {s.tier === 'critical_tier_1' ? 'Critical' : 'Non-Critical'}
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {s.brcScore !== null && (
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] gap-0.5',
+                            s.brcScore >= 75 ? 'border-green-300 bg-green-50 text-green-700' :
+                            s.brcScore >= 50 ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                            'border-red-300 bg-red-50 text-red-700'
+                          )}
+                        >
+                          <ShieldCheck className="w-3 h-3" />
+                          BRC {s.brcMet}/{s.brcTotal}
+                        </Badge>
+                      )}
+                      {s.tier && (
+                        <Badge variant="outline" className="text-xs">
+                          {s.tier === 'critical_tier_1' ? 'Critical' : 'Non-Critical'}
+                        </Badge>
+                      )}
+                    </div>
                   </label>
                 ))
               )}
