@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon, Lightbulb, ArrowRight, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, BarChart2, Trophy, AlertCircle, Send, CheckCircle, Gavel, XOctagon, Lightbulb, ArrowRight, Pencil, Check, X, Plus, Trash2, RotateCcw } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -55,6 +55,10 @@ export default function RFQDetail() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [savingTitle, setSavingTitle] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [itemDraft, setItemDraft] = useState({ item_name: '', quantity: '', unit: '', specifications: '' });
+  const [addingItem, setAddingItem] = useState(false);
+  const [savingItem, setSavingItem] = useState(false);
 
   const saveTitle = async () => {
     const next = titleDraft.trim();
@@ -67,6 +71,36 @@ export default function RFQDetail() {
     setEditingTitle(false);
     toast({ title: 'แก้ไขชื่อ RFQ แล้ว' });
   };
+  const startEditItem = (item: any) => {
+    setEditingItemId(item.id);
+    setItemDraft({ item_name: item.item_name || '', quantity: String(item.quantity ?? ''), unit: item.unit || '', specifications: item.specifications || '' });
+  };
+  const cancelEditItem = () => { setEditingItemId(null); setAddingItem(false); };
+  const saveItem = async () => {
+    if (!itemDraft.item_name.trim()) { toast({ title: 'กรุณาใส่ชื่อรายการ', variant: 'destructive' }); return; }
+    setSavingItem(true);
+    const payload = { item_name: itemDraft.item_name.trim(), quantity: parseFloat(itemDraft.quantity) || null, unit: itemDraft.unit.trim() || null, specifications: itemDraft.specifications.trim() || null };
+    if (addingItem) {
+      const { error } = await supabase.from('rfq_items').insert({ ...payload, rfq_id: id });
+      if (error) { toast({ title: 'เพิ่มไม่สำเร็จ', description: error.message, variant: 'destructive' }); setSavingItem(false); return; }
+      toast({ title: 'เพิ่มรายการแล้ว' });
+    } else if (editingItemId) {
+      const { error } = await supabase.from('rfq_items').update(payload).eq('id', editingItemId);
+      if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); setSavingItem(false); return; }
+      toast({ title: 'แก้ไขรายการแล้ว' });
+    }
+    setSavingItem(false); setEditingItemId(null); setAddingItem(false); fetchData();
+  };
+  const deleteItem = async (itemId: string) => {
+    const { error } = await supabase.from('rfq_items').delete().eq('id', itemId);
+    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'ลบรายการแล้ว' }); fetchData();
+  };
+  const startAddItem = () => {
+    setAddingItem(true); setEditingItemId('__new__');
+    setItemDraft({ item_name: '', quantity: '', unit: '', specifications: '' });
+  };
+
   const isSupplier = hasRole('supplier');
   const mySupplierId = profile?.supplier_id ?? null;
 
@@ -191,6 +225,7 @@ export default function RFQDetail() {
   if (!rfq) return <div className="text-center py-16 text-muted-foreground">RFQ not found</div>;
 
   const canManage = hasRole('admin') || hasRole('procurement_officer');
+  const isLocked = rfq.status === 'awarded' || rfq.status === 'closed';
   const awardedDisabled = !winner;
 
   return (
@@ -215,7 +250,7 @@ export default function RFQDetail() {
               ) : (
                 <>
                   <h1 className="text-2xl font-bold">{rfq.title}</h1>
-                  {canManage && (
+                  {canManage && !isLocked && (
                     <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-foreground"
                       onClick={() => { setTitleDraft(rfq.title); setEditingTitle(true); }} title="แก้ไขชื่อ RFQ">
                       <Pencil className="w-3.5 h-3.5" />
@@ -248,6 +283,11 @@ export default function RFQDetail() {
                 <AlertCircle className="h-3 w-3" />
                 ยังไม่ได้เลือก winner — ไปที่ Bid Comparison
               </span>
+            )}
+            {rfq.status === 'draft' && (
+              <Button size="sm" className="gap-1" onClick={() => handleStatusChange('published')}>
+                <Send className="w-3.5 h-3.5" />เผยแพร่ RFQ
+              </Button>
             )}
             {rfq.status !== 'closed' && rfq.status !== 'awarded' && (
               <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
@@ -284,6 +324,32 @@ export default function RFQDetail() {
 
       {canManage && <NextStepBanner status={rfq.status} hasWinner={!!winner} invitedCount={invitedCount} onGo={setTab} />}
 
+      {(() => {
+        const rollbacks = (rfq.notes || '').split('\n').filter((l: string) => l.startsWith('[Rollback'));
+        if (rollbacks.length === 0) return null;
+        return (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-amber-800">
+              <RotateCcw className="w-4 h-4 shrink-0" />
+              <span className="text-sm font-semibold">ประวัติการ Rollback ({rollbacks.length} ครั้ง)</span>
+            </div>
+            <div className="space-y-1.5">
+              {rollbacks.map((line: string, i: number) => {
+                const match = line.match(/^\[Rollback\s*(.*?)\]\s*(.+)$/);
+                const ts = match?.[1] || '';
+                const reason = match?.[2] || line;
+                return (
+                  <div key={i} className="flex items-start gap-2 text-sm text-amber-900 bg-amber-100/50 rounded-md px-3 py-2">
+                    <span className="shrink-0 text-xs text-amber-600 font-mono mt-0.5 min-w-[110px]">{ts || `ครั้งที่ ${rollbacks.length - i}`}</span>
+                    <span>{reason}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="details">Details & Items</TabsTrigger>
@@ -307,29 +373,97 @@ export default function RFQDetail() {
                 <Row label="Status" value={rfq.status} />
                 <Row label="Deadline" value={rfq.deadline ? new Date(rfq.deadline).toLocaleString() : null} />
                 <Row label="Description" value={rfq.description} />
-                <Row label="Notes" value={rfq.notes} />
+                <Row label="Notes" value={(rfq.notes || '').split('\n').filter((l: string) => !l.startsWith('[Rollback')).join('\n').trim() || null} />
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-base">Line Items ({items.length})</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-base">Line Items ({items.length})</CardTitle>
+                {canManage && rfq.status === 'draft' && !addingItem && (
+                  <Button variant="outline" size="sm" onClick={startAddItem}><Plus className="w-4 h-4 mr-1" />เพิ่มรายการ</Button>
+                )}
+              </CardHeader>
               <CardContent>
-                {items.length === 0 ? (
+                {items.length === 0 && !addingItem ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No items</p>
                 ) : (
                   <div className="space-y-2">
                     {items.map((item, i) => (
-                      <div key={item.id} className="p-3 border rounded-lg text-sm">
-                        <div className="font-medium">{i + 1}. {item.item_name}</div>
-                        <div className="text-muted-foreground mt-1">
-                          {[item.quantity && `Qty: ${item.quantity}`, item.unit, item.specifications].filter(Boolean).join(' · ')}
+                      editingItemId === item.id ? (
+                        <div key={item.id} className="p-3 border-2 border-primary/30 rounded-lg text-sm space-y-2 bg-muted/20">
+                          <div className="space-y-1">
+                            <Label className="text-xs">ชื่อรายการ *</Label>
+                            <Input value={itemDraft.item_name} onChange={e => setItemDraft(d => ({ ...d, item_name: e.target.value }))} placeholder="เช่น น้ำตาลทราย 50 กก." />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">จำนวน</Label>
+                              <Input type="number" value={itemDraft.quantity} onChange={e => setItemDraft(d => ({ ...d, quantity: e.target.value }))} placeholder="100" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">หน่วย</Label>
+                              <Input value={itemDraft.unit} onChange={e => setItemDraft(d => ({ ...d, unit: e.target.value }))} placeholder="ถุง" />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Specifications</Label>
+                            <Input value={itemDraft.specifications} onChange={e => setItemDraft(d => ({ ...d, specifications: e.target.value }))} placeholder="ISO certified, food-grade..." />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={cancelEditItem} disabled={savingItem}><X className="w-3.5 h-3.5 mr-1" />ยกเลิก</Button>
+                            <Button size="sm" onClick={saveItem} disabled={savingItem}><Check className="w-3.5 h-3.5 mr-1" />{savingItem ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={item.id} className="p-3 border rounded-lg text-sm group">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1">
+                              <div className="font-medium">{i + 1}. {item.item_name}</div>
+                              <div className="text-muted-foreground mt-1">
+                                {[item.quantity && `Qty: ${item.quantity}`, item.unit, item.specifications && `กลุ่ม: ${item.specifications}`].filter(Boolean).join(' · ')}
+                              </div>
+                            </div>
+                            {canManage && rfq.status === 'draft' && !editingItemId && (
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => startEditItem(item)} title="แก้ไข"><Pencil className="w-3.5 h-3.5" /></Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600" onClick={() => deleteItem(item.id)} title="ลบ"><Trash2 className="w-3.5 h-3.5" /></Button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    ))}
+                    {addingItem && editingItemId === '__new__' && (
+                      <div className="p-3 border-2 border-primary/30 rounded-lg text-sm space-y-2 bg-muted/20">
+                        <div className="space-y-1">
+                          <Label className="text-xs">ชื่อรายการ *</Label>
+                          <Input value={itemDraft.item_name} onChange={e => setItemDraft(d => ({ ...d, item_name: e.target.value }))} placeholder="เช่น น้ำตาลทราย 50 กก." autoFocus />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-xs">จำนวน</Label>
+                            <Input type="number" value={itemDraft.quantity} onChange={e => setItemDraft(d => ({ ...d, quantity: e.target.value }))} placeholder="100" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">หน่วย</Label>
+                            <Input value={itemDraft.unit} onChange={e => setItemDraft(d => ({ ...d, unit: e.target.value }))} placeholder="ถุง" />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Specifications</Label>
+                          <Input value={itemDraft.specifications} onChange={e => setItemDraft(d => ({ ...d, specifications: e.target.value }))} placeholder="ISO certified, food-grade..." />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={cancelEditItem} disabled={savingItem}><X className="w-3.5 h-3.5 mr-1" />ยกเลิก</Button>
+                          <Button size="sm" onClick={saveItem} disabled={savingItem}><Check className="w-3.5 h-3.5 mr-1" />{savingItem ? 'กำลังบันทึก...' : 'เพิ่ม'}</Button>
                         </div>
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </CardContent>
             </Card>
-            <RFQTechnicalCriteria rfqId={id!} canManage={canManage} />
+            <RFQTechnicalCriteria rfqId={id!} canManage={canManage && !isLocked} />
           </div>
         </TabsContent>
 
@@ -354,7 +488,7 @@ export default function RFQDetail() {
         </TabsContent>
 
         <TabsContent value="ebidding">
-          <RFQBiddingResults rfqId={id!} />
+          <RFQBiddingResults rfqId={id!} rfqStatus={rfq.status} />
         </TabsContent>
       </Tabs>
     </div>
@@ -383,9 +517,9 @@ function getNextStep(status: string, hasWinner: boolean, invitedCount: number): 
     case 'evaluation':
       if (!hasWinner)
         return { title: 'ขั้นต่อไป: เลือกผู้ชนะ', desc: 'เปรียบเทียบคะแนน Commercial / Technical / Risk ที่แท็บ Bid Comparison แล้วกด "เลือก" ผู้ชนะ (ดูสูตรได้ที่ไอคอน ⓘ บนหัวคอลัมน์)', action: { label: 'ไปที่ Bid Comparison', tab: 'comparison' } };
-      return { title: 'เลือกผู้ชนะแล้ว — ขั้นต่อไป: ส่ง Final', desc: 'กดไอคอน ✈️ ที่แถวผู้ชนะเพื่อส่งไป Final Quotation แล้วไปสร้าง Award/PO ต่อ', action: { label: 'ไปที่ Bid Comparison', tab: 'comparison' } };
+      return { title: 'เลือกผู้ชนะแล้ว', desc: 'ระบบสร้าง Award อัตโนมัติแล้ว — ไปอนุมัติและส่งฝ่ายบัญชีออก PO ได้ที่เมนู Awards', action: { label: 'ไปที่ Awards', to: '/awards' } };
     case 'awarded':
-      return { title: 'ประกาศผู้ชนะแล้ว', desc: 'ดำเนินการต่อที่เมนู Final Quotations → Awards เพื่อสร้าง Award และส่งฝ่ายบัญชีออกใบสั่งซื้อ (PO)', action: { label: 'ไปที่ Final Quotations', to: '/final-quotations' } };
+      return { title: 'ประกาศผู้ชนะแล้ว', desc: 'ดำเนินการต่อที่เมนู Awards เพื่ออนุมัติและส่งฝ่ายบัญชีออกใบสั่งซื้อ (PO)', action: { label: 'ไปที่ Awards', to: '/awards' } };
     case 'closed':
       return { title: 'RFQ ปิด/ยกเลิกแล้ว', desc: 'การจัดซื้อนี้สิ้นสุดแล้ว ไม่มีขั้นตอนต่อ' };
     default:
@@ -433,26 +567,23 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
   const [weights, setWeights] = useSt<ScoringWeights>(DEFAULT_SCORING_WEIGHTS);
   const [loading, setLoading] = useSt(true);
   const [rfqData, setRfqData] = useSt<any>(null);
-  const [sentToFQ, setSentToFQ] = useSt<Set<string>>(new Set());
-  const [sendingFQ, setSendingFQ] = useSt<string | null>(null);
+  const [awardInfo, setAwardInfo] = useSt<{ selection_reason: string | null; is_override_selection: boolean } | null>(null);
   const [selectingWinner, setSelectingWinner] = useSt<string | null>(null);
   const [pendingWinner, setPendingWinner] = useSt<any>(null);
   const [overrideReason, setOverrideReason] = useSt('');
-  const { user, hasRole: hr } = useAuth();
+  const { user, hasRole: hr, profile: authProfile } = useAuth();
   const { toast: t } = useToast();
   const canMng = hr('admin') || hr('procurement_officer');
 
   useEff(() => {
     const fetch = async () => {
-      const [qRes, rfqRes, fqRes] = await Promise.all([
+      const [qRes, rfqRes] = await Promise.all([
         sb.from('quotations')
           .select('*, suppliers(id, company_name, risk_level)')
           .eq('rfq_id', rfqId).order('final_score', { ascending: false }),
-        sb.from('rfqs').select('rfq_number, title').eq('id', rfqId).single(),
-        sb.from('final_quotations').select('quotation_id').eq('rfq_id', rfqId).not('quotation_id', 'is', null),
+        sb.from('rfqs').select('rfq_number, title, status').eq('id', rfqId).single(),
       ]);
       if (rfqRes.data) setRfqData(rfqRes.data);
-      if (fqRes.data) setSentToFQ(new Set(fqRes.data.map((d: any) => d.quotation_id)));
       if (qRes.data) {
         const sm: Record<string, any> = {};
         qRes.data.forEach((q: any) => { if (q.suppliers) sm[q.supplier_id] = q.suppliers; });
@@ -476,42 +607,21 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
           const scored = scoreQuotations(qRes.data, sm, w, override);
           setRows(qRes.data.map((q: any) => {
             const s = scored.find(x => x.quotation_id === q.id);
-            return { ...q, ...(s ?? {}) };
+            return { ...(s ?? {}), ...q, final_score: s?.final_score ?? q.final_score, rank: s?.rank ?? q.rank, commercial_score: s?.commercial_score, technical_score: s?.technical_score, risk_score: s?.risk_score };
           }).sort((a: any, b: any) => (b.final_score ?? 0) - (a.final_score ?? 0)));
         }
       }
+      // Load award info for selection reason display
+      const { data: award } = await sb.from('awards').select('selection_reason, is_override_selection')
+        .eq('rfq_id', rfqId).limit(1).maybeSingle();
+      if (award) setAwardInfo(award as any);
       setLoading(false);
     };
     fetch();
   }, [rfqId]);
 
-  const handleSendFQ = async (q: any) => {
-    if (!user) return;
-    // Only the selected winner is sent to Final Quotations (the winner is decided here at RFQ).
-    if (!q.is_recommended_winner) {
-      t({ title: 'ส่งได้เฉพาะผู้ชนะ', description: 'กรุณาเลือกผู้ชนะก่อน แล้วจึงส่งไป Final Quotation', variant: 'destructive' });
-      return;
-    }
-    setSendingFQ(q.id);
-    try {
-      const { data: existing } = await sb.from('final_quotations').select('id').eq('rfq_id', rfqId).eq('quotation_id', q.id).maybeSingle();
-      if (existing) { setSentToFQ(prev => new Set(prev).add(q.id)); setSendingFQ(null); return; }
-      const ep = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
-      const { error } = await sb.from('final_quotations').insert({
-        rfq_id: rfqId, supplier_id: q.supplier_id, quotation_id: q.id,
-        total_amount: ep || q.total_amount, currency: q.currency || 'THB',
-        payment_terms: q.payment_term || q.payment_terms || '',
-        delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
-        notes: `จาก RFQ ${rfqData?.rfq_number || ''} — ${rfqData?.title || ''} | Score: ${q.final_score ?? '—'}`,
-        // Winner already chosen at RFQ — arrives selected, skipping re-selection.
-        status: 'selected', is_selected: true, created_by: user.id,
-      });
-      if (error) throw error;
-      setSentToFQ(prev => new Set(prev).add(q.id));
-      t({ title: 'ส่งผู้ชนะไป Final Quotation แล้ว', description: supMap[q.supplier_id]?.company_name });
-    } catch (err: any) { t({ title: 'Error', description: err.message, variant: 'destructive' }); }
-    setSendingFQ(null);
-  };
+  const isAwarded = rfqData?.status === 'awarded';
+  const winnerRow = rows.find((r: any) => r.is_recommended_winner);
 
   const topFinal = rows.length ? Math.max(...rows.map((r: any) => r.final_score ?? 0)) : 0;
 
@@ -537,27 +647,36 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
       await sb.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
       // Freeze the winner + selection criteria/scores for later lookup.
       const snapshot = await buildAwardSnapshot(rfqId, q.supplier_id, q.id);
+      const ep = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
+      const tenantId = authProfile?.tenant_id;
+      if (!tenantId) throw new Error('ไม่พบ tenant — กรุณา login ใหม่');
       const awardFields: any = {
         selection_snapshot: snapshot,
         selection_reason: reason,
         is_override_selection: isOverride,
+        amount: ep || q.total_amount,
+        final_amount: ep || q.total_amount,
+        recommendation: `${supMap[q.supplier_id]?.company_name || ''} — ${rfqData?.rfq_number || ''} ${rfqData?.title || ''}`,
       };
       const { data: existing } = await sb.from('awards').select('id').eq('rfq_id', rfqId).eq('supplier_id', q.supplier_id).maybeSingle();
       if (!existing) {
-        await sb.from('awards').insert({
+        const { error: insErr } = await sb.from('awards').insert({
           rfq_id: rfqId, supplier_id: q.supplier_id,
+          tenant_id: tenantId,
           status: 'pending' as any, award_lifecycle_status: 'pending_approval' as any,
           awarded_at: new Date().toISOString(),
           ...awardFields,
         } as any);
+        if (insErr) throw insErr;
       } else {
-        await sb.from('awards').update(awardFields).eq('id', existing.id);
+        const { error: updErr } = await sb.from('awards').update(awardFields).eq('id', existing.id);
+        if (updErr) throw updErr;
       }
       setRows(prev => prev.map(r => ({ ...r, is_recommended_winner: r.id === q.id })));
       setPendingWinner(null);
       t({
         title: 'บันทึกการคัดเลือกผู้ชนะแล้ว',
-        description: `${supMap[q.supplier_id]?.company_name} — สถานะ RFQ เปลี่ยนเป็น Awarded${isOverride ? ' (บันทึกเป็นการคัดเลือกนอกเหนือผลคะแนน)' : ''}`,
+        description: `${supMap[q.supplier_id]?.company_name} — สร้าง Award อัตโนมัติแล้ว ไปอนุมัติได้ที่เมนู Awards${isOverride ? ' (การคัดเลือกนอกเหนือผลคะแนน)' : ''}`,
       });
       onWinnerSelected?.();
     } catch (err: any) { t({ title: 'บันทึกไม่สำเร็จ', description: err.message, variant: 'destructive' }); }
@@ -569,6 +688,41 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
 
   return (
     <>
+    {/* Winner summary when already awarded */}
+    {isAwarded && winnerRow && (
+      <div className={`rounded-lg border p-4 mb-4 ${awardInfo?.is_override_selection ? 'border-amber-200 bg-amber-50/50' : 'border-emerald-200 bg-emerald-50/50'}`}>
+        <div className="flex items-start gap-3">
+          <div className={`p-2 rounded-lg shrink-0 ${awardInfo?.is_override_selection ? 'bg-amber-500/10' : 'bg-emerald-500/10'}`}>
+            <Trophy className={`w-5 h-5 ${awardInfo?.is_override_selection ? 'text-amber-600' : 'text-emerald-600'}`} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs font-medium uppercase tracking-wide ${awardInfo?.is_override_selection ? 'text-amber-600' : 'text-emerald-600'}`}>
+                ผู้ชนะการคัดเลือก
+              </span>
+              {awardInfo?.is_override_selection && (
+                <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0 gap-0.5">
+                  <AlertCircle className="w-3 h-3" />คัดเลือกนอกเกณฑ์คะแนน
+                </Badge>
+              )}
+            </div>
+            <p className={`text-lg font-bold ${awardInfo?.is_override_selection ? 'text-amber-800' : 'text-emerald-800'}`}>
+              {supMap[winnerRow.supplier_id]?.company_name}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Final Score: <span className="font-bold">{winnerRow.final_score ?? '—'}</span> · Rank #{rows.indexOf(winnerRow) + 1}
+              {awardInfo?.is_override_selection && ` (คะแนนสูงสุดคือ ${rows[0]?.final_score ?? '—'})`}
+            </p>
+            {awardInfo?.selection_reason && (
+              <div className="mt-2 pt-2 border-t border-amber-200/60 text-sm text-amber-800">
+                <span className="font-medium">เหตุผลการคัดเลือก:</span> {awardInfo.selection_reason}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
     <div className="overflow-x-auto rounded-lg border text-sm">
       <table className="w-full">
         <thead>
@@ -581,16 +735,36 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
             <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Risk Score<ScoreInfo k="risk" weights={weights} /></th>
             <th className="text-right p-3 font-medium text-muted-foreground whitespace-nowrap">Final<ScoreInfo k="final" weights={weights} /></th>
             <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
-            {canMng && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
+            {canMng && !isAwarded && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
           </tr>
         </thead>
         <tbody>
           {rows.map((q: any, idx: number) => {
             const sup = supMap[q.supplier_id];
             const ep = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
+            const isWinner = q.is_recommended_winner;
+            const isOverride = isWinner && idx > 0;
             return (
-              <tr key={q.id} className={`border-b ${idx === 0 ? 'bg-emerald-50/50' : 'hover:bg-muted/30'}`}>
-                <td className="p-3 font-medium">{sup?.company_name || '—'}</td>
+              <tr key={q.id} className={`border-b ${isWinner ? 'bg-emerald-50 ring-1 ring-emerald-200' : idx === 0 ? 'bg-blue-50/50 ring-1 ring-blue-200' : 'hover:bg-muted/30'}`}>
+                <td className="p-3 font-medium">
+                  <div className="flex items-center gap-2">
+                    {isWinner && <Trophy className="w-4 h-4 text-emerald-600 shrink-0" />}
+                    <span>{sup?.company_name || '—'}</span>
+                    {idx === 0 && !isWinner && (
+                      <Badge variant="secondary" className="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0 shrink-0 gap-0.5">
+                        <Trophy className="w-3 h-3" />แนะนำ
+                      </Badge>
+                    )}
+                    {isWinner && (
+                      <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0 shrink-0">ผู้ชนะ</Badge>
+                    )}
+                    {isOverride && (
+                      <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0 shrink-0 gap-0.5" title="คัดเลือกนอกเหนือผลคะแนนปกติ — มีเหตุผลบันทึกไว้">
+                        <AlertCircle className="w-3 h-3" />นอกเกณฑ์คะแนน
+                      </Badge>
+                    )}
+                  </div>
+                </td>
                 <td className="p-3 text-right tabular-nums">{ep > 0 ? ep.toLocaleString() : '—'}</td>
                 <td className="p-3 text-center">
                   {(() => {
@@ -614,32 +788,15 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
                 <td className="p-3 text-right tabular-nums">{q.risk_score ?? '—'}</td>
                 <td className="p-3 text-right tabular-nums font-bold">{q.final_score ?? '—'}</td>
                 <td className="p-3 text-center text-muted-foreground">#{q.rank ?? (idx + 1)}</td>
-                {canMng && (
+                {canMng && !isAwarded && (
                   <td className="p-3 text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      {q.is_recommended_winner ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                          <Trophy className="w-3.5 h-3.5" /> ผู้ชนะ
-                        </span>
-                      ) : (
-                        <Button variant="outline" size="sm" disabled={selectingWinner === q.id}
-                          onClick={() => requestSelectWinner(q)} className="text-xs"
-                          title="เลือก supplier นี้เป็นผู้ชนะ — RFQ จะเปลี่ยนเป็น Awarded และสร้าง Award (บันทึกเกณฑ์ที่ใช้ไว้ด้วย)">
-                          <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
-                        </Button>
-                      )}
-                      {q.is_recommended_winner && (
-                        sentToFQ.has(q.id) ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="ส่งไป Final Quotation แล้ว">
-                            <CheckCircle className="w-3 h-3" />
-                          </span>
-                        ) : (
-                          <Button variant="ghost" size="sm" disabled={sendingFQ === q.id} onClick={() => handleSendFQ(q)} className="text-xs px-1.5" title="ส่งผู้ชนะไป Final Quotation">
-                            <Send className="w-3.5 h-3.5" />
-                          </Button>
-                        )
-                      )}
-                    </div>
+                    {!isWinner && (
+                      <Button variant="outline" size="sm" disabled={selectingWinner === q.id}
+                        onClick={() => requestSelectWinner(q)} className="text-xs"
+                        title="เลือก supplier นี้เป็นผู้ชนะ — RFQ จะเปลี่ยนเป็น Awarded และสร้าง Award อัตโนมัติ">
+                        <Trophy className="w-3.5 h-3.5 mr-1" />{selectingWinner === q.id ? '...' : 'เลือก'}
+                      </Button>
+                    )}
                   </td>
                 )}
               </tr>
@@ -684,24 +841,24 @@ function RFQComparisonInline({ rfqId, onWinnerSelected }: { rfqId: string; onWin
 }
 
 // E-Bidding results for this RFQ — shows winner of each linked bidding event
-function RFQBiddingResults({ rfqId }: { rfqId: string }) {
+function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: string }) {
   const [events, setEvents] = useSt<any[]>([]);
   const [loading, setLoading] = useSt(true);
   const [rfqData, setRfqData] = useSt<any>(null);
   const [sentEvents, setSentEvents] = useSt<Set<string>>(new Set());
   const [sending, setSending] = useSt<string | null>(null);
-  const { user, hasRole: hr } = useAuth();
+  const { user, hasRole: hr, profile: authProf } = useAuth();
   const { toast: t } = useToast();
   const canMng = hr('admin') || hr('procurement_officer');
 
   const load = async () => {
-    const [evRes, rfqRes, fqRes] = await Promise.all([
+    const [evRes, rfqRes, awdRes] = await Promise.all([
       sb.from('bidding_events').select('*').eq('rfq_id', rfqId).order('created_at', { ascending: false }),
       sb.from('rfqs').select('rfq_number, title').eq('id', rfqId).single(),
-      sb.from('final_quotations').select('bidding_event_id').eq('rfq_id', rfqId).not('bidding_event_id', 'is', null),
+      sb.from('awards').select('supplier_id').eq('rfq_id', rfqId),
     ]);
     if (rfqRes.data) setRfqData(rfqRes.data);
-    if (fqRes.data) setSentEvents(new Set(fqRes.data.map((d: any) => d.bidding_event_id)));
+    const awardedSuppliers = new Set((awdRes.data || []).map((a: any) => a.supplier_id));
 
     if (evRes.data && evRes.data.length > 0) {
       const eventIds = evRes.data.map((e: any) => e.id);
@@ -724,6 +881,7 @@ function RFQBiddingResults({ rfqId }: { rfqId: string }) {
         return { ...ev, winner: ranked[0] || null, totalBids: evBids.length, maxRound };
       });
       setEvents(enriched);
+      setSentEvents(new Set(enriched.filter((ev: any) => ev.winner && awardedSuppliers.has(ev.winner.supplier_id)).map((ev: any) => ev.id)));
     }
     setLoading(false);
   };
@@ -734,22 +892,23 @@ function RFQBiddingResults({ rfqId }: { rfqId: string }) {
     if (!user || !ev.winner) return;
     setSending(ev.id);
     try {
-      const { data: existing } = await sb.from('final_quotations').select('id').eq('rfq_id', rfqId).eq('bidding_event_id', ev.id).maybeSingle();
+      const { data: existing } = await sb.from('awards').select('id').eq('rfq_id', rfqId).eq('supplier_id', ev.winner.supplier_id).maybeSingle();
       if (existing) { setSentEvents(prev => new Set(prev).add(ev.id)); setSending(null); return; }
-      const { error } = await sb.from('final_quotations').insert({
+      const { error } = await sb.from('awards').insert({
         rfq_id: rfqId,
         supplier_id: ev.winner.supplier_id,
-        bidding_event_id: ev.id,
-        quotation_id: null,
-        total_amount: ev.winner.bid_amount,
-        currency: 'THB',
-        notes: `จากการประมูล "${ev.title}" — RFQ ${rfqData?.rfq_number || ''} | รอบสุดท้าย R${ev.maxRound} | ผู้ชนะ: ${ev.winner.suppliers?.company_name}`,
-        status: 'pending',
-        created_by: user.id,
-      });
+        tenant_id: authProf?.tenant_id,
+        amount: ev.winner.bid_amount,
+        final_amount: ev.winner.bid_amount,
+        status: 'pending' as any,
+        award_lifecycle_status: 'pending_approval' as any,
+        awarded_at: new Date().toISOString(),
+        recommendation: `จากการประมูล "${ev.title}" — RFQ ${rfqData?.rfq_number || ''} | รอบสุดท้าย R${ev.maxRound}`,
+      } as any);
       if (error) throw error;
+      await sb.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', rfqId);
       setSentEvents(prev => new Set(prev).add(ev.id));
-      t({ title: 'ส่งผู้ชนะการประมูลไป Final Quotation แล้ว', description: `${ev.winner.suppliers?.company_name} — ไปจัดการต่อที่เมนู "ใบเสนอราคาสุดท้าย"` });
+      t({ title: 'สร้าง Award จากผู้ชนะการประมูลแล้ว', description: `${ev.winner.suppliers?.company_name} — ไปอนุมัติได้ที่เมนู Awards` });
     } catch (err: any) {
       t({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -758,11 +917,21 @@ function RFQBiddingResults({ rfqId }: { rfqId: string }) {
 
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>;
   if (events.length === 0) {
+    const isAwarded = rfqStatus === 'awarded';
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Gavel className="w-10 h-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">ยังไม่มีการประมูล (E-Bidding) ที่เชื่อมกับ RFQ นี้</p>
-        <p className="text-xs mt-1">สร้างการประมูลที่เมนู "การประมูล" แล้วเลือก Linked RFQ เป็น RFQ นี้</p>
+        {isAwarded ? (
+          <>
+            <p className="text-sm font-medium text-foreground">การจัดซื้อนี้ดำเนินการแบบ เปรียบเทียบราคา (Bid Comparison)</p>
+            <p className="text-xs mt-1">ไม่ได้ใช้รูปแบบ E-Bidding — ดูผลการคัดเลือกได้ที่แท็บ Bid Comparison</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm">ยังไม่มีการประมูล (E-Bidding) ที่เชื่อมกับ RFQ นี้</p>
+            <p className="text-xs mt-1">สร้างการประมูลที่เมนู "การประมูล" แล้วเลือก Linked RFQ เป็น RFQ นี้</p>
+          </>
+        )}
       </div>
     );
   }
@@ -815,7 +984,7 @@ function RFQBiddingResults({ rfqId }: { rfqId: string }) {
                       <span className="text-xs text-muted-foreground">ปิดการประมูลก่อนจึงส่งได้</span>
                     ) : (
                       <Button size="sm" disabled={sending === ev.id} onClick={() => handleSendWinner(ev)}>
-                        <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'ส่ง Final'}
+                        <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'สร้าง Award'}
                       </Button>
                     )}
                   </div>

@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal, ListChecks } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal, ListChecks, RotateCcw, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import AwardSelectionSummary from '@/components/AwardSelectionSummary';
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -45,6 +46,10 @@ export default function AwardsPage() {
   const [decisionReason, setDecisionReason] = useState('');
   const [handoffAwards, setHandoffAwards] = useState<any[]>([]);
   const [handoffLoading, setHandoffLoading] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState<any>(null);
+  const [rollbackReason, setRollbackReason] = useState('');
+  const [rollbacking, setRollbacking] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const { hasRole } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -76,18 +81,47 @@ export default function AwardsPage() {
 
   const pagination = useSupabasePagination<any>({
     tableName: 'awards',
-    select: '*, suppliers(company_name, risk_level), rfqs(title, rfq_number), final_quotations(currency)',
+    select: '*, suppliers(company_name, risk_level), rfqs(title, rfq_number)',
     pageSize: 200,
   });
 
   const handleStatusChange = async (id: string, status: string) => {
+    if (status === 'rejected') {
+      const award = pagination.items.find((a: any) => a.id === id);
+      if (!award) return;
+      const rfqId = award.rfq_id;
+      try {
+        if (rfqId) {
+          await supabase.from('quotations').update({ is_recommended_winner: false }).eq('rfq_id', rfqId);
+          const { data: currentRfq } = await supabase.from('rfqs').select('notes').eq('id', rfqId).single();
+          const ts = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+          const reason = decisionReason.trim() || 'ไม่อนุมัติ';
+          const entry = `[Rollback ${ts}] ไม่อนุมัติ: ${reason} (ผู้ชนะเดิม: ${award.suppliers?.company_name || '—'})`;
+          const prevNotes = (currentRfq?.notes || '').replace(/^\[Rollback\].*$/m, '').trim();
+          const merged = prevNotes ? `${entry}\n${prevNotes}` : entry;
+          await supabase.from('rfqs').update({
+            status: 'evaluation' as any,
+            notes: merged,
+            updated_at: new Date().toISOString(),
+          }).eq('id', rfqId);
+        }
+        await supabase.from('awards').delete().eq('id', id);
+        toast({ title: 'ไม่อนุมัติ Award', description: 'RFQ กลับสู่สถานะ Evaluation — สามารถเลือกผู้ชนะใหม่ได้' });
+        setDecisionReason('');
+        fetchStats();
+        pagination.refresh();
+      } catch (err: any) {
+        toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      }
+      return;
+    }
+
     const updates: any = { status, updated_at: new Date().toISOString() };
     if (decisionReason) updates.decision_reason = decisionReason;
     if (status === 'approved') {
       updates.ready_for_po = true;
       updates.award_lifecycle_status = 'approved';
     }
-    if (status === 'rejected') updates.award_lifecycle_status = 'rejected';
 
     const { error } = await supabase.from('awards').update(updates).eq('id', id);
     if (error) {
@@ -100,12 +134,42 @@ export default function AwardsPage() {
     }
   };
 
+  const handleRollback = async () => {
+    if (!rollbackTarget || !rollbackReason.trim()) return;
+    setRollbacking(true);
+    const rfqId = rollbackTarget.rfq_id;
+    try {
+      if (rfqId) {
+        await supabase.from('quotations').update({ is_recommended_winner: false }).eq('rfq_id', rfqId);
+        const { data: currentRfq } = await supabase.from('rfqs').select('notes').eq('id', rfqId).single();
+        const ts = new Date().toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+        const entry = `[Rollback ${ts}] ${rollbackReason.trim()} (ผู้ชนะเดิม: ${rollbackTarget.suppliers?.company_name || '—'})`;
+        const prevNotes = (currentRfq?.notes || '').replace(/^\[Rollback\].*$/m, '').trim();
+        const merged = prevNotes ? `${entry}\n${prevNotes}` : entry;
+        await supabase.from('rfqs').update({
+          status: 'evaluation' as any,
+          notes: merged,
+          updated_at: new Date().toISOString(),
+        }).eq('id', rfqId);
+      }
+      await supabase.from('awards').delete().eq('id', rollbackTarget.id);
+      toast({ title: 'Rollback สำเร็จ', description: 'RFQ กลับสู่สถานะ Evaluation — สามารถเลือกผู้ชนะใหม่ได้ที่ Bid Comparison' });
+      setRollbackTarget(null);
+      setRollbackReason('');
+      fetchStats();
+      pagination.refresh();
+    } catch (err: any) {
+      toast({ title: 'Rollback ไม่สำเร็จ', description: err.message, variant: 'destructive' });
+    }
+    setRollbacking(false);
+  };
+
   // ===== Accounting Handoff (PO export) =====
   const fetchHandoff = useCallback(async () => {
     setHandoffLoading(true);
     const { data } = await supabase
       .from('awards')
-      .select('*, suppliers(company_name, tax_id), rfqs(title, rfq_number), final_quotations(currency, payment_terms, delivery_terms)')
+      .select('*, suppliers(company_name, tax_id), rfqs(title, rfq_number)')
       .or('status.eq.approved,award_lifecycle_status.eq.approved,award_lifecycle_status.eq.po_issued')
       .order('awarded_at', { ascending: false });
     if (data) setHandoffAwards(data);
@@ -133,9 +197,9 @@ export default function AwardsPage() {
       a.rfqs?.rfq_number || '',
       a.rfqs?.title || '',
       a.final_amount ?? a.amount ?? '',
-      a.final_quotations?.currency || 'THB',
-      a.final_quotations?.payment_terms || '',
-      a.final_quotations?.delivery_terms || '',
+      a.currency || 'THB',
+      a.payment_terms || '',
+      a.delivery_terms || '',
       (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '',
       a.award_lifecycle_status === 'po_issued' ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี',
     ].map(escape).join(','));
@@ -179,7 +243,7 @@ export default function AwardsPage() {
         const rfqTitle = a.rfqs?.title || '';
         const rfqNumber = a.rfqs?.rfq_number || '';
         const displayAmount = a.final_amount ?? a.amount;
-        const amount = displayAmount ? `${a.final_quotations?.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '';
+        const amount = displayAmount ? `${a.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '';
         const risk = a.suppliers?.risk_level || '';
         const status = getStatusDisplay(a).label;
         const date = (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString() : '';
@@ -194,6 +258,47 @@ export default function AwardsPage() {
       <div>
         <h1 className="text-2xl font-bold">{t('awards.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('awards.subtitle')}</p>
+      </div>
+
+      {/* Guide */}
+      <div className="rounded-lg border border-blue-200 bg-blue-50/50">
+        <button onClick={() => setGuideOpen(!guideOpen)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+          <span className="flex items-center gap-2 text-sm font-medium text-blue-800">
+            <HelpCircle className="w-4 h-4" />คำแนะนำการใช้งาน
+          </span>
+          {guideOpen ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
+        </button>
+        {guideOpen && (
+          <div className="px-4 pb-4 space-y-3 text-sm text-blue-900">
+            <div>
+              <p className="font-semibold mb-1">ขั้นตอนการทำงาน</p>
+              <ol className="list-decimal pl-5 space-y-1 text-xs">
+                <li>เมื่อฝ่ายจัดซื้อเลือกผู้ชนะจาก <strong>Bid Comparison</strong> ระบบจะสร้าง Award อัตโนมัติ (สถานะ "รออนุมัติ")</li>
+                <li>ผู้มีอำนาจตรวจสอบรายละเอียดและ <strong>อนุมัติ</strong> หรือ <strong>ปฏิเสธ</strong></li>
+                <li>เมื่ออนุมัติแล้ว Award จะอยู่ในแท็บ <strong>"ส่งฝ่ายบัญชี (PO)"</strong> เพื่อออกใบสั่งซื้อ</li>
+              </ol>
+            </div>
+            <div>
+              <p className="font-semibold mb-1">ปุ่มในคอลัมน์ Actions</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                <span className="flex items-center gap-2"><Eye className="w-3.5 h-3.5 text-muted-foreground" /> ดูรายละเอียด Award</span>
+                <span className="flex items-center gap-2"><ListChecks className="w-3.5 h-3.5 text-muted-foreground" /> ดูเกณฑ์ที่ใช้คัดเลือกผู้ชนะ</span>
+                <span className="flex items-center gap-2"><Trophy className="w-3.5 h-3.5 text-muted-foreground" /> ไปที่หน้า RFQ ต้นทาง</span>
+                <span className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> อนุมัติ Award</span>
+                <span className="flex items-center gap-2"><XCircle className="w-3.5 h-3.5 text-red-500" /> ปฏิเสธ — ลบ Award และส่ง RFQ กลับไปเลือกผู้ชนะใหม่</span>
+                <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-muted-foreground" /> Rollback — ยกเลิกผู้ชนะ ส่ง RFQ กลับ Evaluation</span>
+              </div>
+            </div>
+            <div>
+              <p className="font-semibold mb-1">หมายเหตุ</p>
+              <ul className="list-disc pl-5 space-y-1 text-xs">
+                <li><strong>ปฏิเสธ</strong> และ <strong>Rollback</strong> ให้ผลเหมือนกัน — ลบ Award และส่ง RFQ กลับสถานะ Evaluation เพื่อเลือกผู้ชนะใหม่ ต่างกันที่ปฏิเสธใช้จากหน้ารายละเอียด ส่วน Rollback ใช้จากตาราง</li>
+                <li>หากผู้ชนะถูกเลือก<strong>นอกเกณฑ์คะแนน</strong> ระบบจะแสดงป้ายเตือนในหน้าเกณฑ์การคัดเลือก พร้อมเหตุผลประกอบ</li>
+                <li>ทุกการ Rollback จะถูกบันทึกไว้ในประวัติของ RFQ เพื่อการตรวจสอบย้อนหลัง</li>
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
 
       <Tabs defaultValue="all" className="space-y-4" onValueChange={(v) => v === 'handoff' && fetchHandoff()}>
@@ -287,7 +392,7 @@ export default function AwardsPage() {
                           <div className="text-muted-foreground/70">{a.rfqs?.rfq_number}</div>
                         </td>
                         <td className="p-3 text-right font-semibold tabular-nums">
-                          {displayAmount ? `${a.final_quotations?.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '—'}
+                          {displayAmount ? `${a.currency || 'THB'} ${Number(displayAmount).toLocaleString()}` : '—'}
                         </td>
                         <td className="p-3 text-center">
                           <RiskBadge level={riskLevel} />
@@ -300,28 +405,51 @@ export default function AwardsPage() {
                         </td>
                         <td className="p-3 text-right">
                           <div className="flex gap-1 justify-end">
-                            <Button variant="ghost" size="sm" onClick={() => { setSelected(a); setDetailOpen(true); }}>
-                              <Eye className="w-3 h-3" />
-                            </Button>
-                            {a.selection_snapshot && (
-                              <Button variant="ghost" size="sm" title="เกณฑ์ที่ใช้คัดเลือกผู้ชนะ" onClick={() => setCriteriaAward(a)}>
-                                <ListChecks className="w-3 h-3" />
+                            <Tooltip><TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" onClick={() => { setSelected(a); setDetailOpen(true); }}>
+                                <Eye className="w-3 h-3" />
                               </Button>
+                            </TooltipTrigger><TooltipContent>ดูรายละเอียด</TooltipContent></Tooltip>
+                            {a.selection_snapshot && (
+                              <Tooltip><TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" onClick={() => setCriteriaAward(a)}>
+                                  <ListChecks className="w-3 h-3" />
+                                </Button>
+                              </TooltipTrigger><TooltipContent>เกณฑ์การคัดเลือก</TooltipContent></Tooltip>
                             )}
                             {a.rfq_id && (
-                              <Button variant="ghost" size="sm" onClick={() => navigate(`/rfq/${a.rfq_id}`)}>
-                                <Trophy className="w-3 h-3" />
-                              </Button>
+                              <Tooltip><TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" onClick={() => navigate(`/rfq/${a.rfq_id}`)}>
+                                  <Trophy className="w-3 h-3" />
+                                </Button>
+                              </TooltipTrigger><TooltipContent>ไปที่ RFQ</TooltipContent></Tooltip>
                             )}
                             {canApprove && (a.status === 'pending' || a.award_lifecycle_status === 'pending_approval') && (
                               <>
-                                <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleStatusChange(a.id, 'approved')}>
-                                  <CheckCircle2 className="w-3 h-3" />
-                                </Button>
-                                <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleStatusChange(a.id, 'rejected')}>
-                                  <XCircle className="w-3 h-3" />
-                                </Button>
+                                <Tooltip><TooltipTrigger asChild>
+                                  <Button variant="outline" size="sm" className="text-emerald-600" onClick={() => handleStatusChange(a.id, 'approved')}>
+                                    <CheckCircle2 className="w-3 h-3" />
+                                  </Button>
+                                </TooltipTrigger><TooltipContent>อนุมัติ</TooltipContent></Tooltip>
+                                <Tooltip><TooltipTrigger asChild>
+                                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleStatusChange(a.id, 'rejected')}>
+                                    <XCircle className="w-3 h-3" />
+                                  </Button>
+                                </TooltipTrigger><TooltipContent>ปฏิเสธ</TooltipContent></Tooltip>
                               </>
+                            )}
+                            {canApprove && a.award_lifecycle_status !== 'po_issued' && a.award_lifecycle_status !== 'completed' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-red-600" onClick={() => { setRollbackTarget(a); setRollbackReason(''); }}>
+                                    <RotateCcw className="w-3 h-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-[220px]">
+                                  <p className="font-medium text-xs">Rollback การคัดเลือก</p>
+                                  <p className="text-[10px] text-muted-foreground mt-0.5">ย้อนกลับไปเลือกผู้ชนะใหม่ — RFQ จะกลับสู่สถานะ Evaluation และลบ Award นี้</p>
+                                </TooltipContent>
+                              </Tooltip>
                             )}
                           </div>
                         </td>
@@ -385,8 +513,8 @@ export default function AwardsPage() {
                       handoffAwards.map(a => {
                         const handed = a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed';
                         const amt = a.final_amount ?? a.amount;
-                        const cur = a.final_quotations?.currency || 'THB';
-                        const terms = [a.final_quotations?.payment_terms, a.final_quotations?.delivery_terms].filter(Boolean).join(' · ');
+                        const cur = a.currency || 'THB';
+                        const terms = [a.payment_terms, a.delivery_terms].filter(Boolean).join(' · ');
                         return (
                           <tr key={a.id} className={`border-b hover:bg-muted/30 ${handed ? 'opacity-60' : ''}`}>
                             <td className="p-3 font-mono text-xs text-muted-foreground">{a.award_no || a.award_number || '—'}</td>
@@ -442,8 +570,43 @@ export default function AwardsPage() {
             )}
           </DialogHeader>
           {criteriaAward?.selection_snapshot
-            ? <AwardSelectionSummary snap={criteriaAward.selection_snapshot} />
+            ? <AwardSelectionSummary snap={criteriaAward.selection_snapshot} isOverride={criteriaAward.is_override_selection} selectionReason={criteriaAward.selection_reason} />
             : <p className="text-sm text-muted-foreground py-6 text-center">ไม่มีข้อมูลเกณฑ์การคัดเลือก (เป็น award ที่สร้างก่อนเปิดใช้ฟีเจอร์นี้)</p>}
+        </DialogContent>
+      </Dialog>
+
+      {/* Rollback confirmation dialog */}
+      <Dialog open={!!rollbackTarget} onOpenChange={o => { if (!o) { setRollbackTarget(null); setRollbackReason(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rollback การคัดเลือกผู้ชนะ</DialogTitle>
+          </DialogHeader>
+          {rollbackTarget && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
+                <p className="font-medium">{rollbackTarget.suppliers?.company_name} — {rollbackTarget.rfqs?.title}</p>
+                <p className="text-xs">เมื่อ Rollback แล้ว:</p>
+                <ul className="text-xs list-disc pl-4 space-y-0.5">
+                  <li>ยกเลิกผู้ชนะที่เลือกไว้</li>
+                  <li>ลบ Award นี้</li>
+                  <li>RFQ กลับสู่สถานะ Evaluation</li>
+                  <li>สามารถเลือกผู้ชนะใหม่ได้ที่ Bid Comparison</li>
+                </ul>
+              </div>
+              <div className="space-y-1">
+                <Label>เหตุผลที่ Rollback *</Label>
+                <Textarea rows={3} value={rollbackReason} onChange={e => setRollbackReason(e.target.value)}
+                  placeholder="เช่น เลือกผู้ชนะผิดราย, ต้องการทบทวนคะแนนใหม่, supplier แจ้งถอนตัว..." />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setRollbackTarget(null)}>ยกเลิก</Button>
+                <Button variant="destructive" onClick={handleRollback}
+                  disabled={!rollbackReason.trim() || rollbacking}>
+                  {rollbacking ? 'กำลัง Rollback...' : 'ยืนยัน Rollback'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -455,7 +618,7 @@ export default function AwardsPage() {
               <DetailRow label={t('awards.awardNo')} value={selected.award_no || selected.award_number} />
               <DetailRow label={t('awards.supplier')} value={selected.suppliers?.company_name} />
               <DetailRow label={t('awards.rfq')} value={`${selected.rfqs?.rfq_number} · ${selected.rfqs?.title}`} />
-              <DetailRow label={t('awards.finalAmount')} value={(() => { const cur = selected.final_quotations?.currency || 'THB'; const amt = selected.final_amount ?? selected.amount; return amt != null ? `${cur} ${Number(amt).toLocaleString()}` : null; })()} />
+              <DetailRow label={t('awards.finalAmount')} value={(() => { const cur = selected.currency || 'THB'; const amt = selected.final_amount ?? selected.amount; return amt != null ? `${cur} ${Number(amt).toLocaleString()}` : null; })()} />
               <DetailRow label={t('common.status')} value={getStatusDisplay(selected).label} />
               <DetailRow label={t('awards.awardReason')} value={selected.award_reason} />
               <DetailRow label={t('awards.recommendation')} value={selected.recommendation} />
@@ -473,9 +636,6 @@ export default function AwardsPage() {
                     </Button>
                     <Button size="sm" variant="destructive" onClick={() => { handleStatusChange(selected.id, 'rejected'); setDetailOpen(false); }}>
                       {t('awards.reject')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => { handleStatusChange(selected.id, 'revise'); setDetailOpen(false); }}>
-                      {t('awards.revise')}
                     </Button>
                   </div>
                 </div>

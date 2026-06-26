@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from '@/i18n';
+import { LogoFull } from '@/components/Logo';
 
 type MenuItem = {
   icon: React.ElementType;
@@ -58,7 +59,6 @@ export default function AppSidebar() {
       items: [
         { icon: Send,          label: t('nav.rfq'),             path: '/rfq',              roles: ['admin', 'procurement_officer', 'supplier'],             moduleKey: 'rfq' },
         { icon: Gavel,         label: t('nav.eBidding'),        path: '/bidding',          roles: ['admin', 'procurement_officer', 'supplier'],             moduleKey: 'e_bidding' },
-        { icon: ClipboardList, label: t('nav.finalQuotations'), path: '/final-quotations', roles: ['admin', 'procurement_officer', 'approver'],             moduleKey: 'final_quotations' },
         { icon: Award,         label: t('nav.awards'),          path: '/awards',           roles: ['admin', 'procurement_officer', 'approver', 'executive'], moduleKey: 'awards' },
       ],
     },
@@ -94,16 +94,8 @@ export default function AppSidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-sidebar-border">
-        <div className="w-8 h-8 rounded-lg bg-sidebar-primary flex items-center justify-center shrink-0">
-          <span className="text-sidebar-primary-foreground font-bold text-sm">SP</span>
-        </div>
-        {!collapsed && (
-          <div className="overflow-hidden">
-            <p className="font-semibold text-sm text-sidebar-accent-foreground truncate">Smart Procurement</p>
-            <p className="text-[10px] text-sidebar-foreground truncate">{tenant?.name ?? 'Smart Procurement'}</p>
-          </div>
-        )}
+      <div className="px-4 h-16 flex items-center border-b border-sidebar-border">
+        <LogoFull collapsed={collapsed} subtitle={tenant?.name ?? 'NSL Foods PLC'} />
       </div>
 
       {/* Nav */}

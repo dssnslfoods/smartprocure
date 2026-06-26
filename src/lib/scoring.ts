@@ -123,7 +123,6 @@ export function scoreQuotations(
 
   scored.sort((a, b) => b.final_score - a.final_score);
   scored.forEach((s, i) => { s.rank = i + 1; });
-  if (scored.length > 0) scored[0].is_recommended_winner = true;
 
   const lowestPriceId = quotations.reduce((best, q) => {
     const ep = effectivePrice(q);

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle2, Building2, Languages } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { LogoIcon } from '@/components/Logo';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -96,8 +97,8 @@ export default function Login() {
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent z-10" />
         
         <div className="relative z-20 w-full max-w-lg text-white space-y-8">
-          <div className="w-16 h-16 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20 mb-8 shadow-2xl">
-            <Building2 className="w-8 h-8 text-white drop-shadow-md" />
+          <div className="mb-8 shadow-2xl rounded-2xl w-16 h-16">
+            <LogoIcon size={64} />
           </div>
           
           <div className="space-y-4">
@@ -123,10 +124,10 @@ export default function Login() {
           
           {/* Mobile Header (Hidden on Desktop) */}
           <div className="text-center space-y-2 mb-4 md:hidden">
-            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-6 shadow-xl shadow-primary/20">
-              <Building2 className="w-7 h-7 text-primary-foreground" />
+            <div className="mx-auto mb-6 w-14 h-14 shadow-xl shadow-primary/20 rounded-2xl">
+              <LogoIcon size={56} />
             </div>
-            <h2 className="text-2xl font-bold tracking-tight text-foreground">Smart Procurement</h2>
+            <h2 className="text-2xl font-bold tracking-tight text-foreground">Smart<span className="font-extrabold">Procurement</span></h2>
             <p className="text-muted-foreground text-sm font-medium">NSL Foods PLC</p>
           </div>
 

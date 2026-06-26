@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Calculator, Trophy, AlertTriangle, CheckCircle, Send } from 'lucide-react';
+import { ArrowLeft, Trophy, AlertTriangle, AlertCircle, CheckCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import RiskBadge from '@/components/RiskBadge';
 import { scoreQuotations } from '@/lib/scoring';
 import type { ScoredQuotation } from '@/lib/scoring';
@@ -17,8 +17,7 @@ import type { RiskLevel, ScoringWeights } from '@/types/procurement';
 
 export default function RFQBidComparison() {
   const { id } = useParams<{ id: string }>();
-  const { user, hasRole } = useAuth();
-  const { toast } = useToast();
+  const { hasRole } = useAuth();
   const navigate = useNavigate();
 
   const [rfq, setRfq] = useState<any>(null);
@@ -28,12 +27,7 @@ export default function RFQBidComparison() {
   const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
   const [weights, setWeights] = useState<ScoringWeights>(DEFAULT_SCORING_WEIGHTS);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [sentToFQ, setSentToFQ] = useState<Set<string>>(new Set());
-  const [sendingFQ, setSendingFQ] = useState<string | null>(null);
-
-  const canManage = hasRole('admin') || hasRole('procurement_officer');
+  const [awardInfo, setAwardInfo] = useState<{ selection_reason: string | null; is_override_selection: boolean } | null>(null);
 
   useEffect(() => {
     const fetch = async () => {
@@ -62,150 +56,24 @@ export default function RFQBidComparison() {
           ? Object.fromEntries(Object.entries(risk.bySupplier).map(([sid, r]) => [sid, r.riskScore]))
           : undefined;
         const result = scoreQuotations(qRes.data, sm, w, override);
+        // Preserve is_recommended_winner from DB (user's choice), not scoring default
+        const dbWinnerMap = new Map(qRes.data.map((q: any) => [q.id, q.is_recommended_winner]));
+        result.forEach(s => { s.is_recommended_winner = dbWinnerMap.get(s.quotation_id) ?? false; });
         setScored(result);
-        const hasScores = qRes.data.some((q: any) => q.final_score != null);
-        setSaved(hasScores);
       }
+      // Load award info for selection reason
+      const { data: award } = await supabase.from('awards').select('selection_reason, is_override_selection')
+        .eq('rfq_id', id).limit(1).maybeSingle();
+      if (award) setAwardInfo(award as any);
       setLoading(false);
     };
     fetch();
   }, [id]);
 
-  // Check which quotations already sent to Final Quotation
-  useEffect(() => {
-    if (!id) return;
-    const checkExisting = async () => {
-      const { data } = await supabase
-        .from('final_quotations')
-        .select('quotation_id')
-        .eq('rfq_id', id)
-        .not('quotation_id', 'is', null);
-      if (data) {
-        setSentToFQ(new Set(data.map((d: any) => d.quotation_id)));
-      }
-    };
-    checkExisting();
-  }, [id]);
-
-  const handleSendToFinalQuotation = async (q: any) => {
-    if (!id || !user) return;
-    // Only the selected winner is sent to Final Quotations.
-    const isWinnerQ = scored.find(s => s.quotation_id === q.id)?.is_recommended_winner;
-    if (!isWinnerQ) {
-      toast({ title: 'ส่งได้เฉพาะผู้ชนะ', description: 'ผู้ชนะถูกเลือกตั้งแต่ขั้นเปรียบเทียบใบเสนอราคา', variant: 'destructive' });
-      return;
-    }
-    setSendingFQ(q.id);
-    try {
-      // Check if already exists
-      const { data: existing } = await supabase
-        .from('final_quotations')
-        .select('id')
-        .eq('rfq_id', id)
-        .eq('quotation_id', q.id)
-        .maybeSingle();
-
-      if (existing) {
-        toast({ title: 'มีอยู่แล้ว', description: 'ใบเสนอราคานี้ถูกส่งไป Final Quotation แล้ว', variant: 'destructive' });
-        setSentToFQ(prev => new Set(prev).add(q.id));
-        setSendingFQ(null);
-        return;
-      }
-
-      const effectivePrice = (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0);
-
-      const { error } = await supabase.from('final_quotations').insert({
-        rfq_id: id,
-        supplier_id: q.supplier_id,
-        quotation_id: q.id,
-        total_amount: effectivePrice || q.total_amount,
-        currency: q.currency || 'THB',
-        payment_terms: q.payment_term || q.payment_terms || '',
-        delivery_terms: q.delivery_terms || (q.lead_time_days ? `${q.lead_time_days} days` : ''),
-        notes: `จาก RFQ ${rfq?.rfq_number || ''} — ${rfq?.title || ''} | Score: ${q.final_score ?? '—'}`,
-        // Winner already chosen here — arrives selected, skipping re-selection in Final Quotations.
-        status: 'selected',
-        is_selected: true,
-        created_by: user.id,
-      });
-
-      if (error) throw error;
-
-      setSentToFQ(prev => new Set(prev).add(q.id));
-      toast({
-        title: 'ส่งไป Final Quotation แล้ว',
-        description: `${suppliers[q.supplier_id]?.company_name} — สามารถไปเลือกและจัดการต่อได้ที่เมนู "ใบเสนอราคาสุดท้าย"`,
-      });
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-    setSendingFQ(null);
-  };
-
-  const handleRunEvaluation = async () => {
-    if (!id || !user) return;
-    setSaving(true);
-
-    for (const s of scored) {
-      await supabase.from('quotations').update({
-        commercial_score: s.commercial_score,
-        technical_score: s.technical_score,
-        risk_score: s.risk_score,
-        final_score: s.final_score,
-        rank: s.rank,
-        evaluation_status: 'under_review',
-        updated_at: new Date().toISOString(),
-      }).eq('id', s.quotation_id);
-    }
-
-    const evalRows = scored.map(s => ({
-      rfq_id: id,
-      quotation_id: s.quotation_id,
-      supplier_id: s.supplier_id,
-      commercial_weight: weights.commercial,
-      technical_weight: weights.technical,
-      risk_weight: weights.risk,
-      price_score: s.price_score,
-      lead_time_score: s.lead_time_score,
-      payment_term_score: s.payment_term_score,
-      commercial_score: s.commercial_score,
-      technical_score: s.technical_score,
-      risk_score: s.risk_score,
-      final_score: s.final_score,
-      rank: s.rank,
-      is_recommended_winner: s.is_recommended_winner,
-      warnings: s.warnings,
-      evaluated_by: user.id,
-      evaluated_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    }));
-
-    await supabase.from('rfq_evaluations').insert(evalRows);
-
-    await supabase.from('rfqs').update({
-      workflow_status: 'under_evaluation',
-      updated_at: new Date().toISOString(),
-    }).eq('id', id);
-
-    await supabase.rpc('write_audit_log', {
-      _entity_type: 'rfq',
-      _entity_id: id,
-      _action: 'evaluation_scores_calculated',
-      _new_values: { quotation_count: scored.length },
-    }).maybeSingle();
-
-    setSaving(false);
-    setSaved(true);
-    toast({ title: 'Evaluation complete', description: `Scores saved for ${scored.length} quotation(s).` });
-  };
-
-  const handleRecommendWinner = () => {
-    navigate(`/rfq/${id}/award-approval`);
-  };
-
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
   if (!rfq) return <div className="text-center py-16 text-muted-foreground">RFQ not found</div>;
 
+  const isAwarded = rfq?.status === 'awarded';
   const winner = scored.find(s => s.is_recommended_winner);
   const winnerSupplier = winner ? suppliers[winner.supplier_id] : null;
   const globalWarnings = scored.flatMap(s => s.warnings.filter(w => w.includes('Lowest price')));
@@ -220,20 +88,6 @@ export default function RFQBidComparison() {
           <h1 className="text-2xl font-bold">Bid Comparison</h1>
           <p className="text-sm text-muted-foreground">{rfq.rfq_number} · {rfq.title}</p>
         </div>
-        {canManage && (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleRunEvaluation} disabled={saving || quotations.length === 0}>
-              <Calculator className="w-4 h-4 mr-2" />
-              {saving ? 'Calculating...' : 'Run Evaluation'}
-            </Button>
-            {saved && (
-              <Button onClick={handleRecommendWinner}>
-                <Trophy className="w-4 h-4 mr-2" />
-                Recommend Winner
-              </Button>
-            )}
-          </div>
-        )}
       </div>
 
       {globalWarnings.length > 0 && (
@@ -248,23 +102,41 @@ export default function RFQBidComparison() {
         </div>
       )}
 
-      {winner && winnerSupplier && (
-        <Card className="border-emerald-200 bg-emerald-50/50">
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="p-2 bg-emerald-500/10 rounded-lg">
-              <Trophy className="w-6 h-6 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-xs text-emerald-600 font-medium uppercase tracking-wide">Recommended Winner</p>
-              <p className="text-lg font-bold text-emerald-800">{winnerSupplier.company_name}</p>
-              <p className="text-sm text-emerald-700">
-                Final Score: <span className="font-bold">{winner.final_score}</span> · Rank #1
-                {winner.warnings.length > 0 && <span className="ml-2 text-orange-600">⚠ Has warnings</span>}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {winner && winnerSupplier && (() => {
+        const isOverride = winner.rank != null && winner.rank > 1;
+        return (
+          <Card className={`${isOverride ? 'border-amber-200 bg-amber-50/50' : 'border-emerald-200 bg-emerald-50/50'}`}>
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className={`p-2 rounded-lg ${isOverride ? 'bg-amber-500/10' : 'bg-emerald-500/10'}`}>
+                <Trophy className={`w-6 h-6 ${isOverride ? 'text-amber-600' : 'text-emerald-600'}`} />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className={`text-xs font-medium uppercase tracking-wide ${isOverride ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    ผู้ชนะการคัดเลือก
+                  </p>
+                  {isOverride && (
+                    <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0 gap-0.5">
+                      <AlertCircle className="w-3 h-3" />คัดเลือกนอกเกณฑ์คะแนน
+                    </Badge>
+                  )}
+                </div>
+                <p className={`text-lg font-bold ${isOverride ? 'text-amber-800' : 'text-emerald-800'}`}>{winnerSupplier.company_name}</p>
+                <p className={`text-sm ${isOverride ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  Final Score: <span className="font-bold">{winner.final_score}</span> · Rank #{winner.rank ?? 1}
+                  {isOverride && <span className="ml-2 text-amber-600">(คะแนนสูงสุดคือ {scored[0]?.final_score ?? '—'})</span>}
+                  {winner.warnings.length > 0 && <span className="ml-2 text-orange-600">⚠ Has warnings</span>}
+                </p>
+                {awardInfo?.selection_reason && (
+                  <div className={`mt-2 pt-2 border-t text-sm ${isOverride ? 'border-amber-200/60 text-amber-800' : 'border-emerald-200/60 text-emerald-800'}`}>
+                    <span className="font-medium">เหตุผลการคัดเลือก:</span> {awardInfo.selection_reason}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
         <CheckCircle className="w-3.5 h-3.5" />
@@ -295,7 +167,6 @@ export default function RFQBidComparison() {
                 <th className="text-right p-3 font-medium text-muted-foreground bg-orange-50 whitespace-nowrap">Risk Score<ScoreInfo k="risk" weights={weights} /></th>
                 <th className="text-right p-3 font-medium text-muted-foreground bg-emerald-50 whitespace-nowrap">Final Score<ScoreInfo k="final" weights={weights} /></th>
                 <th className="text-center p-3 font-medium text-muted-foreground">Rank</th>
-                {canManage && <th className="text-center p-3 font-medium text-muted-foreground">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -314,14 +185,29 @@ export default function RFQBidComparison() {
                         ? 'bg-emerald-50/60 hover:bg-emerald-50'
                         : isWinner && hasWarn
                         ? 'bg-orange-50/60 hover:bg-orange-50'
+                        : s.rank === 1 && !isWinner
+                        ? 'bg-blue-50/50 ring-1 ring-blue-200'
                         : 'hover:bg-muted/30'
                     }`}
                   >
                     <td className="p-3">
                       <div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           {isWinner && <Trophy className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
                           <span className="font-medium">{sup?.company_name || '—'}</span>
+                          {s.rank === 1 && !isWinner && (
+                            <Badge variant="secondary" className="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0 gap-0.5">
+                              <Trophy className="w-3 h-3" />แนะนำ
+                            </Badge>
+                          )}
+                          {isWinner && (
+                            <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0">ผู้ชนะ</Badge>
+                          )}
+                          {isWinner && s.rank != null && s.rank > 1 && (
+                            <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0 gap-0.5" title="คัดเลือกนอกเหนือผลคะแนนปกติ">
+                              <AlertCircle className="w-3 h-3" />นอกเกณฑ์คะแนน
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">{q.quotation_no || q.id.slice(0, 8)}</p>
                         {hasWarn && (
@@ -385,28 +271,6 @@ export default function RFQBidComparison() {
                     <td className="p-3 text-center">
                       <RankBadge rank={s.rank} />
                     </td>
-                    {canManage && (
-                      <td className="p-3 text-center">
-                        {!isWinner ? (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        ) : sentToFQ.has(q.id) ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
-                            <CheckCircle className="w-3.5 h-3.5" /> ส่งแล้ว
-                          </span>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={sendingFQ === q.id}
-                            onClick={() => handleSendToFinalQuotation(q)}
-                            className="text-xs"
-                          >
-                            <Send className="w-3.5 h-3.5 mr-1" />
-                            {sendingFQ === q.id ? 'กำลังส่ง...' : 'ส่งผู้ชนะ Final'}
-                          </Button>
-                        )}
-                      </td>
-                    )}
                   </tr>
                 );
               })}

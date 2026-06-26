@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge';
-import { Check, X, Trophy, AlertTriangle, Info } from 'lucide-react';
+import { Check, X, Trophy, AlertTriangle, Info, AlertCircle } from 'lucide-react';
 import type { AwardSnapshot } from '@/lib/awardSnapshot';
 
 /**
@@ -7,10 +7,25 @@ import type { AwardSnapshot } from '@/lib/awardSnapshot';
  * (awards.selection_snapshot). Shown for historical lookup — the values
  * reflect master data as it was at award time, not the current config.
  */
-export default function AwardSelectionSummary({ snap }: { snap: AwardSnapshot }) {
+export default function AwardSelectionSummary({ snap, isOverride, selectionReason }: { snap: AwardSnapshot; isOverride?: boolean; selectionReason?: string | null }) {
   const w = snap.weights;
+  const winnerRank = snap.ranking.find(r => r.is_winner)?.rank;
+  const topScore = snap.ranking.length > 0 ? snap.ranking[0].final : null;
   return (
     <div className="space-y-4 text-sm">
+      {isOverride && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+          <div>
+            <p className="font-semibold">คัดเลือกนอกเกณฑ์คะแนน</p>
+            <p className="text-xs mt-0.5">ผู้ชนะรายนี้ไม่ได้มีคะแนนสูงสุด{winnerRank ? ` (อันดับ #${winnerRank})` : ''}{topScore != null ? ` — คะแนนสูงสุดคือ ${topScore}` : ''} ผู้มีอำนาจตัดสินใจเลือกนอกเหนือผลคะแนนปกติ</p>
+            {selectionReason && (
+              <p className="text-xs mt-1.5 pt-1.5 border-t border-amber-200/60"><span className="font-medium">เหตุผล:</span> {selectionReason}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start gap-2 rounded-md bg-muted/50 p-2.5 text-xs text-muted-foreground">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
         <span>เกณฑ์และคะแนนนี้ถูกบันทึก ณ วันที่ตัดสิน ({snap.awarded_at ? new Date(snap.awarded_at).toLocaleString() : '—'}) — สะท้อนค่าที่ใช้จริงตอนนั้น แม้ master data จะถูกแก้ภายหลัง</span>
@@ -18,7 +33,11 @@ export default function AwardSelectionSummary({ snap }: { snap: AwardSnapshot })
 
       {/* Winner */}
       <section>
-        <h4 className="font-semibold mb-2 flex items-center gap-1.5"><Trophy className="w-4 h-4 text-emerald-600" />ผู้ชนะ</h4>
+        <h4 className="font-semibold mb-2 flex items-center gap-1.5">
+          <Trophy className={`w-4 h-4 ${isOverride ? 'text-amber-600' : 'text-emerald-600'}`} />
+          ผู้ชนะ
+          {isOverride && <Badge className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0 gap-0.5"><AlertCircle className="w-3 h-3" />นอกเกณฑ์คะแนน</Badge>}
+        </h4>
         <div className="rounded-lg border p-3 space-y-2">
           <div className="flex items-center justify-between">
             <span className="font-medium">{snap.winner.company_name}</span>

@@ -35,7 +35,7 @@ export default function BiddingDetail() {
   const [timeLeft, setTimeLeft] = useState('');
   const [sentToFQ, setSentToFQ] = useState(false);
   const [sendingFQ, setSendingFQ] = useState(false);
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, profile: authProfile } = useAuth();
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
   const fetchData = useCallback(async () => {
@@ -57,13 +57,15 @@ export default function BiddingDetail() {
       setBidRisk(null);
     }
 
-    // Check if winner already sent to Final Quotation
-    const { data: fqData } = await supabase
-      .from('final_quotations')
-      .select('id')
-      .eq('bidding_event_id', id!)
-      .maybeSingle();
-    setSentToFQ(!!fqData);
+    // Check if award already created for this RFQ
+    if (evRes.data?.rfq_id) {
+      const { data: awdData } = await supabase
+        .from('awards')
+        .select('id')
+        .eq('rfq_id', evRes.data.rfq_id)
+        .maybeSingle();
+      setSentToFQ(!!awdData);
+    }
 
     setLoading(false);
   }, [id]);
@@ -152,26 +154,30 @@ export default function BiddingDetail() {
     setSendingFQ(true);
     try {
       const { data: existing } = await supabase
-        .from('final_quotations')
+        .from('awards')
         .select('id')
-        .eq('bidding_event_id', event.id)
+        .eq('rfq_id', event.rfq_id)
+        .eq('supplier_id', winner.supplier_id)
         .maybeSingle();
       if (existing) { setSentToFQ(true); setSendingFQ(false); return; }
 
-      const { error } = await supabase.from('final_quotations').insert({
+      const { error } = await supabase.from('awards').insert({
         rfq_id: event.rfq_id || null,
         supplier_id: winner.supplier_id,
-        bidding_event_id: event.id,
-        quotation_id: null,
-        total_amount: winner.bid_amount,
-        currency: 'THB',
-        notes: `จากการประมูล "${event.title}"${event.rfqs ? ` — ${event.rfqs.rfq_number}` : ''} | รอบสุดท้าย R${currentRound} | ผู้ชนะ: ${winner.suppliers?.company_name}`,
-        status: 'pending',
-        created_by: user.id,
-      });
+        tenant_id: authProfile?.tenant_id,
+        amount: winner.bid_amount,
+        final_amount: winner.bid_amount,
+        status: 'pending' as any,
+        award_lifecycle_status: 'pending_approval' as any,
+        awarded_at: new Date().toISOString(),
+        recommendation: `จากการประมูล "${event.title}"${event.rfqs ? ` — ${event.rfqs.rfq_number}` : ''} | รอบสุดท้าย R${currentRound}`,
+      } as any);
       if (error) throw error;
+      if (event.rfq_id) {
+        await supabase.from('rfqs').update({ status: 'awarded' as any, updated_at: new Date().toISOString() }).eq('id', event.rfq_id);
+      }
       setSentToFQ(true);
-      toast.success(`ส่งผู้ชนะ ${winner.suppliers?.company_name} ไป Final Quotation แล้ว`);
+      toast.success(`สร้าง Award สำหรับ ${winner.suppliers?.company_name} แล้ว — ไปอนุมัติได้ที่เมนู Awards`);
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -275,7 +281,7 @@ export default function BiddingDetail() {
                 </span>
               ) : (
                 <Button className="bg-emerald-600 hover:bg-emerald-700 shrink-0" disabled={sendingFQ} onClick={sendWinnerToFQ}>
-                  <Send className="w-4 h-4 mr-2" />{sendingFQ ? 'กำลังส่ง...' : 'ส่ง Final Quotation'}
+                  <Send className="w-4 h-4 mr-2" />{sendingFQ ? 'กำลังสร้าง...' : 'สร้าง Award'}
                 </Button>
               )
             )}

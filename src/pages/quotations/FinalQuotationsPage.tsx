@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye, ArrowRight, Award, Trophy, Clock, ListChecks } from 'lucide-react';
+import { Search, Plus, CheckCircle2, FileCheck, BarChart3, Eye, ArrowRight, Award, Trophy, Clock, ListChecks, RotateCcw } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -35,6 +35,9 @@ export default function FinalQuotationsPage() {
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [awardConfirm, setAwardConfirm] = useState<any>(null);
+  const [rollbackTarget, setRollbackTarget] = useState<any>(null);
+  const [rollbackReason, setRollbackReason] = useState('');
+  const [rollbacking, setRollbacking] = useState(false);
   const { hasRole, user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -201,6 +204,34 @@ export default function FinalQuotationsPage() {
     }
   };
 
+  const handleRollback = async () => {
+    if (!rollbackTarget || !rollbackReason.trim()) return;
+    setRollbacking(true);
+    const rfqId = rollbackTarget.rfq_id;
+    try {
+      // 1. Reset quotation winner flag
+      await supabase.from('quotations').update({ is_recommended_winner: false }).eq('rfq_id', rfqId);
+      // 2. Change RFQ status back to evaluation
+      await supabase.from('rfqs').update({
+        status: 'evaluation' as any,
+        notes: `[Rollback] ${rollbackReason.trim()}${rollbackTarget.rfqs?.title ? ` — ${rollbackTarget.rfqs.title}` : ''}`,
+        updated_at: new Date().toISOString(),
+      }).eq('id', rfqId);
+      // 3. Delete this final quotation
+      await supabase.from('final_quotations').delete().eq('id', rollbackTarget.id);
+      // 4. Delete associated award (if any)
+      await supabase.from('awards').delete().eq('rfq_id', rfqId);
+
+      toast({ title: 'Rollback สำเร็จ', description: 'RFQ กลับสู่สถานะ Evaluation — สามารถเลือกผู้ชนะใหม่ได้ที่ Bid Comparison' });
+      setRollbackTarget(null);
+      setRollbackReason('');
+      pagination.refresh();
+    } catch (err: any) {
+      toast({ title: 'Rollback ไม่สำเร็จ', description: err.message, variant: 'destructive' });
+    }
+    setRollbacking(false);
+  };
+
   const { t } = useTranslation();
   const canManage = hasRole('admin') || hasRole('procurement_officer');
 
@@ -340,6 +371,20 @@ export default function FinalQuotationsPage() {
                                     </TooltipTrigger>
                                     <TooltipContent side="left" className="p-3">
                                       <WorkflowProgressTooltip currentStep={3} />
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+
+                                {canManage && q.status !== 'rejected' && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-red-600" onClick={() => { setRollbackTarget(q); setRollbackReason(''); }}>
+                                        <RotateCcw className="w-3 h-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="left" className="max-w-[220px]">
+                                      <p className="font-medium text-xs">Rollback การคัดเลือก</p>
+                                      <p className="text-[10px] text-muted-foreground mt-0.5">ย้อนกลับไปเลือกผู้ชนะใหม่ — RFQ จะกลับสู่สถานะ Evaluation และลบ Final Quotation นี้</p>
                                     </TooltipContent>
                                   </Tooltip>
                                 )}
@@ -539,6 +584,44 @@ export default function FinalQuotationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Rollback confirmation */}
+      <Dialog open={!!rollbackTarget} onOpenChange={o => !o && setRollbackTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><RotateCcw className="w-5 h-5 text-red-500" />Rollback การคัดเลือกผู้ชนะ</DialogTitle></DialogHeader>
+          {rollbackTarget && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <p>การ Rollback จะดำเนินการดังนี้:</p>
+                <ul className="mt-1 space-y-0.5 text-xs list-disc pl-4">
+                  <li>ยกเลิกผู้ชนะที่เลือกไว้ ({rollbackTarget.suppliers?.company_name})</li>
+                  <li>ลบรายการ Final Quotation นี้</li>
+                  <li>ลบ Award ที่สร้างไว้ (ถ้ามี)</li>
+                  <li>เปลี่ยนสถานะ RFQ กลับเป็น <strong>Evaluation</strong></li>
+                </ul>
+                <p className="mt-2 text-xs">สามารถกลับไปเลือกผู้ชนะใหม่ได้ที่หน้า Bid Comparison</p>
+              </div>
+              <div className="rounded-lg border bg-muted/40 p-3 text-sm space-y-1">
+                <div className="text-muted-foreground">RFQ: {rollbackTarget.rfqs?.rfq_number} — {rollbackTarget.rfqs?.title || '—'}</div>
+                <div className="font-medium">{rollbackTarget.suppliers?.company_name || '—'}</div>
+                <div className="text-muted-foreground">{rollbackTarget.total_amount ? `${rollbackTarget.currency} ${Number(rollbackTarget.total_amount).toLocaleString()}` : '—'}</div>
+              </div>
+              <div className="space-y-1">
+                <Label>เหตุผลที่ต้อง Rollback *</Label>
+                <Textarea rows={3} value={rollbackReason} onChange={e => setRollbackReason(e.target.value)}
+                  placeholder="เช่น ผู้ชนะแจ้งยกเลิก, พบข้อมูลเพิ่มเติม, ต้องเปลี่ยนเกณฑ์การคัดเลือก..." />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setRollbackTarget(null)}>ยกเลิก</Button>
+                <Button onClick={handleRollback} disabled={rollbacking || !rollbackReason.trim()}
+                  className="bg-red-600 hover:bg-red-700">
+                  {rollbacking ? 'กำลังดำเนินการ...' : 'ยืนยัน Rollback'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

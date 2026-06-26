@@ -5,6 +5,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { LogoFull } from '@/components/Logo';
 
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard',  path: '/super-admin' },
@@ -27,16 +28,8 @@ export default function SuperAdminSidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-slate-800">
-        <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center shrink-0">
-          <Shield className="w-4 h-4 text-white" />
-        </div>
-        {!collapsed && (
-          <div className="overflow-hidden">
-            <p className="font-bold text-sm text-white truncate">Super Admin</p>
-            <p className="text-[10px] text-slate-400 truncate">Smart Procurement</p>
-          </div>
-        )}
+      <div className="px-4 h-16 flex items-center border-b border-slate-800">
+        <LogoFull collapsed={collapsed} subtitle="Super Admin" variant="light" />
       </div>
 
       {/* Nav */}
