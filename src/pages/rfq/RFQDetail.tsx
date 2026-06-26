@@ -848,6 +848,9 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
   const [sentEvents, setSentEvents] = useSt<Set<string>>(new Set());
   const [sending, setSending] = useSt<string | null>(null);
   const [creating, setCreating] = useSt(false);
+  const [rollbackTarget, setRollbackTarget] = useSt<string | null>(null);
+  const [rollbackReason, setRollbackReason] = useSt('');
+  const [rollingBack, setRollingBack] = useSt(false);
   const { user, hasRole: hr, profile: authProf } = useAuth();
   const { toast: t } = useToast();
   const nav = useNavigate();
@@ -940,6 +943,26 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
     nav(`/bidding/${data.id}`);
   };
 
+  const handleRollback = async () => {
+    if (!rollbackTarget || !rollbackReason.trim()) return;
+    setRollingBack(true);
+    const ev = events.find((e: any) => e.id === rollbackTarget);
+    await sb.from('bidding_status_logs').insert({
+      bidding_event_id: rollbackTarget,
+      from_status: ev?.status || 'active',
+      to_status: 'scheduled',
+      reason: rollbackReason.trim(),
+      changed_by: user?.id,
+      tenant_id: authProf?.tenant_id,
+    } as any);
+    await sb.from('bidding_events').update({ status: 'scheduled' as any, current_round: 1, updated_at: new Date().toISOString() }).eq('id', rollbackTarget);
+    setRollingBack(false);
+    setRollbackTarget(null);
+    setRollbackReason('');
+    t({ title: 'กลับไปตั้งค่าใหม่แล้ว', description: 'การประมูลถูกหยุดชั่วคราว — แก้ไขรายละเอียดได้ที่หน้าจัดการ' });
+    load();
+  };
+
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>;
   if (events.length === 0) {
     const isAwarded = rfqStatus === 'awarded';
@@ -969,9 +992,27 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
 
   return (
     <div className="space-y-4">
+      <Dialog open={!!rollbackTarget} onOpenChange={(open) => { if (!open) { setRollbackTarget(null); setRollbackReason(''); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>กลับไปตั้งค่าใหม่</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">การประมูลจะถูกหยุดชั่วคราวและกลับไปสถานะ "ตั้งค่า" เพื่อแก้ไขรายละเอียดก่อนเปิดใหม่</p>
+          <div className="space-y-2 mt-2">
+            <Label>เหตุผล *</Label>
+            <Textarea value={rollbackReason} onChange={(e: any) => setRollbackReason(e.target.value)} placeholder="เช่น ต้องแก้ไขจำนวนรอบ, เปลี่ยนเวลาปิดประมูล..." rows={3} />
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => { setRollbackTarget(null); setRollbackReason(''); }}>ยกเลิก</Button>
+            <Button variant="destructive" onClick={handleRollback} disabled={rollingBack || !rollbackReason.trim()}>
+              <RotateCcw className="w-4 h-4 mr-2" />{rollingBack ? 'กำลังดำเนินการ...' : 'ยืนยัน'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {events.map((ev) => {
         const closed = ev.status === 'closed';
         const sent = sentEvents.has(ev.id);
+        const statusLabel: Record<string,string> = { scheduled: 'ตั้งค่า', active: 'กำลังประมูล', closed: 'ปิดแล้ว', cancelled: 'ยกเลิก' };
         return (
           <Card key={ev.id} className={closed && ev.winner ? 'border-emerald-200' : ''}>
             <CardContent className="p-4">
@@ -983,7 +1024,7 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
                       ev.status === 'active' ? 'bg-green-100 text-green-800' :
                       ev.status === 'closed' ? 'bg-muted text-muted-foreground' :
                       ev.status === 'scheduled' ? 'bg-blue-100 text-blue-800' : ''
-                    }>{ev.status}</Badge>
+                    }>{statusLabel[ev.status] || ev.status}</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {ev.totalBids} bids · รอบสุดท้าย R{ev.maxRound} / {ev.max_rounds || '∞'}
@@ -1005,9 +1046,9 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
                   )}
                 </div>
 
-                {canMng && ev.winner && (
-                  <div className="shrink-0">
-                    {sent ? (
+                <div className="shrink-0 flex flex-col gap-2 items-end">
+                  {canMng && ev.winner && (
+                    sent ? (
                       <span className="inline-flex items-center gap-1 text-sm text-emerald-600">
                         <CheckCircle className="w-4 h-4" /> ส่งแล้ว
                       </span>
@@ -1017,9 +1058,19 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
                       <Button size="sm" disabled={sending === ev.id} onClick={() => handleSendWinner(ev)}>
                         <Send className="w-4 h-4 mr-1" />{sending === ev.id ? 'กำลังส่ง...' : 'สร้าง Award'}
                       </Button>
+                    )
+                  )}
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => nav(`/bidding/${ev.id}`)}>
+                      <ArrowRight className="w-3.5 h-3.5 mr-1" /> จัดการประมูล
+                    </Button>
+                    {canMng && ev.status === 'active' && (
+                      <Button size="sm" variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50" onClick={() => setRollbackTarget(ev.id)}>
+                        <RotateCcw className="w-3.5 h-3.5 mr-1" /> กลับไปตั้งค่า
+                      </Button>
                     )}
                   </div>
-                )}
+                </div>
               </div>
             </CardContent>
           </Card>
