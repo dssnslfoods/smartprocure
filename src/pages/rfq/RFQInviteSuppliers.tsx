@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, UserPlus, Building2, ShieldOff, XCircle, CheckCircle2, Trash2, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -12,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
 import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
-import { DIMENSION_LABEL } from '@/lib/riskCriteria';
+import { computeDimensionRisks, DIMENSION_LABEL, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
 
 interface ExpiredCert { certificate_type: string | null; expiry_date: string | null; }
@@ -42,6 +43,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
   const [inviteMeta, setInviteMeta] = useState<Record<string, { responded: boolean; declined_at: string | null; declined_reason: string | null }>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [brcScores, setBrcScores] = useState<Record<string, { score: number; met: number; total: number }>>({});
   const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
   const [expiredCerts, setExpiredCerts] = useState<Record<string, ExpiredCert[]>>({});
   const [loading, setLoading] = useState(true);
@@ -65,8 +67,37 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
           .eq('rfq_id', rfqId),
       ]);
 
-      if (suppRes.data) {
-        const enriched: SupplierWithEligibility[] = suppRes.data.map((s: any) => ({
+      const rawSuppliers = suppRes.data || [];
+      const supplierIds = rawSuppliers.map((s: any) => s.id);
+
+      // Compute BRC scores for ALL suppliers (for sorting Available list)
+      const [critRes, allCertRes, allDocRes] = await Promise.all([
+        supabase.from('risk_criteria').select('*').eq('active', true),
+        supplierIds.length ? supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date').in('supplier_id', supplierIds) : Promise.resolve({ data: [] as any[] }),
+        supplierIds.length ? supabase.from('supplier_documents').select('supplier_id, document_type, document_name').in('supplier_id', supplierIds) : Promise.resolve({ data: [] as any[] }),
+      ]);
+      const criteria = (critRes.data as RiskCriterion[]) || [];
+      const certsBy: Record<string, SupplierCert[]> = {};
+      (allCertRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
+      const docsBy: Record<string, SupplierDoc[]> = {};
+      (allDocRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
+
+      const scores: Record<string, { score: number; met: number; total: number }> = {};
+      if (criteria.length > 0) {
+        for (const s of rawSuppliers) {
+          const dims = computeDimensionRisks(criteria, certsBy[s.id] || [], docsBy[s.id] || [], 'all');
+          const dimList = Object.values(dims);
+          const totalC = dimList.reduce((a, d) => a + d.criteria.length, 0);
+          const metC = dimList.reduce((a, d) => a + d.criteria.filter(c => c.met).length, 0);
+          const wSum = dimList.reduce((a, d) => a + d.totalWeight, 0);
+          const risk10 = wSum > 0 ? dimList.reduce((a, d) => a + (d.score ?? 0) * d.totalWeight, 0) / wSum : 0;
+          scores[s.id] = { score: Math.round((1 - risk10 / 10) * 100), met: metC, total: totalC };
+        }
+      }
+      setBrcScores(scores);
+
+      if (rawSuppliers.length) {
+        const enriched: SupplierWithEligibility[] = rawSuppliers.map((s: any) => ({
           ...s,
           eligibility: checkSupplierEligibility(s),
         }));
@@ -191,7 +222,14 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
   const invited = allSuppliers.filter(s => invitedIds.has(s.id));
-  const available = allSuppliers.filter(s => !invitedIds.has(s.id));
+  const available = allSuppliers.filter(s => !invitedIds.has(s.id)).sort((a, b) => {
+    const sa = brcScores[a.id];
+    const sb = brcScores[b.id];
+    if (sa && sb) return sb.score - sa.score;
+    if (sa) return -1;
+    if (sb) return 1;
+    return a.company_name.localeCompare(b.company_name);
+  });
   const warnings = available.filter(s => s.eligibility.status === 'warning' || s.eligibility.status === 'requires_qa' || s.eligibility.status === 'requires_nomination');
 
   return (
@@ -359,6 +397,15 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <RiskBadge level={s.risk_level as any} />
                             <EligibilityBadge status={status} />
+                            {brcScores[s.id] && (
+                              <Badge variant="outline" className={`text-[10px] gap-0.5 ${
+                                brcScores[s.id].score >= 75 ? 'border-green-300 bg-green-50 text-green-700' :
+                                brcScores[s.id].score >= 50 ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                                'border-red-300 bg-red-50 text-red-700'
+                              }`}>
+                                BRC {brcScores[s.id].met}/{brcScores[s.id].total}
+                              </Badge>
+                            )}
                           </div>
                           {reasons.length > 0 && (
                             <ul className="mt-1.5 space-y-0.5">
