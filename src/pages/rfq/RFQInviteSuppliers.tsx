@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
-import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { computeRfqBidRisk, risk10ToLevel, type BidRiskResult } from '@/lib/bidRisk';
 import { computeDimensionRisks, DIMENSION_LABEL, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
 
@@ -43,7 +43,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
   const [inviteMeta, setInviteMeta] = useState<Record<string, { responded: boolean; declined_at: string | null; declined_reason: string | null }>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [brcScores, setBrcScores] = useState<Record<string, { score: number; met: number; total: number }>>({});
+  const [brcScores, setBrcScores] = useState<Record<string, { score: number; risk10: number; met: number; total: number }>>({});
   const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
   const [expiredCerts, setExpiredCerts] = useState<Record<string, ExpiredCert[]>>({});
   const [loading, setLoading] = useState(true);
@@ -82,7 +82,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
       const docsBy: Record<string, SupplierDoc[]> = {};
       (allDocRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
 
-      const scores: Record<string, { score: number; met: number; total: number }> = {};
+      const scores: Record<string, { score: number; risk10: number; met: number; total: number }> = {};
       if (criteria.length > 0) {
         for (const s of rawSuppliers) {
           const dims = computeDimensionRisks(criteria, certsBy[s.id] || [], docsBy[s.id] || [], 'all');
@@ -90,8 +90,9 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
           const totalC = dimList.reduce((a, d) => a + d.criteria.length, 0);
           const metC = dimList.reduce((a, d) => a + d.criteria.filter(c => c.met).length, 0);
           const wSum = dimList.reduce((a, d) => a + d.totalWeight, 0);
-          const risk10 = wSum > 0 ? dimList.reduce((a, d) => a + (d.score ?? 0) * d.totalWeight, 0) / wSum : 0;
-          scores[s.id] = { score: Math.round((1 - risk10 / 10) * 100), met: metC, total: totalC };
+          const hasMandatoryUnmet = dimList.some(d => d.mandatoryUnmet);
+          const risk10 = hasMandatoryUnmet ? 10 : wSum > 0 ? dimList.reduce((a, d) => a + (d.score ?? 0) * d.totalWeight, 0) / wSum : 0;
+          scores[s.id] = { score: Math.round((1 - risk10 / 10) * 100), risk10, met: metC, total: totalC };
         }
       }
       setBrcScores(scores);
@@ -395,7 +396,11 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                             {isBlocked && <ShieldOff className="w-3.5 h-3.5 text-red-500" />}
                           </div>
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            <RiskBadge level={s.risk_level as any} />
+                            {brcScores[s.id] ? (
+                              <RiskBadge level={risk10ToLevel(brcScores[s.id].risk10)} />
+                            ) : (
+                              <RiskBadge level={s.risk_level as any} />
+                            )}
                             <EligibilityBadge status={status} />
                             {brcScores[s.id] && (
                               <Badge variant="outline" className={`text-[10px] gap-0.5 ${
