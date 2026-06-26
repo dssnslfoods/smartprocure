@@ -847,8 +847,10 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
   const [rfqData, setRfqData] = useSt<any>(null);
   const [sentEvents, setSentEvents] = useSt<Set<string>>(new Set());
   const [sending, setSending] = useSt<string | null>(null);
+  const [creating, setCreating] = useSt(false);
   const { user, hasRole: hr, profile: authProf } = useAuth();
   const { toast: t } = useToast();
+  const nav = useNavigate();
   const canMng = hr('admin') || hr('procurement_officer');
 
   const load = async () => {
@@ -915,6 +917,29 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
     setSending(null);
   };
 
+  const handleCreateBidding = async () => {
+    if (!rfqData || !authProf?.tenant_id) return;
+    setCreating(true);
+    const title = `ประมูล — ${rfqData.title || rfqData.rfq_number || 'RFQ'}`;
+    const startTime = new Date();
+    const endTime = new Date(startTime.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const { data, error } = await sb.from('bidding_events').insert({
+      rfq_id: rfqId,
+      title,
+      description: `E-Bidding สำหรับ ${rfqData.rfq_number || ''} — ${rfqData.title || ''}`,
+      status: 'scheduled',
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+      max_rounds: 3,
+      created_by: user?.id,
+      tenant_id: authProf.tenant_id,
+    } as any).select().single();
+    setCreating(false);
+    if (error) { t({ title: 'สร้างไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    t({ title: 'สร้างการประมูลแล้ว', description: `${title} — ไปตั้งค่าและเปิดประมูลได้เลย` });
+    nav(`/bidding/${data.id}`);
+  };
+
   if (loading) return <p className="text-sm text-muted-foreground py-8 text-center">Loading...</p>;
   if (events.length === 0) {
     const isAwarded = rfqStatus === 'awarded';
@@ -929,7 +954,13 @@ function RFQBiddingResults({ rfqId, rfqStatus }: { rfqId: string; rfqStatus: str
         ) : (
           <>
             <p className="text-sm">ยังไม่มีการประมูล (E-Bidding) ที่เชื่อมกับ RFQ นี้</p>
-            <p className="text-xs mt-1">สร้างการประมูลที่เมนู "การประมูล" แล้วเลือก Linked RFQ เป็น RFQ นี้</p>
+            <p className="text-xs mt-1 mb-4">เปลี่ยนรูปแบบจัดซื้อจาก Bid Comparison เป็น E-Bidding ได้โดยกดปุ่มด้านล่าง</p>
+            {canMng && (
+              <Button onClick={handleCreateBidding} disabled={creating}>
+                <Gavel className="w-4 h-4 mr-2" />
+                {creating ? 'กำลังสร้าง...' : 'สร้างการประมูล (E-Bidding)'}
+              </Button>
+            )}
           </>
         )}
       </div>
