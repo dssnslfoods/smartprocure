@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal, ListChecks, RotateCcw, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, Trophy, Clock, ShieldAlert, Download, Printer, Calculator, SendHorizontal, ListChecks, RotateCcw, HelpCircle, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import AwardSelectionSummary from '@/components/AwardSelectionSummary';
 import { useState, useCallback, useEffect } from 'react';
@@ -172,7 +172,22 @@ export default function AwardsPage() {
       .select('*, suppliers(company_name, tax_id), rfqs(title, rfq_number)')
       .or('status.eq.approved,award_lifecycle_status.eq.approved,award_lifecycle_status.eq.po_issued')
       .order('awarded_at', { ascending: false });
-    if (data) setHandoffAwards(data);
+    if (data) {
+      // Fetch winning quotation attachment URLs
+      const enriched = await Promise.all(data.map(async (a) => {
+        if (!a.rfq_id || !a.supplier_id) return a;
+        const { data: q } = await supabase
+          .from('quotations')
+          .select('attachment_url')
+          .eq('rfq_id', a.rfq_id)
+          .eq('supplier_id', a.supplier_id)
+          .order('version', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        return { ...a, quotation_attachment_url: q?.attachment_url || null };
+      }));
+      setHandoffAwards(enriched);
+    }
     setHandoffLoading(false);
   }, []);
 
@@ -209,7 +224,7 @@ export default function AwardsPage() {
 <div class="meta"><span>วันที่พิมพ์: ${today}</span><span>จำนวน ${rows.length} รายการ</span></div>
 <table><thead><tr>
   <th>#</th><th>Award No</th><th>ผู้ขาย (Supplier)</th><th>เลขผู้เสียภาษี</th>
-  <th>RFQ</th><th class="r">จำนวนเงิน (THB)</th><th>วันที่อนุมัติ</th><th>สถานะ</th>
+  <th>RFQ</th><th class="r">จำนวนเงิน (THB)</th><th>ใบเสนอราคา</th><th>วันที่อนุมัติ</th><th>สถานะ</th>
 </tr></thead><tbody>
 ${rows.map((a, i) => {
   const amt = a.final_amount ?? a.amount ?? 0;
@@ -221,11 +236,12 @@ ${rows.map((a, i) => {
     <td>${a.suppliers?.tax_id || '—'}</td>
     <td>${a.rfqs?.title || '—'}<br><small style="color:#888">${a.rfqs?.rfq_number || ''}</small></td>
     <td class="r">${amt ? Number(amt).toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '—'}</td>
+    <td>${a.quotation_attachment_url ? `<a href="${a.quotation_attachment_url}" target="_blank" style="color:#2563eb;text-decoration:underline">ดูใบเสนอราคา</a>` : '—'}</td>
     <td>${(a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '—'}</td>
     <td><span class="badge ${handed ? 'badge-done' : 'badge-pending'}">${handed ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี'}</span></td>
   </tr>`;
 }).join('')}
-<tr class="total-row"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td class="r">${totalAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td><td colspan="2"></td></tr>
+<tr class="total-row"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td class="r">${totalAmt.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td><td colspan="3"></td></tr>
 </tbody></table>
 <div class="footer"><span>รอส่งบัญชี: <strong>${pendingHandoff.length}</strong> · ส่งแล้ว: <strong>${doneHandoff.length}</strong></span><span>Smart Procurement © ${new Date().getFullYear()}</span></div>
 </body></html>`;
@@ -245,7 +261,7 @@ ${rows.map((a, i) => {
     });
 
     // Title row
-    ws.mergeCells('A1:H1');
+    ws.mergeCells('A1:I1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'รายงานส่งฝ่ายบัญชี (PO Handoff Report)';
     titleCell.font = { name: 'Tahoma', size: 16, bold: true, color: { argb: 'FF1E3A5F' } };
@@ -253,7 +269,7 @@ ${rows.map((a, i) => {
     ws.getRow(1).height = 30;
 
     // Subtitle
-    ws.mergeCells('A2:H2');
+    ws.mergeCells('A2:I2');
     const subCell = ws.getCell('A2');
     subCell.value = `Smart Procurement — NSL Foods PLC · วันที่ ${new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })} · ${rows.length} รายการ`;
     subCell.font = { name: 'Tahoma', size: 10, color: { argb: 'FF888888' } };
@@ -261,13 +277,13 @@ ${rows.map((a, i) => {
     ws.getRow(2).height = 20;
 
     // Header row
-    const headers = ['#', 'Award No', 'ผู้ขาย (Supplier)', 'เลขผู้เสียภาษี', 'RFQ', 'จำนวนเงิน (THB)', 'วันที่อนุมัติ', 'สถานะ'];
+    const headers = ['#', 'Award No', 'ผู้ขาย (Supplier)', 'เลขผู้เสียภาษี', 'RFQ', 'จำนวนเงิน (THB)', 'ใบเสนอราคา', 'วันที่อนุมัติ', 'สถานะ'];
     const headerRow = ws.addRow(headers);
     headerRow.height = 24;
     headerRow.eachCell((cell, colNumber) => {
       cell.font = { name: 'Tahoma', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
-      cell.alignment = { horizontal: colNumber === 6 ? 'right' : 'left', vertical: 'middle' };
+      cell.alignment = { horizontal: colNumber === 6 ? 'right' : colNumber === 7 ? 'center' : 'left', vertical: 'middle' };
       cell.border = { bottom: { style: 'thin', color: { argb: 'FF1E3A5F' } } };
     });
 
@@ -275,6 +291,7 @@ ${rows.map((a, i) => {
     rows.forEach((a, i) => {
       const amt = a.final_amount ?? a.amount ?? 0;
       const handed = a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed';
+      const qUrl = a.quotation_attachment_url || '';
       const row = ws.addRow([
         i + 1,
         a.award_no || '—',
@@ -282,6 +299,7 @@ ${rows.map((a, i) => {
         a.suppliers?.tax_id || '—',
         `${a.rfqs?.title || '—'} (${a.rfqs?.rfq_number || ''})`,
         amt || 0,
+        qUrl ? 'ดูใบเสนอราคา' : '—',
         (a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '—',
         handed ? 'ส่งบัญชีแล้ว' : 'รอส่งบัญชี',
       ]);
@@ -295,8 +313,15 @@ ${rows.map((a, i) => {
       // Format amount column
       const amtCell = row.getCell(6);
       if (amt) { amtCell.numFmt = '#,##0.00'; amtCell.font = { name: 'Tahoma', size: 10, bold: true }; }
+      // Quotation link
+      if (qUrl) {
+        const linkCell = row.getCell(7);
+        linkCell.value = { text: 'ดูใบเสนอราคา', hyperlink: qUrl };
+        linkCell.font = { name: 'Tahoma', size: 10, color: { argb: 'FF2563EB' }, underline: true };
+        linkCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
       // Color status badge
-      const statusCell = row.getCell(8);
+      const statusCell = row.getCell(9);
       statusCell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: handed ? 'FF1E40AF' : 'FF92400E' } };
       statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: handed ? 'FFDBEAFE' : 'FFFEF3C7' } };
       statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -304,7 +329,7 @@ ${rows.map((a, i) => {
 
     // Total row
     const totalAmt = rows.reduce((s, a) => s + (a.final_amount ?? a.amount ?? 0), 0);
-    const totalRow = ws.addRow(['', '', '', '', 'รวมทั้งสิ้น', totalAmt, '', '']);
+    const totalRow = ws.addRow(['', '', '', '', 'รวมทั้งสิ้น', totalAmt, '', '', '']);
     totalRow.height = 26;
     totalRow.eachCell((cell, colNumber) => {
       cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FF1E3A5F' } };
@@ -317,15 +342,15 @@ ${rows.map((a, i) => {
     // Column widths
     ws.columns = [
       { width: 5 }, { width: 18 }, { width: 30 }, { width: 18 },
-      { width: 35 }, { width: 18 }, { width: 16 }, { width: 15 },
+      { width: 35 }, { width: 18 }, { width: 18 }, { width: 16 }, { width: 15 },
     ];
 
     // Footer
     ws.addRow([]);
-    const footerRow = ws.addRow([`รอส่งบัญชี: ${pendingHandoff.length} · ส่งแล้ว: ${doneHandoff.length} · รวม: ${rows.length}`, '', '', '', '', '', '', `Smart Procurement © ${new Date().getFullYear()}`]);
+    const footerRow = ws.addRow([`รอส่งบัญชี: ${pendingHandoff.length} · ส่งแล้ว: ${doneHandoff.length} · รวม: ${rows.length}`, '', '', '', '', '', '', '', `Smart Procurement © ${new Date().getFullYear()}`]);
     footerRow.getCell(1).font = { name: 'Tahoma', size: 9, color: { argb: 'FF888888' } };
-    footerRow.getCell(8).font = { name: 'Tahoma', size: 9, color: { argb: 'FF888888' } };
-    footerRow.getCell(8).alignment = { horizontal: 'right' };
+    footerRow.getCell(9).font = { name: 'Tahoma', size: 9, color: { argb: 'FF888888' } };
+    footerRow.getCell(9).alignment = { horizontal: 'right' };
 
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -623,6 +648,7 @@ ${rows.map((a, i) => {
                       <th className="text-left p-3 font-medium text-muted-foreground">RFQ</th>
                       <th className="text-right p-3 font-medium text-muted-foreground">จำนวนเงิน</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">เงื่อนไข</th>
+                      <th className="text-center p-3 font-medium text-muted-foreground">ใบเสนอราคา</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">วันที่อนุมัติ</th>
                       <th className="text-left p-3 font-medium text-muted-foreground">สถานะ</th>
                       <th className="text-right p-3 font-medium text-muted-foreground">จัดการ</th>
@@ -630,9 +656,9 @@ ${rows.map((a, i) => {
                   </thead>
                   <tbody>
                     {handoffLoading ? (
-                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">กำลังโหลด...</td></tr>
+                      <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">กำลังโหลด...</td></tr>
                     ) : handoffAwards.length === 0 ? (
-                      <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">ยังไม่มีรายการที่อนุมัติแล้ว</td></tr>
+                      <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">ยังไม่มีรายการที่อนุมัติแล้ว</td></tr>
                     ) : (
                       handoffAwards.map(a => {
                         const handed = a.award_lifecycle_status === 'po_issued' || a.award_lifecycle_status === 'completed';
@@ -649,6 +675,13 @@ ${rows.map((a, i) => {
                             </td>
                             <td className="p-3 text-right font-semibold tabular-nums">{amt ? `${cur} ${Number(amt).toLocaleString()}` : '—'}</td>
                             <td className="p-3 text-muted-foreground text-xs max-w-[160px]">{terms || '—'}</td>
+                            <td className="p-3 text-center">
+                              {a.quotation_attachment_url ? (
+                                <a href={a.quotation_attachment_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                                  <FileText className="w-3.5 h-3.5" />ดู
+                                </a>
+                              ) : <span className="text-muted-foreground text-xs">—</span>}
+                            </td>
                             <td className="p-3 text-muted-foreground text-xs">{(a.awarded_at || a.created_at) ? new Date(a.awarded_at || a.created_at).toLocaleDateString('th-TH') : '—'}</td>
                             <td className="p-3">
                               {handed ? (
