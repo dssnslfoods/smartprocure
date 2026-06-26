@@ -187,7 +187,7 @@ export default function AwardsPage() {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>PO Handoff Report</title>
 <style>
   @page { size: landscape; margin: 15mm; }
-  body { font-family: 'Sarabun', sans-serif; font-size: 11px; color: #1a1a1a; }
+  body { font-family: Tahoma, sans-serif; font-size: 11px; color: #1a1a1a; }
   .header { text-align: center; margin-bottom: 16px; }
   .header h1 { font-size: 18px; margin: 0; }
   .header p { color: #666; margin: 4px 0 0; font-size: 12px; }
@@ -248,7 +248,7 @@ ${rows.map((a, i) => {
     ws.mergeCells('A1:H1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'รายงานส่งฝ่ายบัญชี (PO Handoff Report)';
-    titleCell.font = { name: 'Sarabun', size: 16, bold: true, color: { argb: 'FF1E3A5F' } };
+    titleCell.font = { name: 'Tahoma', size: 16, bold: true, color: { argb: 'FF1E3A5F' } };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
     ws.getRow(1).height = 30;
 
@@ -256,7 +256,7 @@ ${rows.map((a, i) => {
     ws.mergeCells('A2:H2');
     const subCell = ws.getCell('A2');
     subCell.value = `Smart Procurement — NSL Foods PLC · วันที่ ${new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })} · ${rows.length} รายการ`;
-    subCell.font = { name: 'Sarabun', size: 10, color: { argb: 'FF888888' } };
+    subCell.font = { name: 'Tahoma', size: 10, color: { argb: 'FF888888' } };
     subCell.alignment = { horizontal: 'center' };
     ws.getRow(2).height = 20;
 
@@ -265,7 +265,7 @@ ${rows.map((a, i) => {
     const headerRow = ws.addRow(headers);
     headerRow.height = 24;
     headerRow.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Sarabun', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.font = { name: 'Tahoma', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
       cell.alignment = { horizontal: colNumber === 6 ? 'right' : 'left', vertical: 'middle' };
       cell.border = { bottom: { style: 'thin', color: { argb: 'FF1E3A5F' } } };
@@ -287,17 +287,17 @@ ${rows.map((a, i) => {
       ]);
       row.height = 22;
       row.eachCell((cell, colNumber) => {
-        cell.font = { name: 'Sarabun', size: 10 };
+        cell.font = { name: 'Tahoma', size: 10 };
         cell.alignment = { horizontal: colNumber === 6 ? 'right' : 'left', vertical: 'middle' };
         cell.border = { bottom: { style: 'thin', color: { argb: 'FFE5E5E5' } } };
         if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F9FB' } };
       });
       // Format amount column
       const amtCell = row.getCell(6);
-      if (amt) { amtCell.numFmt = '#,##0.00'; amtCell.font = { name: 'Sarabun', size: 10, bold: true }; }
+      if (amt) { amtCell.numFmt = '#,##0.00'; amtCell.font = { name: 'Tahoma', size: 10, bold: true }; }
       // Color status badge
       const statusCell = row.getCell(8);
-      statusCell.font = { name: 'Sarabun', size: 9, bold: true, color: { argb: handed ? 'FF1E40AF' : 'FF92400E' } };
+      statusCell.font = { name: 'Tahoma', size: 9, bold: true, color: { argb: handed ? 'FF1E40AF' : 'FF92400E' } };
       statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: handed ? 'FFDBEAFE' : 'FFFEF3C7' } };
       statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
     });
@@ -307,7 +307,7 @@ ${rows.map((a, i) => {
     const totalRow = ws.addRow(['', '', '', '', 'รวมทั้งสิ้น', totalAmt, '', '']);
     totalRow.height = 26;
     totalRow.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Sarabun', size: 11, bold: true, color: { argb: 'FF1E3A5F' } };
+      cell.font = { name: 'Tahoma', size: 11, bold: true, color: { argb: 'FF1E3A5F' } };
       cell.border = { top: { style: 'medium', color: { argb: 'FF1E3A5F' } } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F8' } };
       if (colNumber === 5) cell.alignment = { horizontal: 'right', vertical: 'middle' };
@@ -323,8 +323,8 @@ ${rows.map((a, i) => {
     // Footer
     ws.addRow([]);
     const footerRow = ws.addRow([`รอส่งบัญชี: ${pendingHandoff.length} · ส่งแล้ว: ${doneHandoff.length} · รวม: ${rows.length}`, '', '', '', '', '', '', `Smart Procurement © ${new Date().getFullYear()}`]);
-    footerRow.getCell(1).font = { name: 'Sarabun', size: 9, color: { argb: 'FF888888' } };
-    footerRow.getCell(8).font = { name: 'Sarabun', size: 9, color: { argb: 'FF888888' } };
+    footerRow.getCell(1).font = { name: 'Tahoma', size: 9, color: { argb: 'FF888888' } };
+    footerRow.getCell(8).font = { name: 'Tahoma', size: 9, color: { argb: 'FF888888' } };
     footerRow.getCell(8).alignment = { horizontal: 'right' };
 
     const buffer = await wb.xlsx.writeBuffer();
