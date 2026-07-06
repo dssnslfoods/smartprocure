@@ -16,6 +16,7 @@ import {
   Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X, ClipboardCheck,
 } from 'lucide-react';
 import SupplierBrcAssessment from './SupplierBrcAssessment';
+import SupplierDocuments from './SupplierDocuments';
 
 const DOC_TYPES = [
   { value: 'company_certificate', label: 'หนังสือรับรองบริษัท' },
@@ -373,49 +374,7 @@ export default function SupplierPortal() {
 
         {/* Documents Tab */}
         <TabsContent value="documents">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">เอกสาร</CardTitle>
-              <Button size="sm" onClick={() => setUploadOpen(true)}>
-                <Upload className="w-4 h-4 mr-1" /> อัปโหลดเอกสาร
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {documents.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">ยังไม่มีเอกสาร</p>
-              ) : (
-                <div className="space-y-3">
-                  {documents.map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg border">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                          <FileText className="w-4 h-4 text-primary" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{doc.document_name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {DOC_TYPES.find(d => d.value === doc.document_type)?.label || doc.document_type || 'อื่นๆ'}
-                            {' · '}{doc.file_size ? `${(doc.file_size / 1024).toFixed(0)} KB` : ''}
-                            {' · '}{new Date(doc.created_at).toLocaleDateString('th-TH')}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-1">
-                        {doc.file_url && (
-                          <a href={doc.file_url} target="_blank" rel="noopener noreferrer">
-                            <Button variant="ghost" size="icon"><Download className="w-4 h-4" /></Button>
-                          </a>
-                        )}
-                        <Button variant="ghost" size="icon" onClick={() => handleDeleteDoc(doc)}>
-                          <Trash2 className="w-4 h-4 text-muted-foreground" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <SupplierDocuments supplierId={supplier.id} portalMode />
         </TabsContent>
         {/* BRC Evidence Tab */}
         <TabsContent value="brc">
@@ -454,37 +413,6 @@ export default function SupplierPortal() {
             </div>
             <Button onClick={handleSaveContact} disabled={!contactForm.contact_name} className="w-full">
               <Save className="w-4 h-4 mr-1" /> บันทึก
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Upload Document Dialog */}
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>อัปโหลดเอกสาร</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>ชื่อเอกสาร *</Label>
-              <Input value={docName} onChange={e => setDocName(e.target.value)} placeholder="เช่น หนังสือรับรองบริษัท 2568" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>ประเภทเอกสาร</Label>
-              <Select value={docType} onValueChange={setDocType}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {DOC_TYPES.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>เลือกไฟล์ *</Label>
-              <Input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" />
-            </div>
-            <Button onClick={handleUploadDoc} disabled={uploading || !docName} className="w-full">
-              <Upload className="w-4 h-4 mr-1" /> {uploading ? 'กำลังอัปโหลด...' : 'อัปโหลด'}
             </Button>
           </div>
         </DialogContent>

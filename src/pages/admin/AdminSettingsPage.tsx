@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet, Trash2, AlertTriangle, Database, Loader2 } from 'lucide-react';
+import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet, Trash2, AlertTriangle, Database, Loader2, FileText, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DEFAULT_CYCLE, loadPricelistCycle, savePricelistCycle,
@@ -111,6 +111,13 @@ export default function AdminSettingsPage() {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearConfirmText, setClearConfirmText] = useState('');
   const [clearing, setClearing] = useState(false);
+
+  // ── Company document types state ─────────────────────────────
+  const [docTypes, setDocTypes] = useState<any[]>([]);
+  const [dtDialogOpen, setDtDialogOpen] = useState(false);
+  const [dtEditing, setDtEditing] = useState<string | null>(null);
+  const [dtForm, setDtForm] = useState({ name_th: '', description: '', is_required: true, has_expiry: false });
+  const [savingDt, setSavingDt] = useState(false);
 
   const { toast } = useToast();
 
@@ -344,6 +351,66 @@ export default function AdminSettingsPage() {
     }
   };
 
+  // ── Company document types ───────────────────────────────────
+  const loadDocTypes = useCallback(async () => {
+    const { data } = await supabase.from('company_document_types' as any).select('*').order('sort_order');
+    setDocTypes((data as any[]) || []);
+  }, []);
+  useEffect(() => { loadDocTypes(); }, [loadDocTypes]);
+
+  const openNewDt = () => {
+    setDtEditing(null);
+    setDtForm({ name_th: '', description: '', is_required: true, has_expiry: false });
+    setDtDialogOpen(true);
+  };
+  const openEditDt = (d: any) => {
+    setDtEditing(d.id);
+    setDtForm({ name_th: d.name_th, description: d.description || '', is_required: d.is_required, has_expiry: d.has_expiry });
+    setDtDialogOpen(true);
+  };
+  const saveDt = async () => {
+    if (!dtForm.name_th.trim()) { toast({ title: 'กรุณาระบุชื่อเอกสาร', variant: 'destructive' }); return; }
+    setSavingDt(true);
+    const payload = {
+      name_th: dtForm.name_th.trim(),
+      description: dtForm.description.trim() || null,
+      is_required: dtForm.is_required,
+      has_expiry: dtForm.has_expiry,
+    };
+    let error;
+    if (dtEditing) {
+      ({ error } = await supabase.from('company_document_types' as any).update(payload).eq('id', dtEditing));
+    } else {
+      const maxOrder = docTypes.reduce((m, d) => Math.max(m, d.sort_order || 0), 0);
+      ({ error } = await supabase.from('company_document_types' as any).insert({ ...payload, sort_order: maxOrder + 10 }));
+    }
+    setSavingDt(false);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: dtEditing ? 'อัปเดตเอกสารแล้ว' : 'เพิ่มเอกสารแล้ว' });
+    setDtDialogOpen(false);
+    loadDocTypes();
+  };
+  const deleteDt = async (d: any) => {
+    const { error } = await supabase.from('company_document_types' as any).delete().eq('id', d.id);
+    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'ลบเอกสารแล้ว' });
+    loadDocTypes();
+  };
+  const toggleDtField = async (d: any, field: 'is_required' | 'active') => {
+    await supabase.from('company_document_types' as any).update({ [field]: !d[field] }).eq('id', d.id);
+    loadDocTypes();
+  };
+  const moveDt = async (index: number, dir: -1 | 1) => {
+    const other = index + dir;
+    if (other < 0 || other >= docTypes.length) return;
+    const a = docTypes[index], b = docTypes[other];
+    await Promise.all([
+      supabase.from('company_document_types' as any).update({ sort_order: b.sort_order }).eq('id', a.id),
+      supabase.from('company_document_types' as any).update({ sort_order: a.sort_order }).eq('id', b.id),
+    ]);
+    loadDocTypes();
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -356,6 +423,7 @@ export default function AdminSettingsPage() {
           <TabsTrigger value="users" className="gap-2"><Users className="w-4 h-4" />Users</TabsTrigger>
           <TabsTrigger value="roles" className="gap-2"><Shield className="w-4 h-4" />Roles</TabsTrigger>
           <TabsTrigger value="email" className="gap-2"><Mail className="w-4 h-4" />Email</TabsTrigger>
+          <TabsTrigger value="docs" className="gap-2"><FileText className="w-4 h-4" />เอกสารบริษัท</TabsTrigger>
           <TabsTrigger value="pricelist" className="gap-2"><FileSpreadsheet className="w-4 h-4" />Pricelist</TabsTrigger>
           <TabsTrigger value="config" className="gap-2"><Settings className="w-4 h-4" />Config</TabsTrigger>
           <TabsTrigger value="maintenance" className="gap-2" onClick={() => { if (!txnCounts) loadTxnCounts(); }}><Database className="w-4 h-4" />ระบบ</TabsTrigger>
@@ -627,6 +695,58 @@ export default function AdminSettingsPage() {
           </div>
         </TabsContent>
 
+        {/* ── Company Documents Tab ── */}
+        <TabsContent value="docs" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between">
+              <div>
+                <CardTitle className="text-base">รายการเอกสารบริษัทที่ขอจาก Supplier</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  กำหนดรายการเอกสารที่ต้องการให้ Supplier อัปโหลด (เช่น หนังสือรับรองบริษัท, ภพ.20, หน้า Book Bank) — จะแสดงเป็นช่องอัปโหลดในแท็บ "เอกสารบริษัท" ของแต่ละ Supplier
+                </p>
+              </div>
+              <Button size="sm" onClick={openNewDt}><Plus className="w-4 h-4 mr-1" />เพิ่มเอกสาร</Button>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {docTypes.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">ยังไม่มีรายการเอกสาร — กด "เพิ่มเอกสาร"</p>
+              ) : (
+                docTypes.map((d, i) => (
+                  <div key={d.id} className={`flex items-start gap-3 rounded-lg border p-3 ${d.active ? '' : 'opacity-50 bg-muted/30'}`}>
+                    <div className="flex flex-col gap-0.5 pt-0.5">
+                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" disabled={i === 0} onClick={() => moveDt(i, -1)}><ArrowUp className="w-3.5 h-3.5" /></button>
+                      <button className="text-muted-foreground hover:text-foreground disabled:opacity-30" disabled={i === docTypes.length - 1} onClick={() => moveDt(i, 1)}><ArrowDown className="w-3.5 h-3.5" /></button>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm">{d.name_th}</span>
+                        {d.is_required
+                          ? <Badge variant="outline" className="text-[10px] border-red-200 bg-red-50 text-red-600">บังคับ</Badge>
+                          : <Badge variant="outline" className="text-[10px]">ถ้ามี</Badge>}
+                        {d.has_expiry && <Badge variant="outline" className="text-[10px] border-amber-200 bg-amber-50 text-amber-700">มีวันหมดอายุ</Badge>}
+                        {!d.active && <Badge variant="secondary" className="text-[10px]">ปิดใช้งาน</Badge>}
+                      </div>
+                      {d.description && <p className="text-xs text-muted-foreground mt-0.5">{d.description}</p>}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1.5 mr-2">
+                        <Switch checked={d.is_required} onCheckedChange={() => toggleDtField(d, 'is_required')} className="scale-75" />
+                        <span className="text-[11px] text-muted-foreground">บังคับ</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mr-2">
+                        <Switch checked={d.active} onCheckedChange={() => toggleDtField(d, 'active')} className="scale-75" />
+                        <span className="text-[11px] text-muted-foreground">ใช้งาน</span>
+                      </div>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditDt(d)}><Pencil className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteDt(d)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ── Pricelist Tab ── */}
         <TabsContent value="pricelist" className="space-y-4">
           <Card>
@@ -832,6 +952,45 @@ export default function AdminSettingsPage() {
               >
                 {clearing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
                 {clearing ? 'กำลังลบ...' : 'ยืนยันล้างข้อมูล'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Company Document Type Dialog ── */}
+      <Dialog open={dtDialogOpen} onOpenChange={setDtDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dtEditing ? 'แก้ไขเอกสาร' : 'เพิ่มเอกสารบริษัท'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>ชื่อเอกสาร *</Label>
+              <Input value={dtForm.name_th} onChange={e => setDtForm(f => ({ ...f, name_th: e.target.value }))} placeholder="เช่น หนังสือรับรองบริษัท" />
+            </div>
+            <div className="space-y-2">
+              <Label>คำอธิบาย</Label>
+              <Textarea rows={2} value={dtForm.description} onChange={e => setDtForm(f => ({ ...f, description: e.target.value }))} placeholder="รายละเอียด / เงื่อนไข เช่น อายุไม่เกิน 6 เดือน" />
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+              <div>
+                <p className="text-sm font-medium">บังคับส่ง</p>
+                <p className="text-xs text-muted-foreground">Supplier ต้องอัปโหลดเอกสารนี้</p>
+              </div>
+              <Switch checked={dtForm.is_required} onCheckedChange={v => setDtForm(f => ({ ...f, is_required: v }))} />
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+              <div>
+                <p className="text-sm font-medium">มีวันหมดอายุ</p>
+                <p className="text-xs text-muted-foreground">ให้กรอกวันหมดอายุตอนอัปโหลด + แจ้งเตือนเมื่อใกล้หมด</p>
+              </div>
+              <Switch checked={dtForm.has_expiry} onCheckedChange={v => setDtForm(f => ({ ...f, has_expiry: v }))} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDtDialogOpen(false)}>ยกเลิก</Button>
+              <Button onClick={saveDt} disabled={savingDt || !dtForm.name_th.trim()}>
+                {savingDt ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />กำลังบันทึก...</> : 'บันทึก'}
               </Button>
             </div>
           </div>
