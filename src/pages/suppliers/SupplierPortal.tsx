@@ -13,8 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Building2, User, FileText, Landmark, Save, Upload, Download, Trash2, Plus,
-  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X,
+  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X, ClipboardCheck,
 } from 'lucide-react';
+import SupplierBrcAssessment from './SupplierBrcAssessment';
 
 const DOC_TYPES = [
   { value: 'company_certificate', label: 'หนังสือรับรองบริษัท' },
@@ -266,6 +267,7 @@ export default function SupplierPortal() {
           <TabsTrigger value="company" className="gap-1.5"><Building2 className="w-4 h-4" /> ข้อมูลบริษัท</TabsTrigger>
           <TabsTrigger value="contacts" className="gap-1.5"><User className="w-4 h-4" /> ผู้ติดต่อ</TabsTrigger>
           <TabsTrigger value="documents" className="gap-1.5"><FileText className="w-4 h-4" /> เอกสาร</TabsTrigger>
+          <TabsTrigger value="brc" className="gap-1.5"><ClipboardCheck className="w-4 h-4" /> เอกสารประเมิน BRCGS</TabsTrigger>
         </TabsList>
 
         {/* Company Info Tab */}
@@ -414,6 +416,16 @@ export default function SupplierPortal() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+        {/* BRC Evidence Tab */}
+        <TabsContent value="brc">
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800 text-sm">
+              <ClipboardCheck className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>อัปโหลดเอกสาร/ใบรับรองประกอบการประเมินในแต่ละข้อด้านล่าง — ระบบจะให้คะแนนอัตโนมัติทันทีที่แนบไฟล์ครบตามเกณฑ์ ช่วยให้บริษัทของท่านได้รับเกรดการประเมินที่ถูกต้องและครบถ้วน</span>
+            </div>
+            <SupplierBrcAssessment supplierId={supplier.id} portalMode />
+          </div>
         </TabsContent>
       </Tabs>
 

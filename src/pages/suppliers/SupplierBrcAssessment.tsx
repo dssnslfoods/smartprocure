@@ -1,17 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileBadge, FileText, Zap, UserCheck, CheckCircle2, CircleDashed, Trophy } from 'lucide-react';
+import {
+  FileBadge, FileText, Zap, UserCheck, CheckCircle2, CircleDashed, Trophy,
+  Paperclip, ExternalLink, Trash2, Loader2,
+} from 'lucide-react';
 import {
   evaluateBrc, loadBrcStandard, loadSupplierEvidence,
   SUPPLIER_TYPES, SUPPLIER_TYPE_LABEL,
   type BrcAssessment, type BrcSupplierType, type BrcTopic, type BrcOption,
-  type BrcGradeBand, type BrcManualScore, type SupplierCert, type SupplierDoc,
+  type BrcGradeBand, type BrcManualScore, type BrcEvidence,
+  type SupplierCert, type SupplierDoc,
 } from '@/lib/brcScoring';
 
 const GRADE_STYLE: Record<string, { badge: string; card: string }> = {
@@ -21,15 +26,26 @@ const GRADE_STYLE: Record<string, { badge: string; card: string }> = {
   D: { badge: 'bg-red-600 text-white', card: 'border-red-300 bg-red-50/60' },
 };
 
+// Supabase storage object keys must be ASCII-safe (no Thai / spaces)
+const safeStorageName = (name: string) => {
+  const dot = name.lastIndexOf('.');
+  const base = (dot > 0 ? name.slice(0, dot) : name).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 60) || 'file';
+  const ext = dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]+/g, '') : '';
+  return `${base}${ext}`;
+};
+
 interface Props {
   supplierId: string;
   onRiskUpdated?: () => void;
+  /** Supplier-portal mode: supplier uploads evidence per item but cannot change type or manual picks. */
+  portalMode?: boolean;
 }
 
-export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Props) {
+export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, portalMode = false }: Props) {
   const { user, hasRole } = useAuth();
   const { toast } = useToast();
   const canEdit = hasRole('admin') || hasRole('procurement_officer') || hasRole('approver');
+  const canUpload = portalMode || canEdit;
 
   const [loading, setLoading] = useState(true);
   const [topics, setTopics] = useState<BrcTopic[]>([]);
@@ -38,21 +54,26 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Pro
   const [certs, setCerts] = useState<SupplierCert[]>([]);
   const [docs, setDocs] = useState<SupplierDoc[]>([]);
   const [manual, setManual] = useState<Record<string, BrcManualScore>>({});
+  const [evidence, setEvidence] = useState<BrcEvidence[]>([]);
   const [supplierType, setSupplierType] = useState<BrcSupplierType>('rm_primary_pk');
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null); // option id being uploaded
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadTarget = useRef<{ topicId: string; optionId: string | null }>({ topicId: '', optionId: null });
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [standard, evidence] = await Promise.all([
+    const [standard, ev] = await Promise.all([
       loadBrcStandard(),
       loadSupplierEvidence([supplierId]),
     ]);
     setTopics(standard.topics);
     setOptionsByTopic(standard.optionsByTopic);
     setBands(standard.bands);
-    setCerts(evidence.certsBy[supplierId] || []);
-    setDocs(evidence.docsBy[supplierId] || []);
-    setManual(evidence.manualBy[supplierId] || {});
-    const st = evidence.typesBy[supplierId] as BrcSupplierType | null;
+    setCerts(ev.certsBy[supplierId] || []);
+    setDocs(ev.docsBy[supplierId] || []);
+    setManual(ev.manualBy[supplierId] || {});
+    setEvidence(ev.evidenceBy[supplierId] || []);
+    const st = ev.typesBy[supplierId] as BrcSupplierType | null;
     if (st && SUPPLIER_TYPES.includes(st)) setSupplierType(st);
     setLoading(false);
   }, [supplierId]);
@@ -78,14 +99,66 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Pro
     onRiskUpdated?.();
   };
 
+  const startUpload = (topicId: string, optionId: string | null) => {
+    uploadTarget.current = { topicId, optionId };
+    fileRef.current?.click();
+  };
+
+  const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const { topicId, optionId } = uploadTarget.current;
+    if (!topicId) return;
+
+    setUploadingFor(optionId ?? topicId);
+    const path = `${supplierId}/brc/${Date.now()}_${safeStorageName(file.name)}`;
+    const { error: upErr } = await supabase.storage.from('supplier-documents').upload(path, file);
+    if (upErr) {
+      toast({ title: 'อัปโหลดไม่สำเร็จ', description: upErr.message, variant: 'destructive' });
+      setUploadingFor(null);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(path);
+    const { error: insErr } = await supabase.from('brc_evidence' as any).insert({
+      supplier_id: supplierId,
+      topic_id: topicId,
+      option_id: optionId,
+      file_url: urlData.publicUrl,
+      file_name: file.name,
+      file_size: file.size,
+      uploaded_by: user?.id ?? null,
+    });
+    if (insErr) {
+      toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: insErr.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'แนบเอกสารเรียบร้อย', description: file.name });
+      await load();
+      onRiskUpdated?.();
+    }
+    setUploadingFor(null);
+  };
+
+  const deleteEvidence = async (ev: BrcEvidence) => {
+    const path = ev.file_url.split('/supplier-documents/')[1];
+    if (path) await supabase.storage.from('supplier-documents').remove([decodeURIComponent(path)]);
+    await supabase.from('brc_evidence' as any).delete().eq('id', ev.id);
+    toast({ title: 'ลบเอกสารแล้ว' });
+    await load();
+    onRiskUpdated?.();
+  };
+
   if (loading) return <div className="p-8 text-center text-muted-foreground">กำลังโหลด...</div>;
 
-  const brc: BrcAssessment = evaluateBrc(supplierType, topics, optionsByTopic, certs, docs, manual, bands);
+  const brc: BrcAssessment = evaluateBrc(supplierType, topics, optionsByTopic, certs, docs, manual, bands, undefined, evidence);
   const gs = brc.grade ? GRADE_STYLE[brc.grade] : null;
   const sections = Array.from(new Set(brc.topics.map(r => r.topic.section)));
 
   return (
     <div className="space-y-4">
+      {/* Hidden shared file input for per-item uploads */}
+      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="hidden" onChange={handleFilePicked} />
+
       {/* Type + grade summary */}
       <Card className={gs?.card || ''}>
         <CardContent className="p-4">
@@ -98,6 +171,9 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Pro
                   {SUPPLIER_TYPES.map(st => <SelectItem key={st} value={st}>{SUPPLIER_TYPE_LABEL[st]}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {portalMode && (
+                <p className="text-[11px] text-muted-foreground">อัปโหลดเอกสารประกอบในแต่ละข้อด้านล่าง เพื่อให้ระบบให้คะแนนอัตโนมัติ</p>
+              )}
             </div>
             <div className="flex items-center gap-4">
               <div className="text-right">
@@ -128,6 +204,8 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Pro
             const manualOptions = r.options.filter(o => o.match_type === 'manual');
             const hasManualChoice = t.auto_source === 'manual' || manualOptions.length > 0;
             const selected = manual[t.id]?.option_id ?? '_none';
+            const matchedIds = new Set(r.matchedOptions.map(m => m.option.id));
+            const viaOf = (optId: string) => r.matchedOptions.find(m => m.option.id === optId)?.via;
             return (
               <Card key={t.id}>
                 <CardContent className="p-4">
@@ -145,30 +223,76 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated }: Pro
                         )}
                       </div>
 
-                      {/* Matched evidence */}
-                      {r.matchedOptions.length > 0 && (
-                        <div className="mt-1.5 space-y-0.5">
-                          {r.matchedOptions.map((m, i) => (
-                            <p key={i} className="text-xs text-muted-foreground flex items-center gap-1.5">
-                              {m.option.match_type === 'certificate' ? <FileBadge className="w-3 h-3 text-blue-500" />
-                                : m.option.match_type === 'document' ? <FileText className="w-3 h-3 text-violet-500" />
-                                : <UserCheck className="w-3 h-3 text-slate-500" />}
-                              <span className="font-medium text-foreground">{m.option.label}</span>
-                              <span>(+{Number(m.option.score)})</span>
-                              {m.via !== 'manual' && m.via !== 'quotation' && <span className="text-[10px]">— พบ: {m.via}</span>}
-                            </p>
-                          ))}
+                      {isQuotation ? (
+                        <p className="text-xs text-muted-foreground mt-1">ระบบให้คะแนนอัตโนมัติจากใบเสนอราคาตอนเปรียบเทียบใน RFQ (ราคา / การส่งมอบ / เครดิตเทอม) — ไม่ต้องแนบเอกสาร</p>
+                      ) : (
+                        /* Per-option checklist with attach buttons */
+                        <div className="mt-2 space-y-1.5">
+                          {r.options.map(o => {
+                            const met = matchedIds.has(o.id);
+                            const via = viaOf(o.id);
+                            const optEvidence = r.evidence.filter(e => e.option_id === o.id);
+                            const isManualOpt = o.match_type === 'manual';
+                            return (
+                              <div key={o.id} className={`rounded-md border px-2.5 py-1.5 ${met ? 'border-green-200 bg-green-50/50' : 'border-muted'}`}>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {met
+                                    ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                    : <CircleDashed className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />}
+                                  {o.match_type === 'certificate' ? <FileBadge className="w-3 h-3 text-blue-500 shrink-0" />
+                                    : o.match_type === 'document' ? <FileText className="w-3 h-3 text-violet-500 shrink-0" />
+                                    : <UserCheck className="w-3 h-3 text-slate-500 shrink-0" />}
+                                  <span className={`text-xs ${met ? 'font-medium' : 'text-muted-foreground'}`}>{o.label}</span>
+                                  <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
+                                  {met && via && via !== 'manual' && via !== 'quotation' && (
+                                    <span className="text-[10px] text-green-700">— พบ: {via}</span>
+                                  )}
+                                  {isManualOpt && (
+                                    <span className="text-[10px] text-muted-foreground">({portalMode ? 'เจ้าหน้าที่เป็นผู้ประเมิน — แนบเอกสารประกอบได้' : 'ประเมินเอง'})</span>
+                                  )}
+                                  {canUpload && (
+                                    <Button
+                                      variant="ghost" size="sm"
+                                      className="h-6 px-2 text-[11px] gap-1 ml-auto shrink-0"
+                                      disabled={uploadingFor !== null}
+                                      onClick={() => startUpload(t.id, o.id)}
+                                    >
+                                      {uploadingFor === o.id
+                                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                                        : <Paperclip className="w-3 h-3" />}
+                                      แนบไฟล์
+                                    </Button>
+                                  )}
+                                </div>
+                                {optEvidence.length > 0 && (
+                                  <div className="mt-1 ml-6 space-y-0.5">
+                                    {optEvidence.map(ev => (
+                                      <div key={ev.id} className="flex items-center gap-1.5 text-[11px]">
+                                        <a href={ev.file_url} target="_blank" rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-primary hover:underline">
+                                          <ExternalLink className="w-3 h-3" />
+                                          {ev.file_name.length > 40 ? ev.file_name.slice(0, 40) + '…' : ev.file_name}
+                                        </a>
+                                        <span className="text-muted-foreground">
+                                          {ev.file_size ? `(${(ev.file_size / 1024).toFixed(0)} KB)` : ''} · {new Date(ev.created_at).toLocaleDateString('th-TH')}
+                                        </span>
+                                        {canUpload && (
+                                          <button onClick={() => deleteEvidence(ev)} className="text-muted-foreground hover:text-destructive">
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
-                      {r.matchedOptions.length === 0 && !r.pending && !isQuotation && (
-                        <p className="text-xs text-red-500 mt-1">ไม่พบใบรับรอง/เอกสารที่เข้าเกณฑ์ — อัปโหลดได้ที่แท็บ ใบรับรอง / Documents</p>
-                      )}
-                      {isQuotation && (
-                        <p className="text-xs text-muted-foreground mt-1">ระบบให้คะแนนอัตโนมัติจากใบเสนอราคาตอนเปรียบเทียบใน RFQ (ราคา / การส่งมอบ / เครดิตเทอม)</p>
-                      )}
 
-                      {/* Manual evaluation dropdown */}
-                      {hasManualChoice && !isQuotation && (
+                      {/* Manual evaluation dropdown (staff only) */}
+                      {hasManualChoice && !isQuotation && !portalMode && (
                         <div className="mt-2 max-w-md">
                           <Select value={selected} onValueChange={v => pickManual(t.id, v)} disabled={!canEdit}>
                             <SelectTrigger className="h-8 text-xs">

@@ -120,6 +120,7 @@ export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): P
       supplierType, topics, optionsByTopic,
       evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
       evidence.manualBy[sid] || {}, bands, ctx,
+      evidence.evidenceBy[sid] || [],
     );
 
     bySupplier[sid] = {

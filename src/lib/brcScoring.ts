@@ -68,6 +68,20 @@ export interface BrcManualScore {
 export interface SupplierCert { certificate_type: string | null; expiry_date: string | null; }
 export interface SupplierDoc  { document_type: string | null; document_name: string | null; }
 
+/** A file uploaded against a specific assessment topic/option. */
+export interface BrcEvidence {
+  id: string;
+  supplier_id: string;
+  topic_id: string;
+  option_id: string | null;
+  file_url: string;
+  file_name: string;
+  file_size: number | null;
+  expiry_date: string | null;
+  note: string | null;
+  created_at: string;
+}
+
 /** Quotation context for auto-scoring competition topics in an RFQ. */
 export interface QuotationContext {
   effectivePrice: number;        // this supplier's net price
@@ -81,6 +95,7 @@ export interface TopicResult {
   topic: BrcTopic;
   options: BrcOption[];
   matchedOptions: { option: BrcOption; via: string }[]; // via = evidence name / 'quotation' / 'manual'
+  evidence: BrcEvidence[];       // files uploaded directly against this topic
   score: number;
   maxScore: number;
   pending: boolean;              // true when manual not yet evaluated or quotation ctx missing
@@ -165,6 +180,7 @@ export function evaluateBrc(
   manualByTopic: Record<string, BrcManualScore>,
   bands: BrcGradeBand[],
   quotationCtx?: QuotationContext,
+  evidence: BrcEvidence[] = [],
 ): BrcAssessment {
   const relevant = topics
     .filter(t => t.active && t.supplier_type === supplierType)
@@ -173,6 +189,7 @@ export function evaluateBrc(
   const results: TopicResult[] = relevant.map(topic => {
     const options = (optionsByTopic[topic.id] || []).sort((a, b) => a.sort_order - b.sort_order);
     const matched: { option: BrcOption; via: string }[] = [];
+    const topicEvidence = evidence.filter(e => e.topic_id === topic.id);
     let pending = false;
 
     // Manual pick (applies to any topic that has a stored manual selection)
@@ -193,10 +210,17 @@ export function evaluateBrc(
       for (const opt of options) {
         if (opt.match_type === 'certificate' || opt.match_type === 'document') {
           const via = matchEvidence(opt, certs, docs);
-          if (via) matched.push({ option: opt, via });
+          if (via) {
+            matched.push({ option: opt, via });
+          } else {
+            // a file uploaded directly against this option also counts (expiry-checked)
+            const direct = topicEvidence.find(e => e.option_id === opt.id && !isExpired(e.expiry_date));
+            if (direct) matched.push({ option: opt, via: direct.file_name });
+          }
         }
       }
-      // manual options resolved from stored pick
+      // manual options resolved from stored pick (uploaded files on manual options
+      // are supporting attachments only — staff still confirms the pick)
       if (manualOpt) matched.push({ option: manualOpt, via: 'manual' });
       const hasManualOptions = options.some(o => o.match_type === 'manual');
       if (hasManualOptions && !manualOpt) pending = true;
@@ -215,7 +239,7 @@ export function evaluateBrc(
       score = Math.min(score, topic.target_score);
     }
 
-    return { topic, options, matchedOptions: matched, score, maxScore: topic.target_score, pending };
+    return { topic, options, matchedOptions: matched, evidence: topicEvidence, score, maxScore: topic.target_score, pending };
   });
 
   const totalScore = results.reduce((a, r) => a + r.score, 0);
@@ -269,18 +293,20 @@ export async function loadBrcStandard() {
 export async function loadSupplierEvidence(supplierIds: string[]) {
   const ids = Array.from(new Set(supplierIds)).filter(Boolean);
   if (ids.length === 0) {
-    return { certsBy: {}, docsBy: {}, manualBy: {}, typesBy: {} } as {
+    return { certsBy: {}, docsBy: {}, manualBy: {}, typesBy: {}, evidenceBy: {} } as {
       certsBy: Record<string, SupplierCert[]>;
       docsBy: Record<string, SupplierDoc[]>;
       manualBy: Record<string, Record<string, BrcManualScore>>;
       typesBy: Record<string, string | null>;
+      evidenceBy: Record<string, BrcEvidence[]>;
     };
   }
-  const [cRes, dRes, mRes, sRes] = await Promise.all([
+  const [cRes, dRes, mRes, sRes, eRes] = await Promise.all([
     supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date').in('supplier_id', ids),
     supabase.from('supplier_documents').select('supplier_id, document_type, document_name').in('supplier_id', ids),
     supabase.from('brc_manual_scores' as any).select('*').in('supplier_id', ids),
     supabase.from('suppliers').select('id, brc_supplier_type').in('id', ids),
+    supabase.from('brc_evidence' as any).select('*').in('supplier_id', ids).order('created_at', { ascending: false }),
   ]);
   const certsBy: Record<string, SupplierCert[]> = {};
   (cRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
@@ -290,5 +316,7 @@ export async function loadSupplierEvidence(supplierIds: string[]) {
   ((mRes.data as any[]) || []).forEach((m: any) => ((manualBy[m.supplier_id] ??= {})[m.topic_id] = m));
   const typesBy: Record<string, string | null> = {};
   ((sRes.data as any[]) || []).forEach((s: any) => (typesBy[s.id] = s.brc_supplier_type));
-  return { certsBy, docsBy, manualBy, typesBy };
+  const evidenceBy: Record<string, BrcEvidence[]> = {};
+  ((eRes.data as any[]) || []).forEach((e: any) => (evidenceBy[e.supplier_id] ??= []).push(e));
+  return { certsBy, docsBy, manualBy, typesBy, evidenceBy };
 }
