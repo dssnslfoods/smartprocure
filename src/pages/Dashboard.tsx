@@ -21,6 +21,7 @@ interface ExpiredCertRow {
   certificate_no:   string | null;
   expiry_date:      string;
   daysOverdue:      number;
+  source:           'cert' | 'brc';
 }
 
 interface KPIData {
@@ -95,8 +96,33 @@ export default function Dashboard() {
             certificate_no:   c.certificate_no,
             expiry_date:      c.expiry_date,
             daysOverdue,
+            source:           'cert' as const,
           };
         });
+
+        // Also pull expired BRC evidence documents
+        const expiredBrcRes = await supabase
+          .from('brc_evidence' as any)
+          .select('id, supplier_id, topic_id, file_name, expiry_date, suppliers(company_name), brc_topics(topic)')
+          .lt('expiry_date', todayIso)
+          .order('expiry_date', { ascending: true });
+
+        (expiredBrcRes.data || []).forEach((e: any) => {
+          const expiry = new Date(e.expiry_date);
+          const daysOverdue = Math.floor((Date.now() - expiry.getTime()) / 86400000);
+          expiredCertList.push({
+            cert_id:          e.id,
+            supplier_id:      e.supplier_id,
+            company_name:     e.suppliers?.company_name || '(ไม่ระบุชื่อบริษัท)',
+            certificate_type: e.brc_topics?.topic || 'BRCGS Evidence',
+            certificate_no:   e.file_name,
+            expiry_date:      e.expiry_date,
+            daysOverdue,
+            source:           'brc' as const,
+          });
+        });
+
+        expiredCertList.sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime());
 
         const suppliers = suppliersRes.data || [];
         const rfqs = rfqRes.data || [];
@@ -303,7 +329,7 @@ export default function Dashboard() {
             <div className="text-2xl font-bold text-amber-600">{stat(kpi?.expiredCerts)}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {kpi && kpi.expiredCertList.length > 0
-                ? `${kpi.expiredCertList.length} ใบรับรอง · คลิกเพื่อดูรายการ`
+                ? `${kpi.expiredCertList.length} รายการ · คลิกเพื่อดูรายการ`
                 : t('dashboard.expiredSub')}
             </p>
           </CardContent>
@@ -416,12 +442,12 @@ export default function Dashboard() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-amber-500" />
-              ใบรับรองที่หมดอายุ
+              ใบรับรอง / เอกสารประเมินที่หมดอายุ
             </DialogTitle>
             <DialogDescription>
               {kpi && kpi.expiredCertList.length > 0
-                ? `พบ ${kpi.expiredCertList.length} ใบรับรองจาก ${kpi.expiredCerts} บริษัท ที่หมดอายุแล้ว — ต้องดำเนินการต่ออายุก่อนทำธุรกรรม`
-                : 'ไม่พบใบรับรองที่หมดอายุ'}
+                ? `พบ ${kpi.expiredCertList.length} รายการจาก ${kpi.expiredCerts} บริษัท ที่หมดอายุ — ต้องดำเนินการต่ออายุก่อนทำธุรกรรม`
+                : 'ไม่พบใบรับรอง/เอกสารประเมินที่หมดอายุ'}
             </DialogDescription>
           </DialogHeader>
 
@@ -431,8 +457,9 @@ export default function Dashboard() {
                 <thead className="sticky top-0 bg-background border-b z-10">
                   <tr className="text-muted-foreground text-xs">
                     <th className="text-left p-2 font-medium">บริษัท</th>
+                    <th className="text-left p-2 font-medium">แหล่ง</th>
                     <th className="text-left p-2 font-medium">ประเภท</th>
-                    <th className="text-left p-2 font-medium">เลขที่</th>
+                    <th className="text-left p-2 font-medium">เลขที่ / ไฟล์</th>
                     <th className="text-left p-2 font-medium">หมดอายุ</th>
                     <th className="text-right p-2 font-medium">เกินกำหนด</th>
                     <th className="p-2 font-medium"></th>
@@ -443,11 +470,16 @@ export default function Dashboard() {
                     <tr key={c.cert_id} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="p-2 font-medium">{c.company_name}</td>
                       <td className="p-2">
+                        <Badge variant="outline" className={`text-[10px] ${c.source === 'brc' ? 'border-violet-300 bg-violet-50 text-violet-700' : 'border-blue-300 bg-blue-50 text-blue-700'}`}>
+                          {c.source === 'brc' ? 'BRCGS' : 'ใบรับรอง'}
+                        </Badge>
+                      </td>
+                      <td className="p-2">
                         <Badge variant="secondary" className="font-mono text-[10px]">
                           {c.certificate_type}
                         </Badge>
                       </td>
-                      <td className="p-2 text-muted-foreground font-mono text-xs">
+                      <td className="p-2 text-muted-foreground font-mono text-xs max-w-[160px] truncate">
                         {c.certificate_no || '—'}
                       </td>
                       <td className="p-2 text-red-700 font-medium">
@@ -484,7 +516,7 @@ export default function Dashboard() {
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <FileBadge className="h-10 w-10 mb-2 opacity-30" />
-              <p className="text-sm">ไม่พบใบรับรองที่หมดอายุ</p>
+              <p className="text-sm">ไม่พบใบรับรอง / เอกสารประเมินที่หมดอายุ</p>
             </div>
           )}
         </DialogContent>
