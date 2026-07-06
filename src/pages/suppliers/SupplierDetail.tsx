@@ -12,7 +12,6 @@ import SupplierContacts from './SupplierContacts';
 import SupplierDocuments from './SupplierDocuments';
 import SupplierESG from './SupplierESG';
 import SupplierBrcAssessment from './SupplierBrcAssessment';
-import SupplierCertificates from './SupplierCertificates';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
 
 const statusColors: Record<string, string> = {
@@ -112,8 +111,7 @@ export default function SupplierDetail() {
         <TabsList>
           <TabsTrigger value="info">Information</TabsTrigger>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
-          <TabsTrigger value="certificates">ใบรับรอง</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
+          <TabsTrigger value="documents">เอกสารบริษัท</TabsTrigger>
           <TabsTrigger value="esg">ESG Profile</TabsTrigger>
           <TabsTrigger value="risk">ประเมิน BRCGS</TabsTrigger>
         </TabsList>
@@ -147,10 +145,6 @@ export default function SupplierDetail() {
 
         <TabsContent value="contacts">
           <SupplierContacts supplierId={id!} />
-        </TabsContent>
-
-        <TabsContent value="certificates">
-          <SupplierCertificates supplierId={id!} />
         </TabsContent>
 
         <TabsContent value="documents">

@@ -10,7 +10,25 @@ import { Plus, FileText, Download, Trash2, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 
-const DOC_TYPES = ['Business License', 'Tax Certificate', 'Quality Certificate', 'Insurance', 'Financial Statement', 'Other'];
+const DOC_TYPES = [
+  'หนังสือรับรองบริษัท',
+  'ภพ.20',
+  'หนังสือจดทะเบียนพาณิชย์',
+  'บอจ.5 (บัญชีรายชื่อผู้ถือหุ้น)',
+  'สำเนาบัตรประชาชนกรรมการ',
+  'หนังสือรับรองบัญชีธนาคาร',
+  'งบการเงิน',
+  'NDA / สัญญา',
+  'อื่นๆ',
+];
+
+// Supabase storage object keys must be ASCII-safe (no Thai / spaces)
+const safeStorageName = (name: string) => {
+  const dot = name.lastIndexOf('.');
+  const base = (dot > 0 ? name.slice(0, dot) : name).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 60) || 'file';
+  const ext = dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]+/g, '') : '';
+  return `${base}${ext}`;
+};
 
 interface Props { supplierId: string; }
 
@@ -38,7 +56,7 @@ export default function SupplierDocuments({ supplierId }: Props) {
     if (!file || !docName) return;
     setUploading(true);
 
-    const filePath = `suppliers/${supplierId}/${Date.now()}_${file.name}`;
+    const filePath = `suppliers/${supplierId}/${Date.now()}_${safeStorageName(file.name)}`;
     const { error: uploadError } = await supabase.storage.from('supplier-documents').upload(filePath, file);
 
     if (uploadError) {
@@ -80,29 +98,32 @@ export default function SupplierDocuments({ supplierId }: Props) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Documents</CardTitle>
+        <div>
+          <CardTitle className="text-base">เอกสารบริษัท</CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">เอกสารจดทะเบียน / กฎหมาย เช่น หนังสือรับรองบริษัท, ภพ.20, งบการเงิน (ใบรับรองมาตรฐานอาหารดูที่แท็บ ประเมิน BRCGS)</p>
+        </div>
         {canEdit && (
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button size="sm"><Plus className="w-4 h-4 mr-1" />Upload Document</Button>
+              <Button size="sm"><Plus className="w-4 h-4 mr-1" />อัปโหลดเอกสาร</Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogHeader><DialogTitle>Upload Document</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>อัปโหลดเอกสารบริษัท</DialogTitle></DialogHeader>
               <div className="space-y-3">
-                <div className="space-y-1"><Label>Document Name *</Label><Input value={docName} onChange={e => setDocName(e.target.value)} placeholder="e.g. Business License 2025" /></div>
+                <div className="space-y-1"><Label>ชื่อเอกสาร *</Label><Input value={docName} onChange={e => setDocName(e.target.value)} placeholder="เช่น หนังสือรับรองบริษัท 2568" /></div>
                 <div className="space-y-1">
-                  <Label>Document Type</Label>
+                  <Label>ประเภทเอกสาร</Label>
                   <Select value={docType} onValueChange={setDocType}>
-                    <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="เลือกประเภท" /></SelectTrigger>
                     <SelectContent>{DOC_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label>File *</Label>
+                  <Label>ไฟล์ *</Label>
                   <Input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" />
                 </div>
                 <Button onClick={handleUpload} disabled={uploading || !docName} className="w-full">
-                  <Upload className="w-4 h-4 mr-1" />{uploading ? 'Uploading...' : 'Upload'}
+                  <Upload className="w-4 h-4 mr-1" />{uploading ? 'กำลังอัปโหลด...' : 'อัปโหลด'}
                 </Button>
               </div>
             </DialogContent>
@@ -110,8 +131,8 @@ export default function SupplierDocuments({ supplierId }: Props) {
         )}
       </CardHeader>
       <CardContent>
-        {loading ? <p className="text-sm text-muted-foreground">Loading...</p> : docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">No documents uploaded yet</p>
+        {loading ? <p className="text-sm text-muted-foreground">กำลังโหลด...</p> : docs.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">ยังไม่มีเอกสารบริษัท</p>
         ) : (
           <div className="space-y-3">
             {docs.map(d => (
@@ -123,7 +144,7 @@ export default function SupplierDocuments({ supplierId }: Props) {
                   <div>
                     <p className="font-medium text-sm">{d.document_name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {d.document_type || 'Other'} · {d.file_size ? `${(d.file_size / 1024).toFixed(0)} KB` : ''} · {new Date(d.created_at).toLocaleDateString()}
+                      {d.document_type || 'อื่นๆ'} · {d.file_size ? `${(d.file_size / 1024).toFixed(0)} KB` : ''} · {new Date(d.created_at).toLocaleDateString('th-TH')}
                     </p>
                   </div>
                 </div>
