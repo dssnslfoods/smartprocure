@@ -48,7 +48,7 @@ export default function RFQList() {
         rfq_number: rfqNumber,
         title: `${src.title} (สำเนา)`,
         description: src.description,
-        notes: src.notes,
+        notes: (src.notes || '').split('\n').filter((l: string) => !l.startsWith('[Rollback')).join('\n').trim() || null,
         deadline: src.deadline,
         status: 'draft',
         created_by: user?.id,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -6,233 +6,179 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Plus, Pencil, Trash2, ShieldCheck, FileBadge, FileText, AlertTriangle, HelpCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { RISK_FACTORS } from '@/types/procurement';
-import { DIMENSION_LABEL, CATEGORY_OPTIONS, type RiskCriterion } from '@/lib/riskCriteria';
+import { Pencil, Trash2, ShieldCheck, FileBadge, FileText, Info, ChevronDown, ChevronUp, Plus, Zap, UserCheck, Calculator } from 'lucide-react';
+import {
+  SUPPLIER_TYPES, SUPPLIER_TYPE_LABEL,
+  type BrcTopic, type BrcOption, type BrcGradeBand, type BrcSupplierType,
+} from '@/lib/brcScoring';
 
-const CATEGORY_LABEL: Record<string, string> = {
-  _global: 'ทุกหมวด (Global)',
-  raw_material: 'วัตถุดิบ',
-  packaging: 'บรรจุภัณฑ์',
-  service: 'บริการ',
-  other: 'อื่นๆ',
+const GRADE_COLOR: Record<string, string> = {
+  A: 'bg-green-100 text-green-800 border-green-300',
+  B: 'bg-blue-100 text-blue-800 border-blue-300',
+  C: 'bg-orange-100 text-orange-800 border-orange-300',
+  D: 'bg-red-100 text-red-800 border-red-300',
 };
-const CATEGORY_ORDER = ['_global', 'raw_material', 'packaging', 'service', 'other'];
 
-// Per-risk detail entered inside the checklist. One entry => one risk_criteria row.
-type FactorDetail = {
-  name_th: string;
-  description: string;
-  match_type: 'certificate' | 'document';
-  keywordsText: string;
-  weight: number;
-  is_mandatory: boolean;
-};
-const emptyDetail = (): FactorDetail => ({
-  name_th: '', description: '', match_type: 'certificate', keywordsText: '', weight: 1, is_mandatory: false,
-});
+function SourceBadge({ opt, topic }: { opt: BrcOption; topic: BrcTopic }) {
+  if (topic.auto_source === 'quotation' || opt.match_type === 'auto') {
+    return <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-50 text-amber-700 border border-amber-200"><Zap className="w-3 h-3" />Auto จากใบเสนอราคา</Badge>;
+  }
+  if (opt.match_type === 'certificate') {
+    return <Badge variant="secondary" className="text-[10px] gap-1 bg-blue-50 text-blue-700 border border-blue-200"><FileBadge className="w-3 h-3" />Auto จากใบรับรอง</Badge>;
+  }
+  if (opt.match_type === 'document') {
+    return <Badge variant="secondary" className="text-[10px] gap-1 bg-violet-50 text-violet-700 border border-violet-200"><FileText className="w-3 h-3" />Auto จากเอกสาร</Badge>;
+  }
+  return <Badge variant="secondary" className="text-[10px] gap-1 bg-slate-100 text-slate-600 border border-slate-200"><UserCheck className="w-3 h-3" />ประเมินเอง</Badge>;
+}
 
 export default function RiskCriteria() {
   const { toast } = useToast();
   const { hasRole } = useAuth();
   const canEdit = hasRole('admin') || hasRole('procurement_officer');
 
-  const [rows, setRows] = useState<RiskCriterion[]>([]);
+  const [topics, setTopics] = useState<BrcTopic[]>([]);
+  const [options, setOptions] = useState<BrcOption[]>([]);
+  const [bands, setBands] = useState<BrcGradeBand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+
+  // Option edit dialog
+  const [editOpt, setEditOpt] = useState<BrcOption | null>(null);
+  const [optForm, setOptForm] = useState({ label: '', score: 0, keywordsText: '' });
   const [saving, setSaving] = useState(false);
 
-  // Form state. editId === null => "add many" checklist; otherwise edit one row.
-  const [editId, setEditId] = useState<string | null>(null);
-  const [category, setCategory] = useState<string | null>(null);
-  const [active, setActive] = useState(true);
-  // presence of a key = that risk factor is checked; value = its detail.
-  const [factors, setFactors] = useState<Record<string, FactorDetail>>({});
+  // Add option dialog
+  const [addTopic, setAddTopic] = useState<BrcTopic | null>(null);
+  const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '' });
 
   const load = async () => {
     setLoading(true);
-    const { data } = await supabase.from('risk_criteria').select('*')
-      .order('category', { nullsFirst: true }).order('dimension').order('sort_order');
-    setRows((data as RiskCriterion[]) || []);
+    const [tRes, oRes, bRes] = await Promise.all([
+      supabase.from('brc_topics' as any).select('*').order('sort_order'),
+      supabase.from('brc_options' as any).select('*').order('sort_order'),
+      supabase.from('brc_grade_bands' as any).select('*').order('min_score', { ascending: false }),
+    ]);
+    setTopics((tRes.data as unknown as BrcTopic[]) || []);
+    setOptions((oRes.data as unknown as BrcOption[]) || []);
+    setBands((bRes.data as unknown as BrcGradeBand[]) || []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => {
-    setEditId(null); setCategory(null); setActive(true); setFactors({}); setOpen(true);
-  };
-  const openEdit = (c: RiskCriterion) => {
-    setEditId(c.id); setCategory(c.category ?? null); setActive(c.active !== false);
-    setFactors({ [c.dimension]: {
-      name_th: c.name_th || '', description: c.description || '',
-      match_type: c.match_type, keywordsText: (c.match_keywords || []).join(', '),
-      weight: c.weight ?? 1, is_mandatory: !!c.is_mandatory,
-    } });
-    setOpen(true);
+  const optionsByTopic = useMemo(() => {
+    const m: Record<string, BrcOption[]> = {};
+    options.forEach(o => (m[o.topic_id] ??= []).push(o));
+    return m;
+  }, [options]);
+
+  const openEditOpt = (o: BrcOption) => {
+    setEditOpt(o);
+    setOptForm({ label: o.label, score: o.score, keywordsText: (o.match_keywords || []).join(', ') });
   };
 
-  const toggleFactor = (key: string, on: boolean) => setFactors(prev => {
-    const next = { ...prev };
-    if (on) next[key] = prev[key] ?? emptyDetail();
-    else delete next[key];
-    return next;
-  });
-  const setDetail = (key: string, patch: Partial<FactorDetail>) =>
-    setFactors(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }));
-
-  const rowFromDetail = (dim: string, det: FactorDetail, i: number) => ({
-    category: category || null,
-    dimension: dim,
-    name_th: det.name_th.trim(),
-    description: det.description?.trim() || null,
-    weight: Number(det.weight) || 1,
-    match_type: det.match_type,
-    match_keywords: (det.keywordsText || '').split(',').map(s => s.trim()).filter(Boolean),
-    is_mandatory: !!det.is_mandatory,
-    sort_order: (i + 1) * 10,
-    active,
-    updated_at: new Date().toISOString(),
-  });
-
-  const save = async () => {
-    const entries = Object.entries(factors);
-    if (entries.length === 0) { toast({ title: 'เลือกอย่างน้อย 1 ด้านความเสี่ยง', variant: 'destructive' }); return; }
-    const missing = entries.filter(([, d]) => !d.name_th.trim());
-    if (missing.length) {
-      const labels = missing.map(([k]) => RISK_FACTORS.find(f => f.key === k)?.label || k).join(', ');
-      toast({ title: 'กรุณาใส่ชื่อเกณฑ์ให้ครบ', description: `ยังขาดชื่อในด้าน: ${labels}`, variant: 'destructive' });
-      return;
-    }
+  const saveOpt = async () => {
+    if (!editOpt) return;
     setSaving(true);
-    let error;
-    if (editId) {
-      // Edit mode targets a single existing row.
-      const [dim, det] = entries[0];
-      ({ error } = await supabase.from('risk_criteria').update(rowFromDetail(dim, det, 0)).eq('id', editId));
-    } else {
-      const payload = entries.map(([dim, det], i) => rowFromDetail(dim, det, i));
-      ({ error } = await supabase.from('risk_criteria').insert(payload));
-    }
+    const { error } = await supabase.from('brc_options' as any).update({
+      label: optForm.label,
+      score: Number(optForm.score) || 0,
+      match_keywords: optForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
+    }).eq('id', editOpt.id);
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: editId ? 'แก้ไขเกณฑ์แล้ว' : `เพิ่ม ${entries.length} เกณฑ์แล้ว` });
-    setOpen(false); load();
+    toast({ title: 'บันทึกแล้ว' });
+    setEditOpt(null); load();
   };
 
-  const remove = async (id: string) => {
-    const { error } = await supabase.from('risk_criteria').delete().eq('id', id);
+  const saveNewOpt = async () => {
+    if (!addTopic || !addForm.label.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from('brc_options' as any).insert({
+      topic_id: addTopic.id,
+      label: addForm.label.trim(),
+      score: Number(addForm.score) || 0,
+      match_type: addForm.match_type,
+      match_keywords: addForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
+      sort_order: ((optionsByTopic[addTopic.id] || []).length + 1) * 10,
+    });
+    setSaving(false);
+    if (error) { toast({ title: 'เพิ่มไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'เพิ่มตัวเลือกแล้ว' });
+    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '' }); load();
+  };
+
+  const removeOpt = async (id: string) => {
+    const { error } = await supabase.from('brc_options' as any).delete().eq('id', id);
     if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'ลบเกณฑ์แล้ว' }); load();
+    toast({ title: 'ลบแล้ว' }); load();
   };
 
-  const [guideOpen, setGuideOpen] = useState(false);
+  const toggleTopic = async (t: BrcTopic, active: boolean) => {
+    await supabase.from('brc_topics' as any).update({ active }).eq('id', t.id);
+    load();
+  };
 
-  const grouped = CATEGORY_ORDER.map(cat => ({
-    cat,
-    items: rows.filter(r => (r.category ?? '_global') === cat),
-  })).filter(g => g.items.length > 0);
+  if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">กำลังโหลด...</div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><ShieldCheck className="w-6 h-6 text-teal-600" />เกณฑ์การประเมินความเสี่ยง (BRC)</h1>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <ShieldCheck className="w-6 h-6 text-teal-600" />เกณฑ์ประเมิน Supplier (BRCGS Standard)
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            กำหนดเกณฑ์ที่ supplier ต้องผ่านในแต่ละด้าน ระบบจะตรวจจากเอกสาร/ใบรับรองอัตโนมัติ แล้วคำนวณคะแนนความเสี่ยง
-            หากขาดเกณฑ์บังคับ (mandatory) คะแนนความเสี่ยงด้านนั้นจะสูงสุด
+            มาตรฐานการอนุมัติผู้ขายตาม BRCGS — ระบบให้คะแนน<b>อัตโนมัติ</b>จากใบรับรอง เอกสาร และใบเสนอราคา
+            ส่วนที่ต้องประเมินเอง (Audit, ประสบการณ์) บันทึกครั้งเดียวใช้ได้ทุก RFQ
           </p>
         </div>
-        {canEdit && <Button onClick={openNew} className="shrink-0"><Plus className="w-4 h-4 mr-2" />เพิ่มเกณฑ์</Button>}
       </div>
 
-      {/* Scoring Guide */}
+      {/* Scoring guide */}
       <Card className="border-blue-200 bg-blue-50/30">
         <CardContent className="p-0">
-          <button
-            onClick={() => setGuideOpen(!guideOpen)}
-            className="w-full flex items-center justify-between p-4 text-left hover:bg-blue-50/50 transition-colors rounded-lg"
-          >
+          <button onClick={() => setGuideOpen(!guideOpen)}
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-blue-50/50 transition-colors rounded-lg">
             <div className="flex items-center gap-2">
               <Info className="w-5 h-5 text-blue-600" />
-              <span className="font-semibold text-blue-900">คำแนะนำ: ระบบการให้คะแนนความเสี่ยง BRC</span>
+              <span className="font-semibold text-blue-900">วิธีการประเมินอัตโนมัติ</span>
             </div>
             {guideOpen ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
           </button>
-
           {guideOpen && (
-            <div className="px-4 pb-4 space-y-4 text-sm">
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <h3 className="font-semibold text-blue-900">ปัจจัยความเสี่ยง ({RISK_FACTORS.length} ด้าน)</h3>
-                  <p className="text-xs text-muted-foreground">ระบบประเมินผู้จัดจำหน่ายจาก {RISK_FACTORS.length} ปัจจัย ตามมาตรฐาน BRC:</p>
-                  <div className="space-y-1">
-                    {RISK_FACTORS.map((f, i) => (
-                      <div key={f.key} className="flex items-start gap-2 text-xs">
-                        <span className="font-mono text-blue-600 w-4 text-right shrink-0">{i + 1}.</span>
-                        <div>
-                          <span className="font-medium">{f.label}</span>
-                          <span className="text-muted-foreground"> — {f.description}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+            <div className="px-4 pb-4 grid md:grid-cols-2 gap-4 text-sm">
+              <div className="space-y-2">
+                <div className="flex items-start gap-2">
+                  <FileBadge className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                  <p><b>Auto จากใบรับรอง</b> — จับคู่ชื่อใบรับรองของ supplier (GFSI, ISO22000, HACCP, Halal ฯลฯ) เช็ควันหมดอายุอัตโนมัติ ใบหมดอายุ = ไม่นับ</p>
                 </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <h3 className="font-semibold text-blue-900">การคำนวณคะแนน</h3>
-                    <div className="bg-white rounded-lg border p-3 space-y-2 text-xs">
-                      <div>
-                        <p className="font-medium">คะแนนรายด้าน (0–10)</p>
-                        <p className="text-muted-foreground">คะแนน = (1 − น้ำหนักที่ผ่าน / น้ำหนักรวม) × 10</p>
-                        <p className="text-muted-foreground mt-0.5">0 = ความเสี่ยงต่ำสุด (ผ่านทุกเกณฑ์), 10 = ความเสี่ยงสูงสุด</p>
-                      </div>
-                      <div className="border-t pt-2">
-                        <p className="font-medium">คะแนนรวม Supplier (0–100)</p>
-                        <p className="text-muted-foreground">คะแนน = (1 − คะแนนเฉลี่ยถ่วงน้ำหนัก / 10) × 100</p>
-                        <p className="text-muted-foreground mt-0.5">100 = ปลอดภัยที่สุด, 0 = ความเสี่ยงสูงสุด</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="font-semibold text-blue-900">ระดับความเสี่ยง</h3>
-                    <div className="grid grid-cols-2 gap-1.5 text-xs">
-                      <div className="flex items-center gap-2 bg-green-50 rounded px-2 py-1.5 border border-green-200">
-                        <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                        <div><span className="font-medium">Low</span> <span className="text-muted-foreground">(0–2.5)</span></div>
-                      </div>
-                      <div className="flex items-center gap-2 bg-amber-50 rounded px-2 py-1.5 border border-amber-200">
-                        <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                        <div><span className="font-medium">Medium</span> <span className="text-muted-foreground">(2.6–5.0)</span></div>
-                      </div>
-                      <div className="flex items-center gap-2 bg-orange-50 rounded px-2 py-1.5 border border-orange-200">
-                        <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
-                        <div><span className="font-medium">High</span> <span className="text-muted-foreground">(5.1–7.5)</span></div>
-                      </div>
-                      <div className="flex items-center gap-2 bg-red-50 rounded px-2 py-1.5 border border-red-200">
-                        <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                        <div><span className="font-medium">Critical</span> <span className="text-muted-foreground">(7.6–10)</span></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="font-semibold text-blue-900">กฎเกณฑ์สำคัญ</h3>
-                    <div className="text-xs space-y-1 text-muted-foreground">
-                      <p>• <span className="font-medium text-red-600">เกณฑ์บังคับ (Mandatory)</span> — หากไม่ผ่านแม้ข้อเดียว คะแนนด้านนั้น = 10 (สูงสุด) ทันที</p>
-                      <p>• <span className="font-medium text-foreground">น้ำหนัก (Weight)</span> — กำหนดความสำคัญของเกณฑ์แต่ละข้อ น้ำหนักยิ่งสูง ยิ่งมีผลต่อคะแนนมาก</p>
-                      <p>• <span className="font-medium text-foreground">การตรวจอัตโนมัติ</span> — ระบบจับคู่ชื่อใบรับรอง/เอกสารของ Supplier กับคำค้น (keywords) ที่กำหนด</p>
-                      <p>• <span className="font-medium text-foreground">ใบรับรองหมดอายุ</span> — ถือว่า "ไม่ผ่าน" เกณฑ์ข้อนั้นโดยอัตโนมัติ</p>
-                    </div>
+                <div className="flex items-start gap-2">
+                  <FileText className="w-4 h-4 text-violet-600 mt-0.5 shrink-0" />
+                  <p><b>Auto จากเอกสาร</b> — จับคู่เอกสารที่อัปโหลด (Spec/TDS, COA, Test report, Allergen, MSDS ฯลฯ)</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Zap className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                  <p><b>Auto จากใบเสนอราคา</b> — Pricing (ราคาต่ำสุด=เต็ม, สูงกว่าไม่เกิน 10%=กลาง), Delivery (lead time), Credit term (≥30 วัน=เต็ม) คำนวณตอนเปรียบเทียบราคาใน RFQ</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <UserCheck className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
+                  <p><b>ประเมินเอง</b> — Audit score, Product risk assessment, ประสบการณ์, Material testing — เลือกครั้งเดียวในหน้า Supplier แล้วระบบจำไว้</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-start gap-2">
+                  <Calculator className="w-4 h-4 text-teal-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p><b>การให้เกรด</b> — รวมคะแนนทุกหัวข้อ เทียบช่วงคะแนนตามประเภท supplier:</p>
+                    <p className="text-xs text-muted-foreground mt-1">A = Preferred (พิจารณาพิเศษ) · B = Approved (อนุมัติ) · C = Restricted (มีข้อจำกัด) · D = Unsuitable (ไม่เหมาะสม)</p>
+                    <p className="text-xs text-muted-foreground mt-1">หัวข้อที่ยังประเมินไม่ได้ (รอใบเสนอราคา/รอประเมิน) จะถูกตัดออกจากคะแนนเต็มชั่วคราว เพื่อให้เกรดยุติธรรม</p>
+                    <p className="text-xs text-muted-foreground mt-1">ใน RFQ: ผู้ใช้กรอกแค่ใบเสนอราคา + Technical score — ส่วน Risk ระบบประเมิน auto ทั้งหมด</p>
                   </div>
                 </div>
               </div>
@@ -241,185 +187,178 @@ export default function RiskCriteria() {
         </CardContent>
       </Card>
 
-      {loading ? (
-        <Card><CardContent className="p-12 text-center text-muted-foreground">กำลังโหลด...</CardContent></Card>
-      ) : grouped.length === 0 ? (
-        <Card><CardContent className="p-12 text-center text-muted-foreground">ยังไม่มีเกณฑ์ — กด "เพิ่มเกณฑ์" เพื่อเริ่มต้น</CardContent></Card>
-      ) : grouped.map(({ cat, items }) => (
-        <div key={cat} className="space-y-2">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{CATEGORY_LABEL[cat]}</h2>
-          <Card>
-            <CardContent className="p-0 divide-y">
-              {items.map(c => (
-                <div key={c.id} className="flex items-start gap-3 p-4">
-                  <div className="mt-0.5">
-                    {c.match_type === 'certificate' ? <FileBadge className="w-4 h-4 text-blue-500" /> : <FileText className="w-4 h-4 text-violet-500" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{c.name_th}</span>
-                      <Badge variant="outline" className="text-[10px]">{DIMENSION_LABEL[c.dimension] || c.dimension}</Badge>
-                      {c.is_mandatory && <Badge className="bg-red-500/10 text-red-600 text-[10px] gap-1"><AlertTriangle className="w-3 h-3" />บังคับ</Badge>}
-                      {!c.active && <Badge variant="secondary" className="text-[10px]">ปิดใช้งาน</Badge>}
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-xs text-muted-foreground cursor-help flex items-center gap-0.5">น้ำหนัก {c.weight} <HelpCircle className="w-3 h-3" /></span>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-xs text-xs">
-                            <p>น้ำหนักกำหนดสัดส่วนของเกณฑ์นี้ในการคำนวณคะแนนความเสี่ยง ยิ่งน้ำหนักสูง เกณฑ์นี้ยิ่งมีผลต่อคะแนนรวมมาก</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+      <Tabs defaultValue={SUPPLIER_TYPES[0]}>
+        <TabsList className="flex-wrap h-auto">
+          {SUPPLIER_TYPES.map(st => (
+            <TabsTrigger key={st} value={st} className="text-xs">{SUPPLIER_TYPE_LABEL[st].split('(')[0].trim()}</TabsTrigger>
+          ))}
+        </TabsList>
+
+        {SUPPLIER_TYPES.map(st => {
+          const typeTopics = topics.filter(t => t.supplier_type === st);
+          const typeBands = bands.filter(b => b.supplier_type === st);
+          const maxTotal = typeTopics.filter(t => t.active).reduce((a, t) => a + Number(t.target_score), 0);
+          const sections = Array.from(new Set(typeTopics.map(t => t.section)));
+          return (
+            <TabsContent key={st} value={st} className="space-y-4">
+              {/* Grade bands */}
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <p className="text-sm font-semibold">{SUPPLIER_TYPE_LABEL[st]} — คะแนนเต็ม {maxTotal}</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {typeBands.map(b => (
+                        <Badge key={b.grade} variant="outline" className={`${GRADE_COLOR[b.grade]} text-xs`}>
+                          {b.grade}: {b.min_score}–{b.max_score}
+                        </Badge>
+                      ))}
                     </div>
-                    {c.description && <p className="text-xs text-muted-foreground mt-0.5">{c.description}</p>}
-                    {c.match_keywords?.length > 0 && (
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        จับคู่จาก{c.match_type === 'certificate' ? 'ใบรับรอง' : 'เอกสาร'}: {c.match_keywords.map(k => <code key={k} className="bg-muted px-1 rounded mr-1">{k}</code>)}
-                      </p>
-                    )}
                   </div>
-                  {canEdit && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="w-4 h-4" /></Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild><Button variant="ghost" size="icon"><Trash2 className="w-4 h-4 text-red-500" /></Button></AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>ลบเกณฑ์นี้?</AlertDialogTitle>
-                            <AlertDialogDescription>"{c.name_th}" จะถูกลบถาวร และจะไม่ถูกใช้คำนวณความเสี่ยงอีก</AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => remove(c.id)} className="bg-red-600 hover:bg-red-700">ลบ</AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  )}
+                </CardContent>
+              </Card>
+
+              {sections.map(section => (
+                <div key={section} className="space-y-2">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{section}</h2>
+                  {typeTopics.filter(t => t.section === section).map(t => (
+                    <Card key={t.id} className={!t.active ? 'opacity-50' : ''}>
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium">{t.topic}</span>
+                            <Badge variant="outline" className="text-[10px]">เต็ม {Number(t.target_score)}</Badge>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {t.scoring_mode === 'best_match' ? 'เลือกคะแนนสูงสุดที่เข้าเกณฑ์' : 'บวกสะสมทุกข้อที่มี'}
+                            </Badge>
+                          </div>
+                          {canEdit && (
+                            <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
+                                onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '' }); }}>
+                                <Plus className="w-3 h-3" />ตัวเลือก
+                              </Button>
+                              <Switch checked={t.active} onCheckedChange={v => toggleTopic(t, v)} />
+                            </div>
+                          )}
+                        </div>
+                        <div className="divide-y">
+                          {(optionsByTopic[t.id] || []).map(o => (
+                            <div key={o.id} className="flex items-center gap-3 py-2">
+                              <span className="font-mono font-semibold text-sm w-8 text-right shrink-0">{Number(o.score)}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm">{o.label}</span>
+                                  <SourceBadge opt={o} topic={t} />
+                                </div>
+                                {o.match_keywords?.length > 0 && (
+                                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                                    คำค้น: {o.match_keywords.map(k => <code key={k} className="bg-muted px-1 rounded mr-1">{k}</code>)}
+                                  </p>
+                                )}
+                                {o.requirement && <p className="text-[11px] text-muted-foreground mt-0.5">{o.requirement}</p>}
+                              </div>
+                              {canEdit && (
+                                <div className="flex items-center shrink-0">
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditOpt(o)}><Pencil className="w-3.5 h-3.5" /></Button>
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7"><Trash2 className="w-3.5 h-3.5 text-red-500" /></Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>ลบตัวเลือกนี้?</AlertDialogTitle>
+                                        <AlertDialogDescription>"{o.label}" จะถูกลบถาวร</AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => removeOpt(o.id)} className="bg-red-600 hover:bg-red-700">ลบ</AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
                 </div>
               ))}
-            </CardContent>
-          </Card>
-        </div>
-      ))}
+            </TabsContent>
+          );
+        })}
+      </Tabs>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      {/* Edit option dialog */}
+      <Dialog open={!!editOpt} onOpenChange={v => !v && setEditOpt(null)}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editId ? 'แก้ไขเกณฑ์' : 'เพิ่มเกณฑ์ใหม่'}</DialogTitle>
-            <DialogDescription>
-              {editId
-                ? 'แก้ไขรายละเอียดเกณฑ์การประเมินความเสี่ยง'
-                : 'เลือกหมวด catalog แล้วติ๊กด้านความเสี่ยงที่ต้องการ (เลือกได้หลายด้าน) จากนั้นกรอกรายละเอียดของแต่ละด้าน'}
-            </DialogDescription>
+            <DialogTitle>แก้ไขตัวเลือก</DialogTitle>
+            <DialogDescription>ปรับชื่อ คะแนน หรือคำค้นสำหรับจับคู่อัตโนมัติ</DialogDescription>
           </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>ชื่อ</Label>
+              <Input value={optForm.label} onChange={e => setOptForm(p => ({ ...p, label: e.target.value }))} />
+            </div>
+            <div>
+              <Label>คะแนน</Label>
+              <Input type="number" value={optForm.score} onChange={e => setOptForm(p => ({ ...p, score: parseFloat(e.target.value) || 0 }))} />
+            </div>
+            {editOpt && (editOpt.match_type === 'certificate' || editOpt.match_type === 'document') && (
+              <div>
+                <Label>คำค้นจับคู่ (คั่นด้วยจุลภาค)</Label>
+                <Input value={optForm.keywordsText} onChange={e => setOptForm(p => ({ ...p, keywordsText: e.target.value }))} />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  ระบบถือว่า "ผ่าน" เมื่อชื่อ{editOpt.match_type === 'certificate' ? 'ใบรับรอง' : 'เอกสาร'}มีคำใดคำหนึ่ง
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpt(null)}>ยกเลิก</Button>
+            <Button onClick={saveOpt} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          <div className="space-y-4">
+      {/* Add option dialog */}
+      <Dialog open={!!addTopic} onOpenChange={v => !v && setAddTopic(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>เพิ่มตัวเลือก — {addTopic?.topic}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>ชื่อ *</Label>
+              <Input value={addForm.label} onChange={e => setAddForm(p => ({ ...p, label: e.target.value }))} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>หมวดหมู่ catalog</Label>
-                <Select value={category ?? '_global'} onValueChange={v => setCategory(v === '_global' ? null : v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_global">ทุกหมวด (Global)</SelectItem>
-                    {CATEGORY_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Label>คะแนน</Label>
+                <Input type="number" value={addForm.score} onChange={e => setAddForm(p => ({ ...p, score: parseFloat(e.target.value) || 0 }))} />
               </div>
-              <div className="flex items-end">
-                <div className="flex items-center justify-between rounded-lg border p-3 w-full h-10">
-                  <Label className="cursor-pointer text-sm">เปิดใช้งาน</Label>
-                  <Switch checked={active} onCheckedChange={setActive} />
-                </div>
+              <div>
+                <Label>ตรวจจาก</Label>
+                <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
+                  value={addForm.match_type} onChange={e => setAddForm(p => ({ ...p, match_type: e.target.value }))}>
+                  <option value="certificate">ใบรับรอง (auto)</option>
+                  <option value="document">เอกสาร (auto)</option>
+                  <option value="manual">ประเมินเอง</option>
+                </select>
               </div>
             </div>
-
-            <div>
-              <Label>ด้านความเสี่ยง {!editId && <span className="text-muted-foreground font-normal">(ติ๊กได้มากกว่า 1 ด้าน)</span>}</Label>
-              <div className="mt-2 space-y-2">
-                {RISK_FACTORS
-                  .filter(f => !editId || f.key in factors)
-                  .map(f => {
-                    const det = factors[f.key];
-                    const checked = !!det;
-                    return (
-                      <div key={f.key} className={`rounded-lg border p-3 transition-colors ${checked ? 'border-teal-300 bg-teal-50/40' : ''}`}>
-                        <div className="flex items-start gap-3">
-                          {!editId && (
-                            <Checkbox className="mt-0.5" checked={checked} onCheckedChange={v => toggleFactor(f.key, !!v)} />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium">{f.label} <span className="text-muted-foreground font-normal">— {DIMENSION_LABEL[f.key] || f.key}</span></div>
-                            <p className="text-[11px] text-muted-foreground">{f.description}</p>
-                          </div>
-                        </div>
-
-                        {checked && (
-                          <div className="mt-3 space-y-3 pl-0 sm:pl-7">
-                            <div>
-                              <Label className="text-xs">ชื่อเกณฑ์ *</Label>
-                              <Input value={det.name_th} placeholder="เช่น แผน HACCP"
-                                onChange={e => setDetail(f.key, { name_th: e.target.value })} />
-                            </div>
-                            <div>
-                              <Label className="text-xs">คำอธิบาย</Label>
-                              <Textarea rows={2} value={det.description}
-                                onChange={e => setDetail(f.key, { description: e.target.value })} />
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <Label className="text-xs">ตรวจจาก</Label>
-                                <Select value={det.match_type} onValueChange={v => setDetail(f.key, { match_type: v as FactorDetail['match_type'] })}>
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="certificate">ใบรับรอง (Certificate)</SelectItem>
-                                    <SelectItem value="document">เอกสาร (Document)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div>
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Label className="text-xs cursor-help inline-flex items-center gap-1">น้ำหนัก <HelpCircle className="w-3 h-3 text-muted-foreground" /></Label>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="max-w-xs text-xs">
-                                      <p>น้ำหนักกำหนดสัดส่วนของเกณฑ์นี้ในการคำนวณคะแนนความเสี่ยง ยิ่งน้ำหนักสูง เกณฑ์นี้ยิ่งมีผลต่อคะแนนรวมมาก</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                                <Input type="number" min={0.5} step={0.5} value={det.weight}
-                                  onChange={e => setDetail(f.key, { weight: parseFloat(e.target.value) })} />
-                              </div>
-                            </div>
-                            <div>
-                              <Label className="text-xs">คำค้นสำหรับจับคู่ (คั่นด้วยจุลภาค)</Label>
-                              <Input value={det.keywordsText} placeholder="haccp, gmp, ใบรับรอง"
-                                onChange={e => setDetail(f.key, { keywordsText: e.target.value })} />
-                              <p className="text-[11px] text-muted-foreground mt-1">ระบบจะถือว่า "ผ่าน" เมื่อชื่อ{det.match_type === 'certificate' ? 'ใบรับรอง' : 'เอกสาร'}มีคำเหล่านี้คำใดคำหนึ่ง</p>
-                            </div>
-                            <div className="flex items-center justify-between rounded-lg border p-2.5 bg-background">
-                              <div>
-                                <Label className="cursor-pointer text-xs">เกณฑ์บังคับ (Mandatory)</Label>
-                                <p className="text-[11px] text-muted-foreground">หากขาด คะแนนความเสี่ยงด้านนี้จะสูงสุด (10)</p>
-                              </div>
-                              <Switch checked={det.is_mandatory} onCheckedChange={v => setDetail(f.key, { is_mandatory: v })} />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+            {addForm.match_type !== 'manual' && (
+              <div>
+                <Label>คำค้นจับคู่ (คั่นด้วยจุลภาค)</Label>
+                <Input value={addForm.keywordsText} onChange={e => setAddForm(p => ({ ...p, keywordsText: e.target.value }))} placeholder="เช่น halal, ฮาลาล" />
               </div>
-            </div>
+            )}
           </div>
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>ยกเลิก</Button>
-            <Button onClick={save} disabled={saving}>
-              {saving ? 'กำลังบันทึก...' : editId ? 'บันทึก' : `เพิ่ม ${Object.keys(factors).length || ''} เกณฑ์`}
-            </Button>
+            <Button variant="outline" onClick={() => setAddTopic(null)}>ยกเลิก</Button>
+            <Button onClick={saveNewOpt} disabled={saving || !addForm.label.trim()}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

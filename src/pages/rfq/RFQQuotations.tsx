@@ -323,6 +323,10 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
 
   const handleSubmit = async () => {
     if (!form.supplier_id) return;
+    if (quotedSupplierIds.has(form.supplier_id)) {
+      toast({ title: 'Supplier นี้ส่งใบเสนอราคาแล้ว', description: 'ไม่สามารถส่งซ้ำได้ — ลบใบเก่าก่อนหากต้องการส่งใหม่', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
 
     const subtotal = rfqItems.reduce((sum, item) => {
@@ -435,6 +439,10 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
 
   const canSubmit = hasRole('admin') || hasRole('procurement_officer') || hasRole('supplier');
 
+  const quotedSupplierIds = new Set(quotations.map(q => q.supplier_id));
+  const availableSuppliers = suppliers.filter(s => !quotedSupplierIds.has(s.id));
+  const myAlreadyQuoted = mySupplierId ? quotedSupplierIds.has(mySupplierId) : false;
+
   const declined = !!myInviteRow?.declined_at;
 
   return (
@@ -488,7 +496,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
               </DialogContent>
             </Dialog>
           )}
-          {canSubmit && !declined && (
+          {canSubmit && !declined && !myAlreadyQuoted && (
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="w-4 h-4 mr-1" />Submit Quotation</Button>
@@ -604,7 +612,10 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     <Select value={form.supplier_id} onValueChange={v => setForm(p => ({ ...p, supplier_id: v }))}>
                       <SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger>
                       <SelectContent>
-                        {suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
+                        {availableSuppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>)}
+                        {availableSuppliers.length === 0 && (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">ทุก Supplier ส่งใบเสนอราคาแล้ว</div>
+                        )}
                       </SelectContent>
                     </Select>
                   )}

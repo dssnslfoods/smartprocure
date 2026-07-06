@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import SupplierContacts from './SupplierContacts';
 import SupplierDocuments from './SupplierDocuments';
 import SupplierESG from './SupplierESG';
-import SupplierRiskTab from './SupplierRiskTab';
+import SupplierBrcAssessment from './SupplierBrcAssessment';
 import SupplierCertificates from './SupplierCertificates';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
 
@@ -115,7 +115,7 @@ export default function SupplierDetail() {
           <TabsTrigger value="certificates">ใบรับรอง</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="esg">ESG Profile</TabsTrigger>
-          <TabsTrigger value="risk">Risk Assessment</TabsTrigger>
+          <TabsTrigger value="risk">ประเมิน BRCGS</TabsTrigger>
         </TabsList>
 
         <TabsContent value="info">
@@ -162,7 +162,7 @@ export default function SupplierDetail() {
         </TabsContent>
 
         <TabsContent value="risk">
-          <SupplierRiskTab supplierId={id!} onRiskUpdated={fetchSupplier} />
+          <SupplierBrcAssessment supplierId={id!} onRiskUpdated={fetchSupplier} />
         </TabsContent>
       </Tabs>
     </div>

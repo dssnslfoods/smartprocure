@@ -56,6 +56,8 @@ export default function BiddingDetail() {
   const [sendingFQ, setSendingFQ] = useState(false);
   const { user, hasRole, profile: authProfile } = useAuth();
   const canManage = hasRole('admin') || hasRole('procurement_officer');
+  const isSupplier = hasRole('supplier');
+  const mySupplierId = authProfile?.supplier_id ?? null;
 
   // Setup form
   const [setupForm, setSetupForm] = useState({
@@ -113,9 +115,13 @@ export default function BiddingDetail() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
+    if (isSupplier && mySupplierId) setBidForm(f => ({ ...f, supplier_id: mySupplierId }));
+  }, [isSupplier, mySupplierId]);
+
+  useEffect(() => {
     const channel = supabase
       .channel(`bids-${id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bid_entries', filter: `bidding_event_id=eq.${id}` }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bid_entries', filter: `bidding_event_id=eq.${id}` }, () => fetchData())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [id, fetchData]);
@@ -494,6 +500,22 @@ export default function BiddingDetail() {
           </TabsContent>
 
           <TabsContent value="submit">
+            {/* Real-time lowest bid banner */}
+            {isActive && ranked.length > 0 && (
+              <div className="mb-4 p-4 rounded-lg border-2 border-green-300 bg-green-50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <TrendingDown className="w-6 h-6 text-green-600" />
+                  <div>
+                    <p className="text-xs text-green-600 font-medium uppercase tracking-wide">ราคาต่ำสุดปัจจุบัน (Real-time)</p>
+                    <p className="text-2xl font-bold text-green-700 font-mono">฿{ranked[0].bid_amount.toLocaleString()}</p>
+                  </div>
+                </div>
+                <div className="text-right text-xs text-green-600">
+                  <p>จำนวนผู้เสนอราคา: {ranked.length} ราย</p>
+                  <p>Bids ทั้งหมด: {bids.length} ครั้ง</p>
+                </div>
+              </div>
+            )}
             <Card>
               <CardHeader><CardTitle className="text-base">เสนอราคา</CardTitle></CardHeader>
               <CardContent>
@@ -503,18 +525,35 @@ export default function BiddingDetail() {
                   <form onSubmit={submitBid} className="space-y-4 max-w-md">
                     <div className="space-y-2">
                       <Label>ผู้จัดจำหน่าย *</Label>
-                      <Select value={bidForm.supplier_id} onValueChange={(v) => setBidForm({ ...bidForm, supplier_id: v })}>
-                        <SelectTrigger><SelectValue placeholder="เลือกผู้จัดจำหน่าย" /></SelectTrigger>
-                        <SelectContent>
-                          {suppliers.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      {isSupplier && mySupplierId ? (
+                        <>
+                          <div className="flex items-center gap-2 p-2.5 border rounded-md bg-muted/40">
+                            <span className="font-medium">
+                              {suppliers.find(s => s.id === mySupplierId)?.company_name || authProfile?.full_name || 'My company'}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <Select value={bidForm.supplier_id} onValueChange={(v) => setBidForm({ ...bidForm, supplier_id: v })}>
+                          <SelectTrigger><SelectValue placeholder="เลือกผู้จัดจำหน่าย" /></SelectTrigger>
+                          <SelectContent>
+                            {suppliers.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>{s.company_name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label>ราคาเสนอ (บาท) *</Label>
                       <Input type="number" step="0.01" min="0" value={bidForm.bid_amount} onChange={(e) => setBidForm({ ...bidForm, bid_amount: e.target.value })} placeholder="ใส่จำนวนเงิน" />
+                      {isActive && ranked.length > 0 && bidForm.bid_amount && parseFloat(bidForm.bid_amount) > 0 && (
+                        <p className={`text-xs mt-1 ${parseFloat(bidForm.bid_amount) < ranked[0].bid_amount ? 'text-green-600 font-semibold' : 'text-orange-600'}`}>
+                          {parseFloat(bidForm.bid_amount) < ranked[0].bid_amount
+                            ? `✓ ต่ำกว่าราคาต่ำสุดปัจจุบัน ฿${(ranked[0].bid_amount - parseFloat(bidForm.bid_amount)).toLocaleString()}`
+                            : `สูงกว่าราคาต่ำสุดปัจจุบัน ฿${(parseFloat(bidForm.bid_amount) - ranked[0].bid_amount).toLocaleString()}`}
+                        </p>
+                      )}
                     </div>
                     <Button type="submit" disabled={submitting}>{submitting ? 'กำลังบันทึก...' : 'เสนอราคา'}</Button>
                   </form>

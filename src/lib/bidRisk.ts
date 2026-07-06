@@ -1,28 +1,39 @@
-// Procurement-stage risk scoring.
+// Procurement-stage risk scoring — BRCGS supplier assessment standard.
 //
-// Turns the admin-configured BRC risk criteria (เกณฑ์ความเสี่ยง) into a per-supplier
-// risk score for RFQ bid comparison and e-Bidding. The criteria applied are those for
-// the catalog category(ies) the RFQ's line items were pulled from, plus global criteria.
+// Redesigned to follow the NSL "Smart procurement" BRCGS standard: each supplier is
+// assessed against its supplier-type criteria. Evidence topics (certificates /
+// documents) and manual evaluations are supplier-level; competition topics
+// (pricing / delivery / credit term) are derived automatically from the supplier's
+// quotation in this RFQ. The result is a total score → grade (A/B/C/D) → risk level.
 import { supabase } from '@/integrations/supabase/client';
 import {
-  computeDimensionRisks,
-  type RiskCriterion, type CatalogCategory, type DimensionResult,
-} from '@/lib/riskCriteria';
+  evaluateBrc, loadBrcStandard, loadSupplierEvidence, parsePaymentTermDays,
+  type BrcAssessment, type BrcSupplierType, type QuotationContext,
+} from '@/lib/brcScoring';
 import type { RiskLevel } from '@/types/procurement';
 
-const VALID_CATS: CatalogCategory[] = ['raw_material', 'packaging', 'service', 'other'];
+// Legacy-compatible per-dimension shape (topic-level breakdown).
+export interface DimensionResult {
+  dimension: string;                 // "<section> · <topic>"
+  score: number | null;              // 0..10 risk (higher = worse), null = pending
+  metWeight: number;
+  totalWeight: number;
+  mandatoryUnmet: boolean;
+  criteria: { name_th: string; met: boolean; is_mandatory: boolean; weight: number }[];
+}
 
 export interface SupplierRisk {
-  riskScore: number;                       // 0..100, higher = safer (feeds the scoring pillar)
+  riskScore: number;                       // 0..100, higher = safer (feeds scoring pillar)
   risk10: number;                          // 0..10, higher = worse
   level: RiskLevel;
-  dims: Record<string, DimensionResult>;   // per-dimension breakdown
-  assessed: boolean;                       // false when no criteria applied
+  dims: Record<string, DimensionResult>;   // per-topic breakdown (legacy shape)
+  assessed: boolean;
+  brc?: BrcAssessment;                     // full BRCGS assessment
 }
 
 export interface BidRiskResult {
   hasCriteria: boolean;
-  categories: CatalogCategory[];
+  categories: string[];                    // kept for API compat (unused by BRC)
   bySupplier: Record<string, SupplierRisk>;
 }
 
@@ -34,65 +45,60 @@ export function risk10ToLevel(r: number): RiskLevel {
   return 'critical';
 }
 
-/** Distinct catalog categories the RFQ's items were pulled from. */
-export async function getRfqCategories(rfqId: string): Promise<CatalogCategory[]> {
-  const { data: items } = await supabase
-    .from('rfq_items').select('source_price_list_item_id').eq('rfq_id', rfqId);
-  const srcIds = (items || []).map((i: any) => i.source_price_list_item_id).filter(Boolean);
-  if (srcIds.length === 0) return [];
-  const { data: plis } = await supabase
-    .from('price_list_items').select('price_lists(category)').in('id', srcIds);
-  const cats = new Set<CatalogCategory>();
-  (plis || []).forEach((r: any) => {
-    const c = r.price_lists?.category;
-    if (c && (VALID_CATS as string[]).includes(c)) cats.add(c);
-  });
-  return Array.from(cats);
-}
-
-/** Aggregate per-dimension risks into one supplier-level risk. */
-function aggregate(dims: Record<string, DimensionResult>): SupplierRisk {
-  const list = Object.values(dims).filter(d => d.score != null);
-  if (list.length === 0) {
-    return { riskScore: 100, risk10: 0, level: 'low', dims, assessed: false };
+/** Convert a BRC assessment to the legacy dims shape used across RFQ pages. */
+function toDims(brc: BrcAssessment): Record<string, DimensionResult> {
+  const out: Record<string, DimensionResult> = {};
+  for (const t of brc.topics) {
+    const key = `${t.topic.section} · ${t.topic.topic}`;
+    const matchedIds = new Set(t.matchedOptions.map(m => m.option.id));
+    const criteria = t.options
+      // show matched options + better unmatched ones (what's missing to score higher)
+      .filter(o => matchedIds.has(o.id) || o.score > t.score)
+      .map(o => ({
+        name_th: o.label,
+        met: matchedIds.has(o.id),
+        is_mandatory: false,
+        weight: o.score,
+      }));
+    out[key] = {
+      dimension: key,
+      score: t.pending ? null : Math.round((1 - (t.maxScore > 0 ? t.score / t.maxScore : 1)) * 10),
+      metWeight: t.score,
+      totalWeight: t.maxScore,
+      mandatoryUnmet: false,
+      criteria,
+    };
   }
-  const wSum = list.reduce((a, d) => a + d.totalWeight, 0);
-  const risk10 = wSum > 0
-    ? list.reduce((a, d) => a + (d.score as number) * d.totalWeight, 0) / wSum
-    : list.reduce((a, d) => a + (d.score as number), 0) / list.length;
-  const riskScore = Math.round((1 - risk10 / 10) * 100);
-  return { riskScore, risk10, level: risk10ToLevel(risk10), dims, assessed: true };
+  return out;
 }
 
 /**
- * Compute BRC risk for every supplier in `supplierIds`, scoped to the RFQ's catalog
- * categories. When no relevant criteria exist, hasCriteria=false and callers should
- * fall back to the supplier's stored risk_level.
+ * Compute BRCGS risk for every supplier in `supplierIds`. Competition topics are
+ * auto-scored from each supplier's quotation in this RFQ (lowest price, lead time,
+ * credit term); evidence topics from certificates/documents; the rest from stored
+ * manual evaluations.
  */
 export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): Promise<BidRiskResult> {
   const ids = Array.from(new Set(supplierIds)).filter(Boolean);
-  const [categories, critRes, certRes, docRes] = await Promise.all([
-    getRfqCategories(rfqId),
-    supabase.from('risk_criteria').select('*').eq('active', true),
-    ids.length
-      ? supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date').in('supplier_id', ids)
-      : Promise.resolve({ data: [] as any[] }),
-    ids.length
-      ? supabase.from('supplier_documents').select('supplier_id, document_type, document_name').in('supplier_id', ids)
-      : Promise.resolve({ data: [] as any[] }),
+  const [{ topics, optionsByTopic, bands }, evidence, qRes] = await Promise.all([
+    loadBrcStandard(),
+    loadSupplierEvidence(ids),
+    supabase.from('quotations')
+      .select('supplier_id, price, total_amount, discount, lead_time_days, payment_term, payment_terms')
+      .eq('rfq_id', rfqId),
   ]);
 
-  const allCriteria = (critRes.data as RiskCriterion[]) || [];
-  // Relevant = global (null) + any of the RFQ's categories.
-  const relevant = allCriteria.filter(
-    c => c.category === null || categories.includes(c.category as CatalogCategory),
-  );
-  const hasCriteria = relevant.length > 0;
+  const hasCriteria = topics.length > 0;
 
-  const certsBy: Record<string, any[]> = {};
-  (certRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
-  const docsBy: Record<string, any[]> = {};
-  (docRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
+  // Build quotation context per supplier (latest quote wins; net price basis).
+  const quotes = (qRes.data || []) as any[];
+  const netOf = (q: any) => Math.max(0, (q.price ?? q.total_amount ?? 0) - (q.discount ?? 0));
+  const bySupplierQuote: Record<string, any> = {};
+  quotes.forEach(q => { bySupplierQuote[q.supplier_id] = q; });
+  const prices = Object.values(bySupplierQuote).map(netOf).filter(p => p > 0);
+  const minPrice = prices.length ? Math.min(...prices) : 0;
+  const leads = Object.values(bySupplierQuote).map((q: any) => q.lead_time_days).filter((d: any) => d > 0);
+  const minLead = leads.length ? Math.min(...leads) : null;
 
   const bySupplier: Record<string, SupplierRisk> = {};
   for (const sid of ids) {
@@ -100,9 +106,31 @@ export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): P
       bySupplier[sid] = { riskScore: 100, risk10: 0, level: 'low', dims: {}, assessed: false };
       continue;
     }
-    const dims = computeDimensionRisks(relevant, certsBy[sid] || [], docsBy[sid] || [], 'all');
-    bySupplier[sid] = aggregate(dims);
+    const q = bySupplierQuote[sid];
+    const ctx: QuotationContext | undefined = q ? {
+      effectivePrice: netOf(q),
+      minPrice: minPrice || netOf(q),
+      leadTimeDays: q.lead_time_days ?? null,
+      minLeadTimeDays: minLead,
+      paymentTermDays: parsePaymentTermDays(q.payment_term ?? q.payment_terms),
+    } : undefined;
+
+    const supplierType = (evidence.typesBy[sid] as BrcSupplierType) || 'rm_primary_pk';
+    const brc = evaluateBrc(
+      supplierType, topics, optionsByTopic,
+      evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
+      evidence.manualBy[sid] || {}, bands, ctx,
+    );
+
+    bySupplier[sid] = {
+      riskScore: brc.percent,
+      risk10: Math.round((1 - brc.percent / 100) * 100) / 10,
+      level: brc.level,
+      dims: toDims(brc),
+      assessed: brc.assessedMax > 0,
+      brc,
+    };
   }
 
-  return { hasCriteria, categories, bySupplier };
+  return { hasCriteria, categories: [], bySupplier };
 }

@@ -239,14 +239,22 @@ export default function RFQBidComparison() {
                     <td className="p-3 text-center">
                       {(() => {
                         const r = bidRisk?.bySupplier[s.supplier_id];
-                        if (bidRisk?.hasCriteria && r) {
-                          const failing = Object.values(r.dims)
-                            .filter(d => d.score != null && (d.mandatoryUnmet || (d.score as number) >= 6))
-                            .map(d => `${DIMENSION_LABEL[d.dimension] || d.dimension}: ${d.score}/10`);
+                        if (bidRisk?.hasCriteria && r?.brc) {
+                          const weak = Object.values(r.dims)
+                            .filter(d => d.score != null && (d.score as number) >= 6)
+                            .map(d => `${DIMENSION_LABEL[d.dimension] || d.dimension}: ${d.metWeight}/${d.totalWeight}`);
+                          const gradeColor: Record<string, string> = {
+                            A: 'bg-green-600', B: 'bg-blue-600', C: 'bg-orange-500', D: 'bg-red-600',
+                          };
                           return (
-                            <div className="flex flex-col items-center gap-0.5" title={failing.length ? `จุดเสี่ยง — ${failing.join(' · ')}` : 'ผ่านเกณฑ์ความเสี่ยงทุกด้าน'}>
-                              <RiskBadge level={r.level} />
-                              {r.assessed && <span className="text-[10px] text-muted-foreground">BRC {r.risk10.toFixed(1)}/10</span>}
+                            <div className="flex flex-col items-center gap-0.5"
+                              title={weak.length ? `จุดที่ขาดคะแนน — ${weak.join(' · ')}` : 'ผ่านเกณฑ์ BRCGS ครบ'}>
+                              {r.brc.grade ? (
+                                <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-white text-sm font-bold ${gradeColor[r.brc.grade] || 'bg-muted'}`}>
+                                  {r.brc.grade}
+                                </span>
+                              ) : <RiskBadge level={r.level} />}
+                              <span className="text-[10px] text-muted-foreground">BRCGS {r.brc.totalScore}/{r.brc.assessedMax}</span>
                             </div>
                           );
                         }
@@ -285,9 +293,7 @@ export default function RFQBidComparison() {
           <p><strong>Commercial ({weights.commercial}%)</strong> = Price 60% + Lead Time 30% + Payment Term 10%</p>
           <p><strong>Technical ({weights.technical}%)</strong> = Specification Compliance Score</p>
           {bidRisk?.hasCriteria ? (
-            <p><strong>Risk ({weights.risk}%)</strong> = คะแนนจากเกณฑ์ความเสี่ยง (BRC) ของหมวด catalog ที่ดึง item มา
-              {bidRisk.categories.length > 0 && <span className="text-xs"> — หมวด: {bidRisk.categories.join(', ')}</span>}
-              {' '}(คะแนน 10/10 = เสี่ยงสูงสุด → risk score 0)</p>
+            <p><strong>Risk ({weights.risk}%)</strong> = คะแนน BRCGS ของ supplier (ใบรับรอง/เอกสาร/การประเมิน + Pricing·Delivery·Credit จากใบเสนอราคาอัตโนมัติ) — เกรด A=Preferred, B=Approved, C=Restricted, D=Unsuitable</p>
           ) : (
             <p><strong>Risk ({weights.risk}%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0 <span className="text-xs">(ยังไม่มีเกณฑ์ความเสี่ยงในหมวดนี้ — ใช้ระดับความเสี่ยงรวมของ supplier)</span></p>
           )}
