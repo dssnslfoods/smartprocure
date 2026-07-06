@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, FileText, Send, ClipboardList,
   Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
-  UserCheck, Briefcase, ShieldAlert, Languages, FileUp, ShieldCheck,
+  UserCheck, Briefcase, ShieldAlert, Languages, FileUp, ShieldCheck, HelpCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -224,6 +224,20 @@ export default function AppSidebar() {
             {!collapsed && <span>{t('nav.adminSettings')}</span>}
           </Link>
         )}
+
+        <Link
+          to="/help"
+          className={cn(
+            'flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full transition-colors',
+            location.pathname.startsWith('/help')
+              ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+              : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          )}
+          title={collapsed ? 'คู่มือการใช้งาน' : undefined}
+        >
+          <HelpCircle className="w-4 h-4 shrink-0" />
+          {!collapsed && <span>คู่มือการใช้งาน</span>}
+        </Link>
 
         <button
           onClick={toggleLang}

@@ -30,6 +30,7 @@ import BiddingDetail from "@/pages/bidding/BiddingDetail";
 import FinalQuotationsPage from "@/pages/quotations/FinalQuotationsPage";
 import AwardsPage from "@/pages/awards/AwardsPage";
 import ReportsPage from "@/pages/reports/ReportsPage";
+import Help from "@/pages/Help";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import SupplierApprovalPage from "@/pages/admin/SupplierApprovalPage";
 import VendorRiskPage from "@/pages/vendors/VendorRiskPage";
@@ -127,6 +128,7 @@ const App = () => (
               <Route path="/final-quotations" element={<FinalQuotationsPage />} />
               <Route path="/awards" element={<AwardsPage />} />
               <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/help" element={<Help />} />
               <Route path="/admin" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminSettingsPage />
