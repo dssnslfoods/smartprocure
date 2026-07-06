@@ -7,9 +7,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   FileBadge, FileText, Zap, UserCheck, CheckCircle2, CircleDashed, Trophy,
-  Paperclip, ExternalLink, Trash2, Loader2,
+  Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle,
 } from 'lucide-react';
 import {
   evaluateBrc, loadBrcStandard, loadSupplierEvidence,
@@ -34,6 +35,40 @@ const safeStorageName = (name: string) => {
   return `${base}${ext}`;
 };
 
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+interface VerifyResult {
+  is_valid_document: boolean;
+  doc_type_found: string | null;
+  matches_requirement: boolean;
+  company_name_found: string | null;
+  company_match: boolean | null;
+  issued_date: string | null;
+  expiry_date: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
+type EvidenceExpiry = 'valid' | 'expiring' | 'expired' | 'none';
+function evidenceExpiry(expiry: string | null): EvidenceExpiry {
+  if (!expiry) return 'none';
+  const d = new Date(expiry); d.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (d < today) return 'expired';
+  const soon = new Date(today); soon.setDate(soon.getDate() + 30);
+  if (d <= soon) return 'expiring';
+  return 'valid';
+}
+
 interface Props {
   supplierId: string;
   onRiskUpdated?: () => void;
@@ -56,15 +91,28 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const [manual, setManual] = useState<Record<string, BrcManualScore>>({});
   const [evidence, setEvidence] = useState<BrcEvidence[]>([]);
   const [supplierType, setSupplierType] = useState<BrcSupplierType>('rm_primary_pk');
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null); // option id being uploaded
+  const [companyName, setCompanyName] = useState('');
+
+  // AI verification dialog state
+  const [verify, setVerify] = useState<null | {
+    file: File;
+    topic: BrcTopic;
+    option: BrcOption | null;
+    checking: boolean;
+    saving: boolean;
+    result?: VerifyResult;
+    error?: string;
+  }>(null);
+
   const fileRef = useRef<HTMLInputElement>(null);
-  const uploadTarget = useRef<{ topicId: string; optionId: string | null }>({ topicId: '', optionId: null });
+  const uploadTarget = useRef<{ topic: BrcTopic; option: BrcOption | null } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [standard, ev] = await Promise.all([
+    const [standard, ev, supRes] = await Promise.all([
       loadBrcStandard(),
       loadSupplierEvidence([supplierId]),
+      supabase.from('suppliers').select('company_name').eq('id', supplierId).single(),
     ]);
     setTopics(standard.topics);
     setOptionsByTopic(standard.optionsByTopic);
@@ -73,6 +121,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     setDocs(ev.docsBy[supplierId] || []);
     setManual(ev.manualBy[supplierId] || {});
     setEvidence(ev.evidenceBy[supplierId] || []);
+    setCompanyName(supRes.data?.company_name || '');
     const st = ev.typesBy[supplierId] as BrcSupplierType | null;
     if (st && SUPPLIER_TYPES.includes(st)) setSupplierType(st);
     setLoading(false);
@@ -99,44 +148,98 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     onRiskUpdated?.();
   };
 
-  const startUpload = (topicId: string, optionId: string | null) => {
-    uploadTarget.current = { topicId, optionId };
+  const startUpload = (topic: BrcTopic, option: BrcOption | null) => {
+    uploadTarget.current = { topic, option };
     fileRef.current?.click();
   };
 
   const handleFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
-    const { topicId, optionId } = uploadTarget.current;
-    if (!topicId) return;
+    const target = uploadTarget.current;
+    if (!file || !target) return;
 
-    setUploadingFor(optionId ?? topicId);
+    // Open verification dialog and run the AI check
+    setVerify({ file, topic: target.topic, option: target.option, checking: true, saving: false });
+
+    const isPdf = file.type === 'application/pdf';
+    const isImage = file.type.startsWith('image/');
+    if (!isPdf && !isImage) {
+      // AI can't read office docs — allow but without verification/expiry
+      setVerify(v => v ? {
+        ...v, checking: false,
+        result: {
+          is_valid_document: true, doc_type_found: null, matches_requirement: true,
+          company_name_found: null, company_match: null, issued_date: null, expiry_date: null,
+          confidence: 'low', reason: 'ไฟล์ประเภทนี้ AI ตรวจสอบไม่ได้ (รองรับเฉพาะ PDF/รูปภาพ) — อัปโหลดได้โดยไม่มีการตรวจอัตโนมัติ',
+        },
+      } : v);
+      return;
+    }
+
+    try {
+      const file_base64 = await fileToBase64(file);
+      const { data, error } = await supabase.functions.invoke('verify-brc-evidence', {
+        body: {
+          file_base64,
+          mime_type: file.type,
+          company_name: companyName,
+          topic: target.topic.topic,
+          option_label: target.option?.label ?? target.topic.topic,
+          keywords: target.option?.match_keywords ?? [],
+        },
+      });
+      if (error || data?.error) {
+        setVerify(v => v ? { ...v, checking: false, error: error?.message || data?.error || 'AI ตรวจสอบไม่สำเร็จ' } : v);
+        return;
+      }
+      setVerify(v => v ? { ...v, checking: false, result: data as VerifyResult } : v);
+    } catch (err: any) {
+      setVerify(v => v ? { ...v, checking: false, error: err?.message || String(err) } : v);
+    }
+  };
+
+  const verdictOk = (r: VerifyResult) =>
+    r.is_valid_document && r.matches_requirement && r.company_match !== false &&
+    evidenceExpiry(r.expiry_date) !== 'expired';
+
+  const doUpload = async () => {
+    if (!verify) return;
+    const { file, topic, option, result } = verify;
+    setVerify(v => v ? { ...v, saving: true } : v);
+
     const path = `${supplierId}/brc/${Date.now()}_${safeStorageName(file.name)}`;
     const { error: upErr } = await supabase.storage.from('supplier-documents').upload(path, file);
     if (upErr) {
       toast({ title: 'อัปโหลดไม่สำเร็จ', description: upErr.message, variant: 'destructive' });
-      setUploadingFor(null);
+      setVerify(null);
       return;
     }
     const { data: urlData } = supabase.storage.from('supplier-documents').getPublicUrl(path);
     const { error: insErr } = await supabase.from('brc_evidence' as any).insert({
       supplier_id: supplierId,
-      topic_id: topicId,
-      option_id: optionId,
+      topic_id: topic.id,
+      option_id: option?.id ?? null,
       file_url: urlData.publicUrl,
       file_name: file.name,
       file_size: file.size,
+      expiry_date: result?.expiry_date ?? null,
+      note: result ? `AI: ${result.doc_type_found ?? '-'} | ${result.reason}`.slice(0, 500) : null,
       uploaded_by: user?.id ?? null,
     });
     if (insErr) {
       toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: insErr.message, variant: 'destructive' });
     } else {
-      toast({ title: 'แนบเอกสารเรียบร้อย', description: file.name });
+      toast({
+        title: '✅ แนบเอกสารเรียบร้อย',
+        description: result?.expiry_date
+          ? `${file.name} — วันหมดอายุ ${new Date(result.expiry_date).toLocaleDateString('th-TH')}`
+          : file.name,
+      });
       await load();
       onRiskUpdated?.();
     }
-    setUploadingFor(null);
+    setVerify(null);
   };
 
   const deleteEvidence = async (ev: BrcEvidence) => {
@@ -154,10 +257,42 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const gs = brc.grade ? GRADE_STYLE[brc.grade] : null;
   const sections = Array.from(new Set(brc.topics.map(r => r.topic.section)));
 
+  const topicName = (id: string) => topics.find(t => t.id === id)?.topic || '';
+  const expiredEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expired');
+  const expiringEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expiring');
+
   return (
     <div className="space-y-4">
       {/* Hidden shared file input for per-item uploads */}
       <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" className="hidden" onChange={handleFilePicked} />
+
+      {/* Expiry alerts */}
+      {expiredEvidence.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-800 text-sm">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p>เอกสารประเมิน <strong>{expiredEvidence.length} ไฟล์</strong> หมดอายุแล้ว — คะแนนข้อดังกล่าวถูกตัดออกจนกว่าจะอัปโหลดฉบับใหม่</p>
+            <ul className="mt-1 text-xs list-disc list-inside space-y-0.5">
+              {expiredEvidence.map(e => (
+                <li key={e.id}>{topicName(e.topic_id)} — {e.file_name} (หมดอายุ {new Date(e.expiry_date!).toLocaleDateString('th-TH')})</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      {expiringEvidence.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-yellow-800 text-sm">
+          <Clock className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p>เอกสารประเมิน <strong>{expiringEvidence.length} ไฟล์</strong> จะหมดอายุภายใน 30 วัน — ควรขอฉบับต่ออายุจาก supplier</p>
+            <ul className="mt-1 text-xs list-disc list-inside space-y-0.5">
+              {expiringEvidence.map(e => (
+                <li key={e.id}>{topicName(e.topic_id)} — {e.file_name} (หมดอายุ {new Date(e.expiry_date!).toLocaleDateString('th-TH')})</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Type + grade summary */}
       <Card className={gs?.card || ''}>
@@ -172,7 +307,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                 </SelectContent>
               </Select>
               {portalMode && (
-                <p className="text-[11px] text-muted-foreground">อัปโหลดเอกสารประกอบในแต่ละข้อด้านล่าง เพื่อให้ระบบให้คะแนนอัตโนมัติ</p>
+                <p className="text-[11px] text-muted-foreground">อัปโหลดเอกสารประกอบในแต่ละข้อด้านล่าง — AI จะตรวจสอบความถูกต้องและวันหมดอายุให้อัตโนมัติ</p>
               )}
             </div>
             <div className="flex items-center gap-4">
@@ -254,35 +389,46 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                     <Button
                                       variant="ghost" size="sm"
                                       className="h-6 px-2 text-[11px] gap-1 ml-auto shrink-0"
-                                      disabled={uploadingFor !== null}
-                                      onClick={() => startUpload(t.id, o.id)}
+                                      disabled={verify !== null}
+                                      onClick={() => startUpload(t, o)}
                                     >
-                                      {uploadingFor === o.id
-                                        ? <Loader2 className="w-3 h-3 animate-spin" />
-                                        : <Paperclip className="w-3 h-3" />}
+                                      <Paperclip className="w-3 h-3" />
                                       แนบไฟล์
                                     </Button>
                                   )}
                                 </div>
                                 {optEvidence.length > 0 && (
                                   <div className="mt-1 ml-6 space-y-0.5">
-                                    {optEvidence.map(ev => (
-                                      <div key={ev.id} className="flex items-center gap-1.5 text-[11px]">
-                                        <a href={ev.file_url} target="_blank" rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1 text-primary hover:underline">
-                                          <ExternalLink className="w-3 h-3" />
-                                          {ev.file_name.length > 40 ? ev.file_name.slice(0, 40) + '…' : ev.file_name}
-                                        </a>
-                                        <span className="text-muted-foreground">
-                                          {ev.file_size ? `(${(ev.file_size / 1024).toFixed(0)} KB)` : ''} · {new Date(ev.created_at).toLocaleDateString('th-TH')}
-                                        </span>
-                                        {canUpload && (
-                                          <button onClick={() => deleteEvidence(ev)} className="text-muted-foreground hover:text-destructive">
-                                            <Trash2 className="w-3 h-3" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    ))}
+                                    {optEvidence.map(ev => {
+                                      const exp = evidenceExpiry(ev.expiry_date);
+                                      return (
+                                        <div key={ev.id} className="flex items-center gap-1.5 text-[11px] flex-wrap">
+                                          <a href={ev.file_url} target="_blank" rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 text-primary hover:underline">
+                                            <ExternalLink className="w-3 h-3" />
+                                            {ev.file_name.length > 40 ? ev.file_name.slice(0, 40) + '…' : ev.file_name}
+                                          </a>
+                                          <span className="text-muted-foreground">
+                                            {ev.file_size ? `(${(ev.file_size / 1024).toFixed(0)} KB)` : ''} · {new Date(ev.created_at).toLocaleDateString('th-TH')}
+                                          </span>
+                                          {ev.expiry_date && (
+                                            <span className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded-full border text-[10px] font-medium ${
+                                              exp === 'expired' ? 'border-red-200 bg-red-50 text-red-700'
+                                              : exp === 'expiring' ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                                              : 'border-green-200 bg-green-50 text-green-700'
+                                            }`}>
+                                              {exp === 'expired' ? <AlertTriangle className="w-2.5 h-2.5" /> : exp === 'expiring' ? <Clock className="w-2.5 h-2.5" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
+                                              หมดอายุ {new Date(ev.expiry_date).toLocaleDateString('th-TH')}
+                                            </span>
+                                          )}
+                                          {canUpload && (
+                                            <button onClick={() => deleteEvidence(ev)} className="text-muted-foreground hover:text-destructive">
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 )}
                               </div>
@@ -336,6 +482,94 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
           </div>
         </CardContent>
       </Card>
+
+      {/* AI verification dialog */}
+      <Dialog open={verify !== null} onOpenChange={v => { if (!v && !verify?.saving) setVerify(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Sparkles className="w-4 h-4 text-primary" /> AI ตรวจสอบเอกสาร
+            </DialogTitle>
+          </DialogHeader>
+
+          {verify && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+                <p className="font-medium">{verify.file.name}</p>
+                <p className="text-muted-foreground mt-0.5">
+                  ข้อประเมิน: {verify.option?.label ?? verify.topic.topic}
+                </p>
+              </div>
+
+              {verify.checking && (
+                <div className="flex flex-col items-center gap-2 py-6">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <p className="text-sm font-medium text-primary">AI กำลังตรวจสอบเอกสาร...</p>
+                  <p className="text-xs text-muted-foreground text-center">ตรวจประเภทเอกสาร · ชื่อบริษัท · วันหมดอายุ<br />ว่าตรงตามข้อประเมินหรือไม่</p>
+                </div>
+              )}
+
+              {verify.error && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p className="font-medium flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> AI ตรวจสอบไม่สำเร็จ</p>
+                  <p className="mt-0.5">{verify.error}</p>
+                  <p className="mt-1">สามารถอัปโหลดต่อได้ แต่จะไม่มีการบันทึกวันหมดอายุอัตโนมัติ</p>
+                </div>
+              )}
+
+              {verify.result && !verify.checking && (() => {
+                const r = verify.result;
+                const ok = verdictOk(r);
+                const expired = evidenceExpiry(r.expiry_date) === 'expired';
+                const rows: { label: string; ok: boolean | null; text: string }[] = [
+                  { label: 'ประเภทเอกสาร', ok: r.is_valid_document && r.matches_requirement, text: r.doc_type_found || (r.is_valid_document ? '—' : 'ไม่ใช่เอกสาร/อ่านไม่ได้') },
+                  { label: 'ชื่อบริษัท', ok: r.company_match, text: r.company_name_found || 'ไม่พบชื่อบริษัทในเอกสาร' },
+                  { label: 'วันหมดอายุ', ok: r.expiry_date ? !expired : null, text: r.expiry_date ? new Date(r.expiry_date).toLocaleDateString('th-TH') + (expired ? ' (หมดอายุแล้ว)' : '') : 'ไม่มี/ไม่พบวันหมดอายุ' },
+                ];
+                return (
+                  <>
+                    <div className={`rounded-lg border px-3 py-2 ${ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
+                      <p className={`text-sm font-semibold flex items-center gap-1.5 ${ok ? 'text-green-700' : 'text-red-700'}`}>
+                        {ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                        {ok ? 'เอกสารถูกต้อง ตรงตามข้อประเมิน' : 'เอกสารไม่ผ่านการตรวจสอบ'}
+                        <span className="text-[10px] font-normal opacity-70 uppercase">ความมั่นใจ: {r.confidence === 'high' ? 'สูง' : r.confidence === 'medium' ? 'ปานกลาง' : 'ต่ำ'}</span>
+                      </p>
+                      {r.reason && <p className={`text-xs mt-1 ${ok ? 'text-green-800/80' : 'text-red-800/80'}`}>{r.reason}</p>}
+                    </div>
+                    <div className="space-y-1">
+                      {rows.map(row => (
+                        <div key={row.label} className="flex items-center gap-2 text-xs">
+                          {row.ok === true ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                            : row.ok === false ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                            : <CircleDashed className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />}
+                          <span className="text-muted-foreground w-24 shrink-0">{row.label}</span>
+                          <span className="font-medium">{row.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {!verify.checking && (
+                <DialogFooter className="gap-2">
+                  <Button variant="outline" size="sm" disabled={verify.saving} onClick={() => setVerify(null)}>ยกเลิก</Button>
+                  {(verify.error || (verify.result && verdictOk(verify.result))) && (
+                    <Button size="sm" onClick={doUpload} disabled={verify.saving}>
+                      {verify.saving ? <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> กำลังบันทึก...</> : 'ยืนยันอัปโหลด'}
+                    </Button>
+                  )}
+                  {verify.result && !verdictOk(verify.result) && canEdit && !portalMode && (
+                    <Button size="sm" variant="destructive" onClick={doUpload} disabled={verify.saving}>
+                      {verify.saving ? <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> กำลังบันทึก...</> : 'อัปโหลดทั้งที่ไม่ผ่าน (เจ้าหน้าที่)'}
+                    </Button>
+                  )}
+                </DialogFooter>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
