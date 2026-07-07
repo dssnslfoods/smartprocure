@@ -49,9 +49,11 @@ export interface BrcCategoryWeight {
   commercial_weight: number;
 }
 
-/** Default minimum safety-group weight per BRCGS Clause 3.5.1.3 (configurable). */
+/** Default minimum safety-group weight per BRCGS Clause 3.5.1.3 (configurable).
+ *  Policy: BRCGS grade is safety/quality only — commercial factors (price/delivery/
+ *  credit) are scored in the separate RFQ Commercial pillar, so the default is 100%. */
 export const BRC_SAFETY_MIN_DEFAULT = 50;
-export const BRC_SAFETY_RECOMMENDED = 60;
+export const BRC_SAFETY_RECOMMENDED = 100;
 
 export interface BrcOption {
   id: string;

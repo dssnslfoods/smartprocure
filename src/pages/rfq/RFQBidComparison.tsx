@@ -293,7 +293,7 @@ export default function RFQBidComparison() {
           <p><strong>Commercial ({weights.commercial}%)</strong> = Price 60% + Lead Time 30% + Payment Term 10%</p>
           <p><strong>Technical ({weights.technical}%)</strong> = Specification Compliance Score</p>
           {bidRisk?.hasCriteria ? (
-            <p><strong>Risk ({weights.risk}%)</strong> = คะแนน BRCGS ของ supplier (ใบรับรอง/เอกสาร/การประเมิน + Pricing·Delivery·Credit จากใบเสนอราคาอัตโนมัติ) — เกรด A=Preferred, B=Approved, C=Restricted, D=Unsuitable</p>
+            <p><strong>Risk ({weights.risk}%)</strong> = เกรด BRCGS ของ supplier จากเกณฑ์ความปลอดภัย/คุณภาพ (ใบรับรอง/เอกสาร/การประเมิน) — ราคา/ส่งมอบ/เครดิต ประเมินแยกที่เสา Commercial จึงไม่นับซ้ำ — เกรด A=Preferred, B=Approved, C=Restricted, D=Unsuitable</p>
           ) : (
             <p><strong>Risk ({weights.risk}%)</strong> = Low 100 · Medium 75 · High 50 · Critical 0 <span className="text-xs">(ยังไม่มีเกณฑ์ความเสี่ยงในหมวดนี้ — ใช้ระดับความเสี่ยงรวมของ supplier)</span></p>
           )}

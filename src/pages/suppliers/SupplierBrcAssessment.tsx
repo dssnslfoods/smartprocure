@@ -257,7 +257,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
 
   const brc: BrcAssessment = evaluateBrc(supplierType, topics, optionsByTopic, certs, docs, manual, bands, undefined, evidence, groupWeightsFor(weightsByType, supplierType));
   const gs = brc.grade ? GRADE_STYLE[brc.grade] : null;
-  const sections = Array.from(new Set(brc.topics.map(r => r.topic.section)));
+  // When commercial weight is 0, BRCGS grades purely on safety/quality — price is
+  // scored separately in the RFQ Commercial pillar, so hide the commercial topics here.
+  const commercialExcluded = brc.commercialWeight === 0;
+  const shownTopics = commercialExcluded ? brc.topics.filter(r => r.topic.criterion_group !== 'commercial') : brc.topics;
+  const sections = Array.from(new Set(shownTopics.map(r => r.topic.section)));
 
   const topicName = (id: string) => topics.find(t => t.id === id)?.topic || '';
   const expiredEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expired');
@@ -329,28 +333,23 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
             </div>
           </div>
 
-          {/* Group-weighted breakdown (BRCGS Clause 3.5.1.3) */}
-          <div className="mt-4 pt-3 border-t grid sm:grid-cols-2 gap-3">
-            {[
-              { label: 'ความปลอดภัย & คุณภาพ', pct: brc.safetyPercent, weight: brc.safetyWeight, score: brc.safetyScore, max: brc.safetyMax, color: 'bg-emerald-500' },
-              { label: 'เชิงพาณิชย์ (ราคา/ส่งมอบ/เครดิต)', pct: brc.commercialPercent, weight: brc.commercialWeight, score: brc.commercialScore, max: brc.commercialMax, color: 'bg-sky-500' },
-            ].map(g => (
-              <div key={g.label} className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium">{g.label}</span>
-                  <span className="text-muted-foreground">น้ำหนัก {g.weight}%</span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className={`h-full ${g.color}`} style={{ width: `${g.pct ?? 0}%` }} />
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {g.pct == null ? 'ยังไม่มีข้อมูล (รอประเมิน)' : `ได้ ${g.pct}% · ${g.score}/${g.max} คะแนน`}
-                </p>
-              </div>
-            ))}
+          {/* Group breakdown */}
+          <div className="mt-4 pt-3 border-t space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium">ความปลอดภัย & คุณภาพ</span>
+              <span className="text-muted-foreground">น้ำหนัก {brc.safetyWeight}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div className="h-full bg-emerald-500" style={{ width: `${brc.safetyPercent ?? 0}%` }} />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {brc.safetyPercent == null ? 'ยังไม่มีข้อมูล (รอประเมิน)' : `ได้ ${brc.safetyPercent}% · ${brc.safetyScore}/${brc.safetyMax} คะแนน`}
+            </p>
           </div>
           <p className="text-[11px] text-muted-foreground mt-2">
-            เกรดคำนวณแบบถ่วงน้ำหนักตามหมวด — คะแนนถ่วงน้ำหนักรวม {brc.percent}% (ตาม BRCGS Clause 3.5.1.3 เกณฑ์ความปลอดภัยมีน้ำหนัก ≥ เชิงพาณิชย์)
+            {commercialExcluded
+              ? 'เกรด BRCGS คิดจากเกณฑ์ความปลอดภัย/คุณภาพ 100% ตาม BRCGS Clause 3.5.1.3 — ราคา/การส่งมอบ/เครดิต ประเมินแยกที่ขั้นตอนเปรียบเทียบราคา (Commercial) ใน RFQ'
+              : `เกรดคำนวณแบบถ่วงน้ำหนัก — ความปลอดภัย ${brc.safetyWeight}% / เชิงพาณิชย์ ${brc.commercialWeight}% · คะแนนถ่วงน้ำหนักรวม ${brc.percent}%`}
           </p>
         </CardContent>
       </Card>
@@ -359,7 +358,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
       {sections.map(section => (
         <div key={section} className="space-y-2">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{section}</h3>
-          {brc.topics.filter(r => r.topic.section === section).map(r => {
+          {shownTopics.filter(r => r.topic.section === section).map(r => {
             const t = r.topic;
             const isQuotation = t.auto_source === 'quotation';
             const manualOptions = r.options.filter(o => o.match_type === 'manual');

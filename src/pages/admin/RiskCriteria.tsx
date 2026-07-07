@@ -361,6 +361,11 @@ export default function RiskCriteria() {
                       </span>
                     </div>
                   )}
+                  {commercialPct === 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      เชิงพาณิชย์ 0% — เกรด BRCGS คิดจากความปลอดภัย/คุณภาพล้วน · ราคา/ส่งมอบ/เครดิต ประเมินแยกที่เสา Commercial ตอนเปรียบเทียบราคาใน RFQ จึงไม่นับซ้ำ
+                    </p>
+                  )}
                 </CardContent>
               </Card>
 
