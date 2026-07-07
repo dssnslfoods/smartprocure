@@ -26,6 +26,8 @@ export const SUPPLIER_TYPE_LABEL: Record<BrcSupplierType, string> = {
 
 export const SUPPLIER_TYPES = Object.keys(SUPPLIER_TYPE_LABEL) as BrcSupplierType[];
 
+export type CriterionGroup = 'safety_quality' | 'commercial';
+
 export interface BrcTopic {
   id: string;
   supplier_type: string;
@@ -34,10 +36,22 @@ export interface BrcTopic {
   scoring_mode: 'best_match' | 'additive';
   auto_source: 'evidence' | 'quotation' | 'manual';
   quotation_field: 'price' | 'delivery' | 'credit' | null;
+  criterion_group: CriterionGroup;
   target_score: number;
   sort_order: number;
   active: boolean;
 }
+
+/** Per-supplier-category weight split between the two criterion groups (sum = 100). */
+export interface BrcCategoryWeight {
+  supplier_type: string;
+  safety_weight: number;
+  commercial_weight: number;
+}
+
+/** Default minimum safety-group weight per BRCGS Clause 3.5.1.3 (configurable). */
+export const BRC_SAFETY_MIN_DEFAULT = 50;
+export const BRC_SAFETY_RECOMMENDED = 60;
 
 export interface BrcOption {
   id: string;
@@ -104,14 +118,23 @@ export interface TopicResult {
 export interface BrcAssessment {
   supplierType: BrcSupplierType;
   topics: TopicResult[];
-  totalScore: number;
+  totalScore: number;            // raw sum of matched scores (display "points")
   maxScore: number;              // full standard total (e.g. 125)
   assessedMax: number;           // total of topics actually assessable now
-  percent: number;               // 0..100 of assessedMax
+  percent: number;               // 0..100 — group-weighted achievement (drives grade/risk)
   grade: string | null;          // A/B/C/D
   gradeLabel: string | null;
   level: RiskLevel;              // mapped for existing UI
   pendingCount: number;          // topics awaiting manual evaluation
+  // Group breakdown (BRCGS Clause 3.5.1.3 — safety must weigh ≥ commercial)
+  safetyScore: number;
+  safetyMax: number;
+  safetyPercent: number | null;  // null when no assessable safety topics
+  commercialScore: number;
+  commercialMax: number;
+  commercialPercent: number | null;
+  safetyWeight: number;          // configured % weight applied
+  commercialWeight: number;
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
@@ -181,6 +204,7 @@ export function evaluateBrc(
   bands: BrcGradeBand[],
   quotationCtx?: QuotationContext,
   evidence: BrcEvidence[] = [],
+  groupWeights?: { safety: number; commercial: number },
 ): BrcAssessment {
   const relevant = topics
     .filter(t => t.active && t.supplier_type === supplierType)
@@ -247,15 +271,38 @@ export function evaluateBrc(
   // Topics that can't be assessed yet (no quotation ctx / no manual pick) are excluded
   // from the achievable max so grading stays fair; they still show as "pending".
   const assessedMax = results.reduce((a, r) => a + (r.pending ? 0 : r.maxScore), 0);
-  const percent = assessedMax > 0 ? Math.round((totalScore / assessedMax) * 100) : 0;
 
-  // Grade against band thresholds scaled to the assessable portion of the standard.
-  const scale = maxScore > 0 ? assessedMax / maxScore : 0;
+  // ── Group breakdown (BRCGS Clause 3.5.1.3) ──────────────────────────────
+  // Safety/Quality and Commercial groups are scored independently, then combined
+  // by the configured category weights so the safety group can be made dominant.
+  const grp = (g: CriterionGroup) => {
+    const rs = results.filter(r => r.topic.criterion_group === g && !r.pending);
+    const score = rs.reduce((a, r) => a + r.score, 0);
+    const max = rs.reduce((a, r) => a + r.maxScore, 0);
+    return { score, max, frac: max > 0 ? score / max : null as number | null };
+  };
+  const safety = grp('safety_quality');
+  const commercial = grp('commercial');
+
+  // Default weights reproduce the legacy behaviour (weight ∝ each group's max),
+  // so scoring is unchanged until an explicit category weight is configured.
+  const wSafety = groupWeights?.safety ?? safety.max;
+  const wCommercial = groupWeights?.commercial ?? commercial.max;
+
+  // Combine only the groups that actually have assessable topics (renormalise weights).
+  let num = 0, den = 0;
+  if (safety.frac != null)     { num += wSafety * safety.frac;         den += wSafety; }
+  if (commercial.frac != null) { num += wCommercial * commercial.frac; den += wCommercial; }
+  const weightedFrac = den > 0 ? num / den : 0;
+  const percent = Math.round(weightedFrac * 100);
+
+  // Grade the weighted achievement against the band thresholds (as % of the standard max).
   const typeBands = bands
     .filter(b => b.supplier_type === supplierType)
     .sort((a, b) => b.min_score - a.min_score);
-  const band = scale > 0
-    ? typeBands.find(b => totalScore >= b.min_score * scale) ?? typeBands[typeBands.length - 1] ?? null
+  const bandScore = weightedFrac * maxScore;
+  const band = den > 0
+    ? typeBands.find(b => bandScore >= b.min_score) ?? typeBands[typeBands.length - 1] ?? null
     : null;
 
   const gradeToLevel: Record<string, RiskLevel> = { A: 'low', B: 'medium', C: 'high', D: 'critical' };
@@ -271,22 +318,42 @@ export function evaluateBrc(
     gradeLabel: band?.label_th ?? null,
     level: band ? gradeToLevel[band.grade] ?? 'critical' : 'critical',
     pendingCount: results.filter(r => r.pending).length,
+    safetyScore: safety.score,
+    safetyMax: safety.max,
+    safetyPercent: safety.frac != null ? Math.round(safety.frac * 100) : null,
+    commercialScore: commercial.score,
+    commercialMax: commercial.max,
+    commercialPercent: commercial.frac != null ? Math.round(commercial.frac * 100) : null,
+    safetyWeight: den > 0 ? Math.round((wSafety / (wSafety + wCommercial)) * 100) : 0,
+    commercialWeight: den > 0 ? Math.round((wCommercial / (wSafety + wCommercial)) * 100) : 0,
   };
 }
 
-/** Load the full BRC standard (topics + options + bands) once. */
+/** Load the full BRC standard (topics + options + bands + category weights) once. */
 export async function loadBrcStandard() {
-  const [tRes, oRes, bRes] = await Promise.all([
+  const [tRes, oRes, bRes, wRes] = await Promise.all([
     supabase.from('brc_topics' as any).select('*').order('sort_order'),
     supabase.from('brc_options' as any).select('*').order('sort_order'),
     supabase.from('brc_grade_bands' as any).select('*'),
+    supabase.from('brc_weight_config' as any).select('*'),
   ]);
   const topics = (tRes.data as unknown as BrcTopic[]) || [];
   const options = (oRes.data as unknown as BrcOption[]) || [];
   const bands = (bRes.data as unknown as BrcGradeBand[]) || [];
   const optionsByTopic: Record<string, BrcOption[]> = {};
   options.forEach(o => (optionsByTopic[o.topic_id] ??= []).push(o));
-  return { topics, optionsByTopic, bands };
+  const weightsByType: Record<string, BrcCategoryWeight> = {};
+  ((wRes.data as unknown as BrcCategoryWeight[]) || []).forEach(w => { weightsByType[w.supplier_type] = w; });
+  return { topics, optionsByTopic, bands, weightsByType };
+}
+
+/** Resolve the group-weight argument for evaluateBrc from a loaded config map. */
+export function groupWeightsFor(
+  weightsByType: Record<string, BrcCategoryWeight>,
+  supplierType: string,
+): { safety: number; commercial: number } | undefined {
+  const w = weightsByType[supplierType];
+  return w ? { safety: w.safety_weight, commercial: w.commercial_weight } : undefined;
 }
 
 /** Load supplier evidence + manual scores for a set of suppliers. */

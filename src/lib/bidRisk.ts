@@ -7,7 +7,7 @@
 // quotation in this RFQ. The result is a total score → grade (A/B/C/D) → risk level.
 import { supabase } from '@/integrations/supabase/client';
 import {
-  evaluateBrc, loadBrcStandard, loadSupplierEvidence, parsePaymentTermDays,
+  evaluateBrc, loadBrcStandard, loadSupplierEvidence, parsePaymentTermDays, groupWeightsFor,
   type BrcAssessment, type BrcSupplierType, type QuotationContext,
 } from '@/lib/brcScoring';
 import type { RiskLevel } from '@/types/procurement';
@@ -80,7 +80,7 @@ function toDims(brc: BrcAssessment): Record<string, DimensionResult> {
  */
 export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): Promise<BidRiskResult> {
   const ids = Array.from(new Set(supplierIds)).filter(Boolean);
-  const [{ topics, optionsByTopic, bands }, evidence, qRes] = await Promise.all([
+  const [{ topics, optionsByTopic, bands, weightsByType }, evidence, qRes] = await Promise.all([
     loadBrcStandard(),
     loadSupplierEvidence(ids),
     supabase.from('quotations')
@@ -121,6 +121,7 @@ export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): P
       evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
       evidence.manualBy[sid] || {}, bands, ctx,
       evidence.evidenceBy[sid] || [],
+      groupWeightsFor(weightsByType, supplierType),
     );
 
     bySupplier[sid] = {
