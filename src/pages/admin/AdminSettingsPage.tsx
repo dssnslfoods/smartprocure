@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet, Trash2, AlertTriangle, Database, Loader2, FileText, ArrowUp, ArrowDown, Pencil } from 'lucide-react';
+import { Plus, Users, Shield, Settings, Mail, Save, Search, KeyRound, ChevronLeft, ChevronRight, FileSpreadsheet, Trash2, AlertTriangle, Database, Loader2, FileText, ArrowUp, ArrowDown, Pencil, Info, ShieldCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import {
   DEFAULT_CYCLE, loadPricelistCycle, savePricelistCycle,
@@ -814,6 +814,12 @@ export default function AdminSettingsPage() {
                     <div>
                       <Label className="text-sm font-medium">{label}</Label>
                       <p className="text-[11px] text-muted-foreground">{desc}</p>
+                      {key === 'risk' && (
+                        <p className="text-[11px] text-teal-700 mt-1 flex items-start gap-1">
+                          <ShieldCheck className="w-3 h-3 mt-0.5 shrink-0" />
+                          <span>= เกรด BRCGS · ตั้งค่าที่หน้า "เกณฑ์ความเสี่ยง" (ปัจจุบัน = ความปลอดภัย/คุณภาพ 100%)</span>
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <Input type="number" min={0} max={100} value={weights[key]}
@@ -834,6 +840,22 @@ export default function AdminSettingsPage() {
               <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground mb-1">สูตร Final Score</p>
                 <p>Final = Commercial×{weights.commercial}% + Technical×{weights.technical}% + Risk×{weights.risk}%</p>
+              </div>
+
+              {/* 2-layer relationship note */}
+              <div className="rounded-md border border-blue-200 bg-blue-50/50 p-3 text-xs space-y-2">
+                <p className="font-medium text-blue-900 flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5" />การให้คะแนนมี 2 ชั้น (ไม่นับซ้ำ)
+                </p>
+                <div className="space-y-1 text-muted-foreground">
+                  <p><b className="text-foreground">ชั้นที่ 1 — หน้านี้:</b> น้ำหนักตัดสินผู้ชนะ RFQ ว่าแต่ละด้านสำคัญแค่ไหน (Commercial / Technical / Risk)</p>
+                  <p><b className="text-foreground">ชั้นที่ 2 — หน้า "เกณฑ์ความเสี่ยง":</b> กำหนดว่า "เกรด BRCGS" (ที่ป้อนเข้าเสา Risk) คิดจากอะไร — ปัจจุบันตั้งเป็น <b className="text-teal-700">ความปลอดภัย/คุณภาพ 100%</b></p>
+                </div>
+                <div className="pt-1 border-t border-blue-200/60 text-muted-foreground">
+                  <p>• <b>ราคา/ส่งมอบ/เครดิต</b> → นับที่เสา <b>Commercial</b> เท่านั้น</p>
+                  <p>• <b>ความปลอดภัย/คุณภาพ</b> → นับที่เสา <b>Risk (BRCGS)</b> เท่านั้น</p>
+                  <p className="text-[11px] mt-0.5">แต่ละด้านถูกนับที่เดียว จึงไม่ทับซ้อน และสอดคล้อง BRCGS Clause 3.5.1.3</p>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2">
