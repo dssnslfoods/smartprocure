@@ -17,6 +17,7 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
+import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
 
 interface CatalogItem {
   id: string;
@@ -69,6 +70,7 @@ export default function RFQForm() {
   const [suppliersLoading, setSuppliersLoading] = useState(true);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [eligibility, setEligibility] = useState<Record<string, SupplierEligibility>>({});
+  const [catalogElig, setCatalogElig] = useState<Record<string, CatalogEligibility>>({});
 
   useEffect(() => {
     const fetchCatalog = async () => {
@@ -128,6 +130,23 @@ export default function RFQForm() {
     fetchSuppliers();
   }, []);
 
+  // Recompute catalog-cert eligibility whenever the selected catalog items change.
+  const catalogItemKey = items.map(i => i.catalog_item_id).filter(Boolean).join(',');
+  useEffect(() => {
+    const catalogItemIds = items.map(i => i.catalog_item_id).filter(Boolean) as string[];
+    const supIds = suppliers.map(s => s.id);
+    if (catalogItemIds.length === 0 || supIds.length === 0) { setCatalogElig({}); return; }
+    let cancelled = false;
+    (async () => {
+      const certs = await requiredCertsForCatalogItems(catalogItemIds);
+      if (cancelled) return;
+      const elig = await checkCatalogEligibility(supIds, certs);
+      if (!cancelled) setCatalogElig(elig);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogItemKey, suppliers]);
+
   const addItem = () => setItems(p => [...p, { item_name: '', description: '', quantity: '', unit: '', specifications: '', catalog_item_id: null }]);
   const removeItem = (i: number) => setItems(p => p.filter((_, idx) => idx !== i));
   const updateItem = (i: number, field: keyof LineItem, value: string | null) =>
@@ -144,10 +163,18 @@ export default function RFQForm() {
     } : item));
   };
 
+  // Combined mandatory gate: supplier-category (BRCGS) + catalog/product certs.
+  const supplierBlock = (id: string): string | null => {
+    const e = eligibility[id];
+    if (e && !e.passed) return e.failures.map(f => `${f.topic} (ต้องมี ${f.options.join(' / ')})`).join(', ');
+    const c = catalogElig[id];
+    if (c && !c.passed) return `ใบรับรองสินค้า: ${c.missing.join(', ')}`;
+    return null;
+  };
+
   const toggleSupplier = (id: string) => {
-    const elig = eligibility[id];
-    if (elig && !elig.passed && !selectedSuppliers.has(id)) {
-      const reason = elig.failures.map(f => `${f.topic} (ต้องมี: ${f.options.join(' / ')})`).join(', ');
+    const reason = supplierBlock(id);
+    if (reason && !selectedSuppliers.has(id)) {
       toast({ title: 'ผู้จัดจำหน่ายไม่ผ่านเอกสารบังคับ', description: `ขาด: ${reason}`, variant: 'destructive' });
       return;
     }
@@ -216,8 +243,8 @@ export default function RFQForm() {
       );
     }
 
-    // Insert selected suppliers — defensively drop any that fail the mandatory gate.
-    const eligibleSelected = Array.from(selectedSuppliers).filter(id => eligibility[id]?.passed !== false);
+    // Insert selected suppliers — defensively drop any that fail either mandatory gate.
+    const eligibleSelected = Array.from(selectedSuppliers).filter(id => !supplierBlock(id));
     if (eligibleSelected.length > 0) {
       await supabase.from('rfq_suppliers').insert(
         eligibleSelected.map(supplierId => ({
@@ -364,8 +391,8 @@ export default function RFQForm() {
                 <div className="p-4 text-center text-sm text-muted-foreground">ไม่พบผู้จัดจำหน่าย</div>
               ) : (
                 filteredSuppliers.map(s => {
-                  const elig = eligibility[s.id];
-                  const blocked = elig && !elig.passed;
+                  const blockReason = supplierBlock(s.id);
+                  const blocked = !!blockReason;
                   return (
                   <label key={s.id} className={cn('flex items-center gap-3 px-3 py-2.5', blocked ? 'opacity-60 cursor-not-allowed bg-red-50/40' : 'hover:bg-accent cursor-pointer')}>
                     <Checkbox
@@ -377,7 +404,7 @@ export default function RFQForm() {
                       <div className="text-sm font-medium truncate">{s.company_name}</div>
                       <div className="text-xs text-muted-foreground truncate">
                         {blocked
-                          ? <span className="text-red-600">ขาดเอกสารบังคับ: {elig!.failures.map(f => f.options.join('/')).join(', ')}</span>
+                          ? <span className="text-red-600">ขาดเอกสารบังคับ: {blockReason}</span>
                           : ([s.contact_person, s.category].filter(Boolean).join(' · ') || '—')}
                       </div>
                     </div>

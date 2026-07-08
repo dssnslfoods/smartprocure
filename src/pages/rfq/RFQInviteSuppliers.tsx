@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
+import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
 import { computeRfqBidRisk, risk10ToLevel, type BidRiskResult } from '@/lib/bidRisk';
 import { computeDimensionRisks, DIMENSION_LABEL, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
@@ -55,6 +56,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [removeReason, setRemoveReason] = useState('');
   const [removals, setRemovals] = useState<{ supplier_id: string; reason: string; removed_at: string; removed_by_name: string | null }[]>([]);
   const [mandatoryElig, setMandatoryElig] = useState<Record<string, SupplierEligibility>>({});
+  const [catalogElig, setCatalogElig] = useState<Record<string, CatalogEligibility>>({});
   const { hasRole, user } = useAuth();
   const { toast } = useToast();
 
@@ -112,6 +114,16 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
       // BRCGS mandatory qualification gate for the Available list.
       if (supplierIds.length) {
         setMandatoryElig(await computeSupplierEligibility(supplierIds));
+
+        // Catalog/product certificate gate — from this RFQ's catalog items.
+        const { data: rfqItems } = await supabase.from('rfq_items')
+          .select('source_price_list_item_id').eq('rfq_id', rfqId);
+        const catItemIds = ((rfqItems as any[]) || [])
+          .map(r => r.source_price_list_item_id).filter(Boolean);
+        if (catItemIds.length) {
+          const certs = await requiredCertsForCatalogItems(catItemIds);
+          setCatalogElig(await checkCatalogEligibility(supplierIds, certs));
+        }
       }
 
       const invitedIdList: string[] = (invRes.data || []).map((r: any) => r.supplier_id);
@@ -189,7 +201,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
     setSaving(true);
 
     const rows = Array.from(selected)
-      .filter(supplier_id => mandatoryElig[supplier_id]?.passed !== false)
+      .filter(supplier_id => mandatoryElig[supplier_id]?.passed !== false && catalogElig[supplier_id]?.passed !== false)
       .map(supplier_id => {
         const s = allSuppliers.find(x => x.id === supplier_id);
         return {
@@ -401,11 +413,16 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                     const { canInvite, status, reasons } = s.eligibility;
                     const mand = mandatoryElig[s.id];
                     const mandBlocked = mand ? !mand.passed : false;
-                    const effectiveCanInvite = canInvite && !mandBlocked;
+                    const cat = catalogElig[s.id];
+                    const catBlocked = cat ? !cat.passed : false;
+                    const gateBlocked = mandBlocked || catBlocked;
+                    const effectiveCanInvite = canInvite && !gateBlocked;
                     const isBlocked = !effectiveCanInvite;
-                    const allReasons = mandBlocked
-                      ? [...reasons, ...mand!.failures.map(f => `ขาดเอกสารบังคับ: ${f.topic} (ต้องมี ${f.options.join(' / ')})`)]
-                      : reasons;
+                    const allReasons = [
+                      ...reasons,
+                      ...(mandBlocked ? mand!.failures.map(f => `ขาดเอกสารบังคับ (ประเภท): ${f.topic} (ต้องมี ${f.options.join(' / ')})`) : []),
+                      ...(catBlocked ? [`ขาดใบรับรองสินค้า: ${cat!.missing.join(', ')}`] : []),
+                    ];
 
                     return (
                       <label
@@ -448,7 +465,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                             <ul className="mt-1.5 space-y-0.5">
                               {allReasons.map((r, i) => (
                                 <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
-                                  <AlertTriangle className={`w-3 h-3 shrink-0 mt-0.5 ${mandBlocked ? 'text-red-500' : 'text-yellow-500'}`} />
+                                  <AlertTriangle className={`w-3 h-3 shrink-0 mt-0.5 ${gateBlocked ? 'text-red-500' : 'text-yellow-500'}`} />
                                   {r}
                                 </li>
                               ))}

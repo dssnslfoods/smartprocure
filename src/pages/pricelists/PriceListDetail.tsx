@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   ArrowLeft, Search, Pin, FileSpreadsheet, Upload, Lock, AlertCircle,
   CheckCircle2, Download, ChevronDown, ChevronRight, Gavel, Save, Calculator,
-  Clock, AlertTriangle, History,
+  Clock, AlertTriangle, History, ShieldCheck,
 } from 'lucide-react';
 import QuotationHistoryDialog from '@/components/QuotationHistoryDialog';
+import CatalogCertRequirements from './CatalogCertRequirements';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
 import { supabase } from '@/integrations/supabase/client';
@@ -108,6 +109,9 @@ export default function PriceListDetail() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [importPreview, setImportPreview] = useState<ImportResult | null>(null);
+
+  // Catalog cert requirements dialog
+  const [certReqOpen, setCertReqOpen] = useState(false);
 
   // Final Quotation dialog
   const [fqOpen, setFqOpen] = useState(false);
@@ -700,6 +704,12 @@ export default function PriceListDetail() {
                 <Upload className="h-4 w-4 mr-2" />Import Quotation
               </Button>
               {isProcurement && (
+                <Button variant="outline" className="border-teal-300 text-teal-700 hover:bg-teal-50"
+                  onClick={() => setCertReqOpen(true)}>
+                  <ShieldCheck className="h-4 w-4 mr-2" />ใบรับรองบังคับ
+                </Button>
+              )}
+              {isProcurement && (
                 <Button variant="default" className="bg-purple-600 hover:bg-purple-700"
                   onClick={openFinalQuotation} disabled={selected.size === 0}>
                   <Gavel className="h-4 w-4 mr-2" />ขอ Final Quotation
@@ -1119,6 +1129,15 @@ export default function PriceListDetail() {
           itemName={historyItem.name}
           itemCode={historyItem.code}
           unit={historyItem.unit}
+        />
+      )}
+
+      {id && (
+        <CatalogCertRequirements
+          priceListId={id}
+          items={items.map(it => ({ id: it.id, item_name: it.item_name, item_code: it.item_code }))}
+          open={certReqOpen}
+          onOpenChange={setCertReqOpen}
         />
       )}
     </div>
