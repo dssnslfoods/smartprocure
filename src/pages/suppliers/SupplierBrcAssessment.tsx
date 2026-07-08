@@ -262,6 +262,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const commercialExcluded = brc.commercialWeight === 0;
   const shownTopics = commercialExcluded ? brc.topics.filter(r => r.topic.criterion_group !== 'commercial') : brc.topics;
   const sections = Array.from(new Set(shownTopics.map(r => r.topic.section)));
+  const hasMandatory = shownTopics.some(r => r.options.some(o => o.is_mandatory));
 
   const topicName = (id: string) => topics.find(t => t.id === id)?.topic || '';
   const expiredEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expired');
@@ -354,6 +355,28 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
         </CardContent>
       </Card>
 
+      {/* Mandatory qualification gate */}
+      {hasMandatory && (
+        brc.mandatoryFailures.length > 0 ? (
+          <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-red-800 text-sm">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">ไม่ผ่านเอกสารบังคับ — ยังเข้าร่วม RFQ หมวดนี้ไม่ได้</p>
+              <ul className="mt-1 text-xs list-disc list-inside space-y-0.5">
+                {brc.mandatoryFailures.map((f, i) => (
+                  <li key={i}>{f.topic}: ต้องมีอย่างน้อย 1 ใน — {f.options.join(' / ')}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-green-800 text-sm">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>ผ่านเอกสารบังคับครบ — มีสิทธิ์เข้าร่วม RFQ ของหมวดนี้</span>
+          </div>
+        )
+      )}
+
       {/* Topics per section */}
       {sections.map(section => (
         <div key={section} className="space-y-2">
@@ -393,17 +416,23 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                             const via = viaOf(o.id);
                             const optEvidence = r.evidence.filter(e => e.option_id === o.id);
                             const isManualOpt = o.match_type === 'manual';
+                            const mandatoryUnmet = o.is_mandatory && !met;
                             return (
-                              <div key={o.id} className={`rounded-md border px-2.5 py-1.5 ${met ? 'border-green-200 bg-green-50/50' : 'border-muted'}`}>
+                              <div key={o.id} className={`rounded-md border px-2.5 py-1.5 ${met ? 'border-green-200 bg-green-50/50' : mandatoryUnmet ? 'border-red-300 bg-red-50/50' : 'border-muted'}`}>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {met
                                     ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                                    : <CircleDashed className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />}
+                                    : <CircleDashed className={`w-3.5 h-3.5 shrink-0 ${mandatoryUnmet ? 'text-red-500' : 'text-muted-foreground/50'}`} />}
                                   {o.match_type === 'certificate' ? <FileBadge className="w-3 h-3 text-blue-500 shrink-0" />
                                     : o.match_type === 'document' ? <FileText className="w-3 h-3 text-violet-500 shrink-0" />
                                     : <UserCheck className="w-3 h-3 text-slate-500 shrink-0" />}
                                   <span className={`text-xs ${met ? 'font-medium' : 'text-muted-foreground'}`}>{o.label}</span>
                                   <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
+                                  {o.is_mandatory && (
+                                    <Badge variant="outline" className="text-[9px] gap-0.5 border-red-300 bg-red-50 text-red-700 py-0">
+                                      <AlertTriangle className="w-2.5 h-2.5" />บังคับ
+                                    </Badge>
+                                  )}
                                   {met && via && via !== 'manual' && via !== 'quotation' && (
                                     <span className="text-[10px] text-green-700">— พบ: {via}</span>
                                   )}

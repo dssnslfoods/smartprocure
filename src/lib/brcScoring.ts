@@ -63,6 +63,7 @@ export interface BrcOption {
   match_type: 'certificate' | 'document' | 'manual' | 'auto';
   match_keywords: string[];
   requirement: string | null;
+  is_mandatory: boolean;    // qualification gate — must satisfy ≥1 mandatory option per topic
   sort_order: number;
 }
 
@@ -115,6 +116,7 @@ export interface TopicResult {
   score: number;
   maxScore: number;
   pending: boolean;              // true when manual not yet evaluated or quotation ctx missing
+  mandatoryMet: boolean | null;  // null = no mandatory options in this topic; else pass/fail of the gate
 }
 
 export interface BrcAssessment {
@@ -137,6 +139,9 @@ export interface BrcAssessment {
   commercialPercent: number | null;
   safetyWeight: number;          // configured % weight applied
   commercialWeight: number;
+  // Mandatory qualification gate (separate from scoring)
+  mandatoryPassed: boolean;                              // false = ineligible for RFQ
+  mandatoryFailures: { topic: string; options: string[] }[]; // unmet mandatory requirements
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
@@ -265,7 +270,18 @@ export function evaluateBrc(
       score = Math.min(score, topic.target_score);
     }
 
-    return { topic, options, matchedOptions: matched, evidence: topicEvidence, score, maxScore: topic.target_score, pending };
+    // Mandatory gate: for evidence/manual topics that have mandatory options,
+    // the supplier must satisfy at least one of them (OR within the topic).
+    let mandatoryMet: boolean | null = null;
+    if (topic.auto_source !== 'quotation') {
+      const mandatoryOpts = options.filter(o => o.is_mandatory);
+      if (mandatoryOpts.length > 0) {
+        const matchedIds = new Set(matched.map(m => m.option.id));
+        mandatoryMet = mandatoryOpts.some(o => matchedIds.has(o.id));
+      }
+    }
+
+    return { topic, options, matchedOptions: matched, evidence: topicEvidence, score, maxScore: topic.target_score, pending, mandatoryMet };
   });
 
   const totalScore = results.reduce((a, r) => a + r.score, 0);
@@ -309,6 +325,10 @@ export function evaluateBrc(
 
   const gradeToLevel: Record<string, RiskLevel> = { A: 'low', B: 'medium', C: 'high', D: 'critical' };
 
+  const mandatoryFailures = results
+    .filter(r => r.mandatoryMet === false)
+    .map(r => ({ topic: r.topic.topic, options: r.options.filter(o => o.is_mandatory).map(o => o.label) }));
+
   return {
     supplierType,
     topics: results,
@@ -328,6 +348,8 @@ export function evaluateBrc(
     commercialPercent: commercial.frac != null ? Math.round(commercial.frac * 100) : null,
     safetyWeight: den > 0 ? Math.round((wSafety / (wSafety + wCommercial)) * 100) : 0,
     commercialWeight: den > 0 ? Math.round((wCommercial / (wSafety + wCommercial)) * 100) : 0,
+    mandatoryPassed: mandatoryFailures.length === 0,
+    mandatoryFailures,
   };
 }
 
@@ -356,6 +378,45 @@ export function groupWeightsFor(
 ): { safety: number; commercial: number } | undefined {
   const w = weightsByType[supplierType];
   return w ? { safety: w.safety_weight, commercial: w.commercial_weight } : undefined;
+}
+
+export interface SupplierEligibility {
+  passed: boolean;
+  failures: { topic: string; options: string[] }[];
+}
+
+/**
+ * Compute the mandatory qualification gate for a set of suppliers (evidence-based,
+ * no RFQ/quotation context). A supplier is ineligible when it fails any mandatory
+ * requirement of its BRCGS category — used to gate RFQ invitations.
+ */
+export async function computeSupplierEligibility(
+  supplierIds: string[],
+): Promise<Record<string, SupplierEligibility>> {
+  const ids = Array.from(new Set(supplierIds)).filter(Boolean);
+  const out: Record<string, SupplierEligibility> = {};
+  if (ids.length === 0) return out;
+  const [{ topics, optionsByTopic, bands, weightsByType }, evidence] = await Promise.all([
+    loadBrcStandard(),
+    loadSupplierEvidence(ids),
+  ]);
+  // No mandatory options configured anywhere → everyone passes (fast path).
+  const anyMandatory = Object.values(optionsByTopic).some(opts => opts.some(o => o.is_mandatory));
+  if (!anyMandatory) {
+    ids.forEach(sid => { out[sid] = { passed: true, failures: [] }; });
+    return out;
+  }
+  for (const sid of ids) {
+    const st = (evidence.typesBy[sid] as BrcSupplierType) || 'rm_primary_pk';
+    const brc = evaluateBrc(
+      st, topics, optionsByTopic,
+      evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
+      evidence.manualBy[sid] || {}, bands, undefined,
+      evidence.evidenceBy[sid] || [], groupWeightsFor(weightsByType, st),
+    );
+    out[sid] = { passed: brc.mandatoryPassed, failures: brc.mandatoryFailures };
+  }
+  return out;
 }
 
 /** Load supplier evidence + manual scores for a set of suppliers. */

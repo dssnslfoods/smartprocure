@@ -191,6 +191,13 @@ export default function RiskCriteria() {
     load();
   };
 
+  const toggleMandatory = async (o: BrcOption) => {
+    const { error } = await supabase.from('brc_options' as any).update({ is_mandatory: !o.is_mandatory }).eq('id', o.id);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: !o.is_mandatory ? 'ตั้งเป็นเอกสารบังคับแล้ว' : 'ยกเลิกบังคับแล้ว' });
+    load();
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">กำลังโหลด...</div>;
 
   return (
@@ -385,6 +392,11 @@ export default function RiskCriteria() {
                 </CardContent>
               </Card>
 
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                ตัวเลือกที่ตั้ง <b className="text-red-700">บังคับ</b> = supplier ต้องมีอย่างน้อย 1 ตัวเลือกบังคับต่อหัวข้อ (จับคู่ใบรับรอง/เอกสาร + ไม่หมดอายุ) ไม่งั้นจะเลือกเข้า RFQ หมวดนี้ไม่ได้
+              </p>
+
               {sections.map(section => (
                 <div key={section} className="space-y-2">
                   <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{section}</h2>
@@ -417,6 +429,11 @@ export default function RiskCriteria() {
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm">{o.label}</span>
                                   <SourceBadge opt={o} topic={t} />
+                                  {o.is_mandatory && (
+                                    <Badge variant="outline" className="text-[10px] gap-1 border-red-300 bg-red-50 text-red-700">
+                                      <AlertTriangle className="w-3 h-3" />บังคับ
+                                    </Badge>
+                                  )}
                                 </div>
                                 {o.match_keywords?.length > 0 && (
                                   <p className="text-[11px] text-muted-foreground mt-0.5">
@@ -427,6 +444,15 @@ export default function RiskCriteria() {
                               </div>
                               {canEdit && (
                                 <div className="flex items-center shrink-0">
+                                  {t.auto_source !== 'quotation' && (
+                                    <button
+                                      onClick={() => toggleMandatory(o)}
+                                      title="บังคับต้องมี — ถ้าขาด supplier จะเข้าร่วม RFQ หมวดนี้ไม่ได้"
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border mr-1 transition-colors ${o.is_mandatory ? 'border-red-300 bg-red-50 text-red-700' : 'border-muted-foreground/30 text-muted-foreground hover:bg-muted'}`}
+                                    >
+                                      {o.is_mandatory ? 'บังคับ' : 'ตั้งบังคับ'}
+                                    </button>
+                                  )}
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditOpt(o)}><Pencil className="w-3.5 h-3.5" /></Button>
                                   <AlertDialog>
                                     <AlertDialogTrigger asChild>

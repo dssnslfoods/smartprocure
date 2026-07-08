@@ -11,11 +11,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save, ShieldCheck, Lock } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
+import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
 
 interface CatalogItem {
   id: string;
@@ -67,6 +68,7 @@ export default function RFQForm() {
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [suppliersLoading, setSuppliersLoading] = useState(true);
   const [supplierSearch, setSupplierSearch] = useState('');
+  const [eligibility, setEligibility] = useState<Record<string, SupplierEligibility>>({});
 
   useEffect(() => {
     const fetchCatalog = async () => {
@@ -117,6 +119,10 @@ export default function RFQForm() {
 
       setSuppliers(enriched);
       setSuppliersLoading(false);
+
+      // BRCGS mandatory qualification gate — block ineligible suppliers.
+      const elig = await computeSupplierEligibility(allSuppliers.map(s => s.id));
+      setEligibility(elig);
     };
     fetchCatalog();
     fetchSuppliers();
@@ -139,6 +145,12 @@ export default function RFQForm() {
   };
 
   const toggleSupplier = (id: string) => {
+    const elig = eligibility[id];
+    if (elig && !elig.passed && !selectedSuppliers.has(id)) {
+      const reason = elig.failures.map(f => `${f.topic} (ต้องมี: ${f.options.join(' / ')})`).join(', ');
+      toast({ title: 'ผู้จัดจำหน่ายไม่ผ่านเอกสารบังคับ', description: `ขาด: ${reason}`, variant: 'destructive' });
+      return;
+    }
     setSelectedSuppliers(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -204,10 +216,11 @@ export default function RFQForm() {
       );
     }
 
-    // Insert selected suppliers
-    if (selectedSuppliers.size > 0) {
+    // Insert selected suppliers — defensively drop any that fail the mandatory gate.
+    const eligibleSelected = Array.from(selectedSuppliers).filter(id => eligibility[id]?.passed !== false);
+    if (eligibleSelected.length > 0) {
       await supabase.from('rfq_suppliers').insert(
-        Array.from(selectedSuppliers).map(supplierId => ({
+        eligibleSelected.map(supplierId => ({
           rfq_id: rfq.id,
           supplier_id: supplierId,
         }))
@@ -215,7 +228,7 @@ export default function RFQForm() {
     }
 
     const statusLabel = status === 'published' ? 'Published' : 'Draft';
-    toast({ title: 'สร้าง RFQ สำเร็จ', description: `${rfqNumber} — ${statusLabel} · ${validItems.length} รายการ, ${selectedSuppliers.size} ผู้จัดจำหน่าย` });
+    toast({ title: 'สร้าง RFQ สำเร็จ', description: `${rfqNumber} — ${statusLabel} · ${validItems.length} รายการ, ${eligibleSelected.length} ผู้จัดจำหน่าย` });
     setSaving(false);
     navigate(`/rfq/${rfq.id}`);
   };
@@ -350,19 +363,30 @@ export default function RFQForm() {
               ) : filteredSuppliers.length === 0 ? (
                 <div className="p-4 text-center text-sm text-muted-foreground">ไม่พบผู้จัดจำหน่าย</div>
               ) : (
-                filteredSuppliers.map(s => (
-                  <label key={s.id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent cursor-pointer">
+                filteredSuppliers.map(s => {
+                  const elig = eligibility[s.id];
+                  const blocked = elig && !elig.passed;
+                  return (
+                  <label key={s.id} className={cn('flex items-center gap-3 px-3 py-2.5', blocked ? 'opacity-60 cursor-not-allowed bg-red-50/40' : 'hover:bg-accent cursor-pointer')}>
                     <Checkbox
                       checked={selectedSuppliers.has(s.id)}
+                      disabled={blocked}
                       onCheckedChange={() => toggleSupplier(s.id)}
                     />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{s.company_name}</div>
                       <div className="text-xs text-muted-foreground truncate">
-                        {[s.contact_person, s.category].filter(Boolean).join(' · ') || '—'}
+                        {blocked
+                          ? <span className="text-red-600">ขาดเอกสารบังคับ: {elig!.failures.map(f => f.options.join('/')).join(', ')}</span>
+                          : ([s.contact_person, s.category].filter(Boolean).join(' · ') || '—')}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {blocked && (
+                        <Badge variant="outline" className="text-[10px] gap-0.5 border-red-300 bg-red-50 text-red-700">
+                          <Lock className="w-3 h-3" />บล็อก
+                        </Badge>
+                      )}
                       {s.brcScore !== null && (
                         <Badge
                           variant="outline"
@@ -383,7 +407,8 @@ export default function RFQForm() {
                       )}
                     </div>
                   </label>
-                ))
+                  );
+                })
               )}
             </div>
           </CardContent>

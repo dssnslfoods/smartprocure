@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
+import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
 import { computeRfqBidRisk, risk10ToLevel, type BidRiskResult } from '@/lib/bidRisk';
 import { computeDimensionRisks, DIMENSION_LABEL, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
@@ -53,6 +54,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
   const [removeTarget, setRemoveTarget] = useState<SupplierWithEligibility | null>(null);
   const [removeReason, setRemoveReason] = useState('');
   const [removals, setRemovals] = useState<{ supplier_id: string; reason: string; removed_at: string; removed_by_name: string | null }[]>([]);
+  const [mandatoryElig, setMandatoryElig] = useState<Record<string, SupplierEligibility>>({});
   const { hasRole, user } = useAuth();
   const { toast } = useToast();
 
@@ -106,6 +108,12 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
         }));
         setAllSuppliers(enriched);
       }
+
+      // BRCGS mandatory qualification gate for the Available list.
+      if (supplierIds.length) {
+        setMandatoryElig(await computeSupplierEligibility(supplierIds));
+      }
+
       const invitedIdList: string[] = (invRes.data || []).map((r: any) => r.supplier_id);
       if (invRes.data) {
         setInvitedIds(new Set(invitedIdList));
@@ -180,15 +188,17 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
     if (selected.size === 0) return;
     setSaving(true);
 
-    const rows = Array.from(selected).map(supplier_id => {
-      const s = allSuppliers.find(x => x.id === supplier_id);
-      return {
-        rfq_id: rfqId,
-        supplier_id,
-        eligibility_status: s?.eligibility.status ?? 'eligible',
-        eligibility_notes: s?.eligibility.reasons.join('; ') || null,
-      };
-    });
+    const rows = Array.from(selected)
+      .filter(supplier_id => mandatoryElig[supplier_id]?.passed !== false)
+      .map(supplier_id => {
+        const s = allSuppliers.find(x => x.id === supplier_id);
+        return {
+          rfq_id: rfqId,
+          supplier_id,
+          eligibility_status: s?.eligibility.status ?? 'eligible',
+          eligibility_notes: s?.eligibility.reasons.join('; ') || null,
+        };
+      });
 
     const { error } = await supabase.from('rfq_suppliers').insert(rows);
     setSaving(false);
@@ -389,7 +399,13 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                 <div className="space-y-2 max-h-96 overflow-y-auto">
                   {filteredAvailable.map(s => {
                     const { canInvite, status, reasons } = s.eligibility;
-                    const isBlocked = !canInvite;
+                    const mand = mandatoryElig[s.id];
+                    const mandBlocked = mand ? !mand.passed : false;
+                    const effectiveCanInvite = canInvite && !mandBlocked;
+                    const isBlocked = !effectiveCanInvite;
+                    const allReasons = mandBlocked
+                      ? [...reasons, ...mand!.failures.map(f => `ขาดเอกสารบังคับ: ${f.topic} (ต้องมี ${f.options.join(' / ')})`)]
+                      : reasons;
 
                     return (
                       <label
@@ -402,7 +418,7 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                       >
                         <Checkbox
                           checked={selected.has(s.id)}
-                          onCheckedChange={() => toggle(s.id, canInvite)}
+                          onCheckedChange={() => toggle(s.id, effectiveCanInvite)}
                           disabled={isBlocked}
                           className="mt-0.5"
                         />
@@ -428,11 +444,11 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
                               </Badge>
                             )}
                           </div>
-                          {reasons.length > 0 && (
+                          {allReasons.length > 0 && (
                             <ul className="mt-1.5 space-y-0.5">
-                              {reasons.map((r, i) => (
+                              {allReasons.map((r, i) => (
                                 <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
-                                  <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5 text-yellow-500" />
+                                  <AlertTriangle className={`w-3 h-3 shrink-0 mt-0.5 ${mandBlocked ? 'text-red-500' : 'text-yellow-500'}`} />
                                   {r}
                                 </li>
                               ))}
