@@ -206,9 +206,22 @@ export default function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rfqs' }, () => fetchKPIs())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bidding_events' }, () => fetchKPIs())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'awards' }, () => fetchKPIs())
+      // Keep the expired-certificate card current when certs/evidence change
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'supplier_certificates' }, () => fetchKPIs())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'brc_evidence' }, () => fetchKPIs())
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    // Re-fetch when returning to the tab (expiry is date-based, so it can go stale
+    // across a day boundary while the dashboard is left open).
+    const onFocus = () => { if (document.visibilityState === 'visible') fetchKPIs(); };
+    document.addEventListener('visibilitychange', onFocus);
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   const getActivityIcon = (icon: string) => {
