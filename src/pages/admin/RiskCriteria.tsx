@@ -65,7 +65,13 @@ export default function RiskCriteria() {
 
   // Add option dialog
   const [addTopic, setAddTopic] = useState<BrcTopic | null>(null);
-  const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '' });
+  const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false });
+
+  // Add new criterion (topic) dialog
+  const [addTopicType, setAddTopicType] = useState<string | null>(null); // supplier_type
+  const [newTopic, setNewTopic] = useState<{ section: string; topic: string; target_score: number; scoring_mode: 'best_match' | 'additive'; criterion_group: 'safety_quality' | 'commercial'; auto_source: 'manual' | 'evidence' }>({
+    section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual',
+  });
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -172,12 +178,41 @@ export default function RiskCriteria() {
       score: Number(addForm.score) || 0,
       match_type: addForm.match_type,
       match_keywords: addForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
+      is_mandatory: addForm.is_mandatory,
       sort_order: ((optionsByTopic[addTopic.id] || []).length + 1) * 10,
     });
     setSaving(false);
     if (error) { toast({ title: 'เพิ่มไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'เพิ่มตัวเลือกแล้ว' });
-    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '' }); load(true);
+    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false }); load(true);
+  };
+
+  const openAddTopic = (st: string) => {
+    setAddTopicType(st);
+    setNewTopic({ section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual' });
+  };
+  const saveNewTopic = async () => {
+    if (!addTopicType || !newTopic.section.trim() || !newTopic.topic.trim()) {
+      toast({ title: 'กรุณาระบุหมวดและชื่อหัวข้อ', variant: 'destructive' }); return;
+    }
+    setSaving(true);
+    const maxOrder = topics.filter(t => t.supplier_type === addTopicType).reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
+    const { error } = await supabase.from('brc_topics' as any).insert({
+      supplier_type: addTopicType,
+      section: newTopic.section.trim(),
+      topic: newTopic.topic.trim(),
+      target_score: Number(newTopic.target_score) || 0,
+      scoring_mode: newTopic.scoring_mode,
+      auto_source: newTopic.auto_source,
+      quotation_field: null,
+      criterion_group: newTopic.criterion_group,
+      sort_order: maxOrder + 10,
+      active: true,
+    });
+    setSaving(false);
+    if (error) { toast({ title: 'เพิ่มหัวข้อไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'เพิ่มหัวข้อแล้ว', description: 'เพิ่มตัวเลือก/ระดับคะแนนได้ที่ปุ่ม "+ ตัวเลือก" ของหัวข้อ' });
+    setAddTopicType(null); load(true);
   };
 
   const removeOpt = async (id: string) => {
@@ -440,10 +475,17 @@ export default function RiskCriteria() {
                 </CardContent>
               </Card>
 
-              <p className="text-xs text-muted-foreground flex items-start gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
-                <span>ตัวเลือกที่ตั้ง <b className="text-red-700">บังคับ</b> = supplier ต้องมีอย่างน้อย 1 ตัวเลือกบังคับต่อหัวข้อ (จับคู่ใบรับรอง/เอกสาร + ไม่หมดอายุ) ไม่งั้นจะเลือกเข้า RFQ หมวดนี้ไม่ได้ — และ<b>ไม่คิดคะแนน rate</b> (เป็นด่านเข้าล้วนๆ เพราะทุกรายที่เข้ามาต้องมีอยู่แล้ว)</span>
-              </p>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <p className="text-xs text-muted-foreground flex items-start gap-1.5 flex-1 min-w-[260px]">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                  <span>ตัวเลือกที่ตั้ง <b className="text-red-700">บังคับ</b> = supplier ต้องมีอย่างน้อย 1 ตัวเลือกบังคับต่อหัวข้อ (จับคู่ใบรับรอง/เอกสาร + ไม่หมดอายุ) ไม่งั้นจะเลือกเข้า RFQ หมวดนี้ไม่ได้ — และ<b>ไม่คิดคะแนน rate</b> (เป็นด่านเข้าล้วนๆ เพราะทุกรายที่เข้ามาต้องมีอยู่แล้ว)</span>
+                </p>
+                {canEdit && (
+                  <Button size="sm" className="shrink-0 gap-1" onClick={() => openAddTopic(st)}>
+                    <Plus className="w-4 h-4" />เพิ่มหัวข้อใหม่
+                  </Button>
+                )}
+              </div>
 
               {sections.map(section => (
                 <div key={section} className="space-y-2">
@@ -465,7 +507,7 @@ export default function RiskCriteria() {
                                 <Pencil className="w-3 h-3" />แก้ไขคะแนนเต็ม
                               </Button>
                               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
-                                onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '' }); }}>
+                                onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '', is_mandatory: false }); }}>
                                 <Plus className="w-3 h-3" />ตัวเลือก
                               </Button>
                               <Switch checked={t.active} onCheckedChange={v => toggleTopic(t, v)} />
@@ -602,10 +644,87 @@ export default function RiskCriteria() {
                 <Input value={addForm.keywordsText} onChange={e => setAddForm(p => ({ ...p, keywordsText: e.target.value }))} placeholder="เช่น halal, ฮาลาล" />
               </div>
             )}
+            {addTopic?.auto_source !== 'quotation' && (
+              <label className="flex items-start gap-2 cursor-pointer rounded-md border p-2.5">
+                <input type="checkbox" className="mt-0.5" checked={addForm.is_mandatory}
+                  onChange={e => setAddForm(p => ({ ...p, is_mandatory: e.target.checked }))} />
+                <div>
+                  <p className="text-sm font-medium flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5 text-red-500" />ตั้งเป็นเอกสารบังคับ (ด่านเข้า)</p>
+                  <p className="text-[11px] text-muted-foreground">ถ้าติ๊ก: supplier ต้องมีตัวเลือกนี้จึงเข้า RFQ ได้ และ<b>ไม่คิดคะแนน rate</b></p>
+                </div>
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddTopic(null)}>ยกเลิก</Button>
             <Button onClick={saveNewOpt} disabled={saving || !addForm.label.trim()}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add new criterion (topic) dialog */}
+      <Dialog open={!!addTopicType} onOpenChange={v => !v && setAddTopicType(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>เพิ่มหัวข้อใหม่</DialogTitle>
+            <DialogDescription>{addTopicType && SUPPLIER_TYPE_LABEL[addTopicType as BrcSupplierType]} — สร้างเกณฑ์ให้คะแนน แล้วเพิ่มระดับคะแนน (ตัวเลือก) ภายหลัง</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>หมวด (Section) *</Label>
+                <Input list="brc-sections" value={newTopic.section}
+                  onChange={e => setNewTopic(p => ({ ...p, section: e.target.value }))} placeholder="เช่น Food Safety" />
+                <datalist id="brc-sections">
+                  {Array.from(new Set(topics.filter(t => t.supplier_type === addTopicType).map(t => t.section))).map(s => <option key={s} value={s} />)}
+                </datalist>
+              </div>
+              <div>
+                <Label>ชื่อหัวข้อ *</Label>
+                <Input value={newTopic.topic} onChange={e => setNewTopic(p => ({ ...p, topic: e.target.value }))} placeholder="เช่น Audit Score" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>คะแนนเต็ม</Label>
+                <Input type="number" min={0} value={newTopic.target_score}
+                  onChange={e => setNewTopic(p => ({ ...p, target_score: parseInt(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <Label>วิธีรวมคะแนน</Label>
+                <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
+                  value={newTopic.scoring_mode} onChange={e => setNewTopic(p => ({ ...p, scoring_mode: e.target.value as 'best_match' | 'additive' }))}>
+                  <option value="best_match">เลือกคะแนนสูงสุดที่เข้าเกณฑ์</option>
+                  <option value="additive">บวกสะสมทุกข้อที่มี</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>กลุ่มเกณฑ์</Label>
+                <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
+                  value={newTopic.criterion_group} onChange={e => setNewTopic(p => ({ ...p, criterion_group: e.target.value as 'safety_quality' | 'commercial' }))}>
+                  <option value="safety_quality">ความปลอดภัย & คุณภาพ</option>
+                  <option value="commercial">เชิงพาณิชย์</option>
+                </select>
+              </div>
+              <div>
+                <Label>แหล่งตรวจ</Label>
+                <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
+                  value={newTopic.auto_source} onChange={e => setNewTopic(p => ({ ...p, auto_source: e.target.value as 'manual' | 'evidence' }))}>
+                  <option value="manual">ประเมินเอง (ผู้ประเมินเลือกระดับ)</option>
+                  <option value="evidence">Auto จากใบรับรอง/เอกสาร</option>
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              💡 สร้างหัวข้อแบบ 3 ระดับ (15/10/0): เลือก "เลือกคะแนนสูงสุด" แล้วเพิ่มตัวเลือก 3 ระดับที่ปุ่ม "+ ตัวเลือก" ของหัวข้อ ·
+              <b className="text-amber-700"> การเพิ่มหัวข้อทำให้คะแนนเต็มรวมเปลี่ยน — ควรกด "แก้ไขช่วงเกรด" ปรับตามด้วย</b>
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddTopicType(null)}>ยกเลิก</Button>
+            <Button onClick={saveNewTopic} disabled={saving || !newTopic.section.trim() || !newTopic.topic.trim()}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่มหัวข้อ'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
