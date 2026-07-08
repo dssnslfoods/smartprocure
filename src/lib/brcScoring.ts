@@ -407,7 +407,13 @@ export async function computeSupplierEligibility(
     return out;
   }
   for (const sid of ids) {
-    const st = (evidence.typesBy[sid] as BrcSupplierType) || 'rm_primary_pk';
+    // Only gate suppliers whose BRCGS category is explicitly set — an unclassified
+    // supplier can't fairly be held to a specific category's mandatory requirements.
+    const st = evidence.typesBy[sid] as BrcSupplierType | null;
+    if (!st || !SUPPLIER_TYPES.includes(st)) {
+      out[sid] = { passed: true, failures: [] };
+      continue;
+    }
     const brc = evaluateBrc(
       st, topics, optionsByTopic,
       evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
