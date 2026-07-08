@@ -67,8 +67,8 @@ export default function RiskCriteria() {
   const [addTopic, setAddTopic] = useState<BrcTopic | null>(null);
   const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '' });
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     const [tRes, oRes, bRes, wRes, sRes] = await Promise.all([
       supabase.from('brc_topics' as any).select('*').order('sort_order'),
       supabase.from('brc_options' as any).select('*').order('sort_order'),
@@ -135,7 +135,7 @@ export default function RiskCriteria() {
     });
     setSavingWeight(false); setConfirmType(null);
     toast({ title: 'บันทึกน้ำหนักแล้ว', description: `${SUPPLIER_TYPE_LABEL[st as BrcSupplierType]} — ความปลอดภัย ${safety}% / เชิงพาณิชย์ ${commercial}% · คะแนนผู้ขายถูกคำนวณใหม่แล้ว` });
-    load();
+    load(true);
   };
 
   const optionsByTopic = useMemo(() => {
@@ -160,7 +160,7 @@ export default function RiskCriteria() {
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'บันทึกแล้ว' });
-    setEditOpt(null); load();
+    setEditOpt(null); load(true);
   };
 
   const saveNewOpt = async () => {
@@ -177,25 +177,31 @@ export default function RiskCriteria() {
     setSaving(false);
     if (error) { toast({ title: 'เพิ่มไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'เพิ่มตัวเลือกแล้ว' });
-    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '' }); load();
+    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '' }); load(true);
   };
 
   const removeOpt = async (id: string) => {
     const { error } = await supabase.from('brc_options' as any).delete().eq('id', id);
     if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'ลบแล้ว' }); load();
+    toast({ title: 'ลบแล้ว' }); load(true);
   };
 
   const toggleTopic = async (t: BrcTopic, active: boolean) => {
-    await supabase.from('brc_topics' as any).update({ active }).eq('id', t.id);
-    load();
+    setTopics(prev => prev.map(x => x.id === t.id ? { ...x, active } : x)); // optimistic
+    const { error } = await supabase.from('brc_topics' as any).update({ active }).eq('id', t.id);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); load(true); }
   };
 
   const toggleMandatory = async (o: BrcOption) => {
-    const { error } = await supabase.from('brc_options' as any).update({ is_mandatory: !o.is_mandatory }).eq('id', o.id);
-    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: !o.is_mandatory ? 'ตั้งเป็นเอกสารบังคับแล้ว' : 'ยกเลิกบังคับแล้ว' });
-    load();
+    const next = !o.is_mandatory;
+    setOptions(prev => prev.map(x => x.id === o.id ? { ...x, is_mandatory: next } : x)); // optimistic, no reload
+    const { error } = await supabase.from('brc_options' as any).update({ is_mandatory: next }).eq('id', o.id);
+    if (error) {
+      setOptions(prev => prev.map(x => x.id === o.id ? { ...x, is_mandatory: o.is_mandatory } : x)); // revert
+      toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: next ? 'ตั้งเป็นเอกสารบังคับแล้ว' : 'ยกเลิกบังคับแล้ว' });
   };
 
   // Edit topic full mark (target_score) + scoring mode
@@ -210,7 +216,7 @@ export default function RiskCriteria() {
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'บันทึกหัวข้อแล้ว' });
-    setEditTopic(null); load();
+    setEditTopic(null); load(true);
   };
 
   // Edit grade bands per supplier type
@@ -232,7 +238,7 @@ export default function RiskCriteria() {
     const err = results.find(r => r.error);
     if (err?.error) { toast({ title: 'บันทึกไม่สำเร็จ', description: err.error.message, variant: 'destructive' }); return; }
     toast({ title: 'บันทึกช่วงเกรดแล้ว' });
-    setEditBandsType(null); load();
+    setEditBandsType(null); load(true);
   };
 
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">กำลังโหลด...</div>;
