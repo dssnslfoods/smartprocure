@@ -198,6 +198,43 @@ export default function RiskCriteria() {
     load();
   };
 
+  // Edit topic full mark (target_score) + scoring mode
+  const [editTopic, setEditTopic] = useState<BrcTopic | null>(null);
+  const [topicForm, setTopicForm] = useState<{ target_score: number; scoring_mode: 'best_match' | 'additive' }>({ target_score: 0, scoring_mode: 'best_match' });
+  const openEditTopic = (t: BrcTopic) => { setEditTopic(t); setTopicForm({ target_score: Number(t.target_score), scoring_mode: t.scoring_mode }); };
+  const saveTopic = async () => {
+    if (!editTopic) return;
+    setSaving(true);
+    const { error } = await supabase.from('brc_topics' as any)
+      .update({ target_score: Number(topicForm.target_score) || 0, scoring_mode: topicForm.scoring_mode }).eq('id', editTopic.id);
+    setSaving(false);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'บันทึกหัวข้อแล้ว' });
+    setEditTopic(null); load();
+  };
+
+  // Edit grade bands per supplier type
+  const [editBandsType, setEditBandsType] = useState<string | null>(null);
+  const [bandDraft, setBandDraft] = useState<Record<string, { min: number; max: number }>>({});
+  const openEditBands = (st: string) => {
+    const draft: Record<string, { min: number; max: number }> = {};
+    bands.filter(b => b.supplier_type === st).forEach(b => { draft[b.grade] = { min: b.min_score, max: b.max_score }; });
+    setBandDraft(draft); setEditBandsType(st);
+  };
+  const saveBands = async () => {
+    if (!editBandsType) return;
+    setSaving(true);
+    const results = await Promise.all(Object.entries(bandDraft).map(([grade, v]) =>
+      supabase.from('brc_grade_bands' as any)
+        .update({ min_score: Number(v.min) || 0, max_score: Number(v.max) || 0 })
+        .eq('supplier_type', editBandsType).eq('grade', grade)));
+    setSaving(false);
+    const err = results.find(r => r.error);
+    if (err?.error) { toast({ title: 'บันทึกไม่สำเร็จ', description: err.error.message, variant: 'destructive' }); return; }
+    toast({ title: 'บันทึกช่วงเกรดแล้ว' });
+    setEditBandsType(null); load();
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">กำลังโหลด...</div>;
 
   return (
@@ -381,12 +418,17 @@ export default function RiskCriteria() {
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <p className="text-sm font-semibold">{SUPPLIER_TYPE_LABEL[st]} — คะแนนเต็ม {maxTotal}</p>
-                    <div className="flex gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {typeBands.map(b => (
                         <Badge key={b.grade} variant="outline" className={`${GRADE_COLOR[b.grade]} text-xs`}>
                           {b.grade}: {b.min_score}–{b.max_score}
                         </Badge>
                       ))}
+                      {canEdit && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => openEditBands(st)}>
+                          <Pencil className="w-3 h-3" />แก้ไขช่วงเกรด
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -413,6 +455,9 @@ export default function RiskCriteria() {
                           </div>
                           {canEdit && (
                             <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => openEditTopic(t)}>
+                                <Pencil className="w-3 h-3" />แก้ไขคะแนนเต็ม
+                              </Button>
                               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
                                 onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '' }); }}>
                                 <Plus className="w-3 h-3" />ตัวเลือก
@@ -555,6 +600,64 @@ export default function RiskCriteria() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddTopic(null)}>ยกเลิก</Button>
             <Button onClick={saveNewOpt} disabled={saving || !addForm.label.trim()}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit topic full mark + scoring mode */}
+      <Dialog open={!!editTopic} onOpenChange={v => !v && setEditTopic(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>แก้ไขคะแนนเต็ม — {editTopic?.topic}</DialogTitle>
+            <DialogDescription>กำหนดคะแนนเต็มของหัวข้อ และวิธีรวมคะแนน</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>คะแนนเต็ม (target)</Label>
+              <Input type="number" min={0} value={topicForm.target_score}
+                onChange={e => setTopicForm(p => ({ ...p, target_score: parseInt(e.target.value) || 0 }))} />
+              <p className="text-[11px] text-muted-foreground mt-1">คะแนนสูงสุดที่หัวข้อนี้ทำได้ (เพดานของ "บวกสะสม")</p>
+            </div>
+            <div>
+              <Label>วิธีรวมคะแนน</Label>
+              <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
+                value={topicForm.scoring_mode}
+                onChange={e => setTopicForm(p => ({ ...p, scoring_mode: e.target.value as 'best_match' | 'additive' }))}>
+                <option value="best_match">เลือกคะแนนสูงสุดที่เข้าเกณฑ์</option>
+                <option value="additive">บวกสะสมทุกข้อที่มี (ไม่เกินคะแนนเต็ม)</option>
+              </select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTopic(null)}>ยกเลิก</Button>
+            <Button onClick={saveTopic} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit grade bands */}
+      <Dialog open={!!editBandsType} onOpenChange={v => !v && setEditBandsType(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>แก้ไขช่วงเกรด</DialogTitle>
+            <DialogDescription>{editBandsType && SUPPLIER_TYPE_LABEL[editBandsType as BrcSupplierType]} — กำหนดช่วงคะแนนของแต่ละเกรด</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {(['A', 'B', 'C', 'D'] as const).filter(g => bandDraft[g]).map(g => (
+              <div key={g} className="flex items-center gap-2">
+                <Badge variant="outline" className={`${GRADE_COLOR[g]} w-8 justify-center`}>{g}</Badge>
+                <Input type="number" className="h-9" value={bandDraft[g].min}
+                  onChange={e => setBandDraft(p => ({ ...p, [g]: { ...p[g], min: parseInt(e.target.value) || 0 } }))} />
+                <span className="text-muted-foreground">–</span>
+                <Input type="number" className="h-9" value={bandDraft[g].max}
+                  onChange={e => setBandDraft(p => ({ ...p, [g]: { ...p[g], max: parseInt(e.target.value) || 0 } }))} />
+              </div>
+            ))}
+            <p className="text-[11px] text-muted-foreground">ช่วงคะแนน (ต่ำสุด–สูงสุด) ของแต่ละเกรด ควรต่อเนื่องกันและไม่ทับซ้อน</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditBandsType(null)}>ยกเลิก</Button>
+            <Button onClick={saveBands} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
