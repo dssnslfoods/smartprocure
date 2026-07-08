@@ -258,13 +258,16 @@ export function evaluateBrc(
       if (topic.auto_source === 'manual' && !manualOpt) pending = true;
     }
 
+    // Mandatory options are a pass/fail gate, not a rated criterion — exclude them
+    // from the score (having a required cert is a prerequisite, not bonus points).
+    const scoringMatched = matched.filter(m => !m.option.is_mandatory);
     let score = 0;
     if (topic.scoring_mode === 'best_match') {
-      score = matched.reduce((mx, m) => Math.max(mx, m.option.score), 0);
+      score = scoringMatched.reduce((mx, m) => Math.max(mx, m.option.score), 0);
     } else {
       // additive: sum distinct matched options
       const seen = new Set<string>();
-      for (const m of matched) {
+      for (const m of scoringMatched) {
         if (!seen.has(m.option.id)) { seen.add(m.option.id); score += m.option.score; }
       }
       score = Math.min(score, topic.target_score);

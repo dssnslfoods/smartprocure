@@ -427,11 +427,12 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                     : o.match_type === 'document' ? <FileText className="w-3 h-3 text-violet-500 shrink-0" />
                                     : <UserCheck className="w-3 h-3 text-slate-500 shrink-0" />}
                                   <span className={`text-xs ${met ? 'font-medium' : 'text-muted-foreground'}`}>{o.label}</span>
-                                  <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
-                                  {o.is_mandatory && (
+                                  {o.is_mandatory ? (
                                     <Badge variant="outline" className="text-[9px] gap-0.5 border-red-300 bg-red-50 text-red-700 py-0">
-                                      <AlertTriangle className="w-2.5 h-2.5" />บังคับ
+                                      <AlertTriangle className="w-2.5 h-2.5" />บังคับ · ไม่คิดคะแนน
                                     </Badge>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
                                   )}
                                   {met && via && via !== 'manual' && via !== 'quotation' && (
                                     <span className="text-[10px] text-green-700">— พบ: {via}</span>

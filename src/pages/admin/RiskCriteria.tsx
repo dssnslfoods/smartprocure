@@ -392,9 +392,9 @@ export default function RiskCriteria() {
                 </CardContent>
               </Card>
 
-              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                ตัวเลือกที่ตั้ง <b className="text-red-700">บังคับ</b> = supplier ต้องมีอย่างน้อย 1 ตัวเลือกบังคับต่อหัวข้อ (จับคู่ใบรับรอง/เอกสาร + ไม่หมดอายุ) ไม่งั้นจะเลือกเข้า RFQ หมวดนี้ไม่ได้
+              <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                <span>ตัวเลือกที่ตั้ง <b className="text-red-700">บังคับ</b> = supplier ต้องมีอย่างน้อย 1 ตัวเลือกบังคับต่อหัวข้อ (จับคู่ใบรับรอง/เอกสาร + ไม่หมดอายุ) ไม่งั้นจะเลือกเข้า RFQ หมวดนี้ไม่ได้ — และ<b>ไม่คิดคะแนน rate</b> (เป็นด่านเข้าล้วนๆ เพราะทุกรายที่เข้ามาต้องมีอยู่แล้ว)</span>
               </p>
 
               {sections.map(section => (
@@ -424,7 +424,9 @@ export default function RiskCriteria() {
                         <div className="divide-y">
                           {(optionsByTopic[t.id] || []).map(o => (
                             <div key={o.id} className="flex items-center gap-3 py-2">
-                              <span className="font-mono font-semibold text-sm w-8 text-right shrink-0">{Number(o.score)}</span>
+                              <span className={`font-mono font-semibold text-sm w-8 text-right shrink-0 ${o.is_mandatory ? 'text-muted-foreground/40' : ''}`} title={o.is_mandatory ? 'บังคับ — ไม่คิดคะแนน' : undefined}>
+                                {o.is_mandatory ? '—' : Number(o.score)}
+                              </span>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm">{o.label}</span>
