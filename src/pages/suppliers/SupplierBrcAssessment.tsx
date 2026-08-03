@@ -479,6 +479,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
             const selected = manual[t.id]?.option_id ?? '_none';
             const matchedIds = new Set(r.matchedOptions.map(m => m.option.id));
             const viaOf = (optId: string) => r.matchedOptions.find(m => m.option.id === optId)?.via;
+            // In best_match the tiers are alternatives — only the highest one scores.
+            const isBestMatch = t.scoring_mode === 'best_match';
+            const winnerId = isBestMatch && r.matchedOptions.length
+              ? r.matchedOptions.reduce((b, m) => (Number(m.option.score) > Number(b.option.score) ? m : b)).option.id
+              : null;
             return (
               <Card key={t.id}>
                 <CardContent className="p-4">
@@ -509,6 +514,13 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                             ยังไม่มีเอกสาร — 0 คะแนน
                           </Badge>
                         )}
+                        {!isQuotation && (
+                          <Badge variant="secondary" className="text-[10px] font-normal">
+                            {isBestMatch
+                              ? `นับเฉพาะข้อที่คะแนนสูงสุด (ไม่เกิน ${r.maxScore})`
+                              : `บวกสะสมทุกข้อที่มี (ไม่เกิน ${r.maxScore})`}
+                          </Badge>
+                        )}
                       </div>
 
                       {isQuotation ? (
@@ -537,7 +549,15 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                       <AlertTriangle className="w-2.5 h-2.5" />{portalMode ? 'บังคับ' : 'บังคับ · ไม่คิดคะแนน'}
                                     </Badge>
                                   ) : !portalMode && (
-                                    <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
+                                    // "+" only makes sense when scores accumulate.
+                                    <span className="text-xs text-muted-foreground">
+                                      {isBestMatch ? `${Number(o.score)} คะแนน` : `+${Number(o.score)}`}
+                                    </span>
+                                  )}
+                                  {!portalMode && o.id === winnerId && (
+                                    <Badge variant="outline" className="text-[9px] gap-0.5 border-green-400 bg-green-100 text-green-800 py-0">
+                                      <CheckCircle2 className="w-2.5 h-2.5" />นับข้อนี้
+                                    </Badge>
                                   )}
                                   {met && via && via !== 'manual' && via !== 'quotation' && (
                                     <span className="text-[10px] text-green-700">— พบ: {via}</span>

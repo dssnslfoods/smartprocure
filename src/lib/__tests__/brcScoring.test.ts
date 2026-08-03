@@ -153,6 +153,33 @@ describe('evaluateBrc — scoring modes', () => {
     expect(t.score).toBe(10); // max(10, 8) — not 18
   });
 
+  // The tiers of a best_match topic are alternatives, not additions: holding every
+  // certificate at once still scores the single best one, never their sum.
+  it('best_match never exceeds the target even when every option matches', () => {
+    const t = mkTopic({ id: 't-all', topic: 'Product Certificate', target_score: 10, scoring_mode: 'best_match' });
+    const opts = {
+      't-all': [
+        mkOption({ id: 'a', topic_id: 't-all', label: 'GFSI', score: 10, match_keywords: ['gfsi'] }),
+        mkOption({ id: 'b', topic_id: 't-all', label: 'ISO22000', score: 8, match_keywords: ['iso22000'], sort_order: 20 }),
+        mkOption({ id: 'c', topic_id: 't-all', label: 'ISO9001', score: 7, match_keywords: ['iso9001'], sort_order: 30 }),
+        mkOption({ id: 'd', topic_id: 't-all', label: 'Kosher', score: 5, match_keywords: ['kosher'], sort_order: 40 }),
+      ],
+    };
+    const brc = evalWith({
+      topics: [t], optionsByTopic: opts,
+      certs: [
+        { certificate_type: 'GFSI', expiry_date: futureDate() },
+        { certificate_type: 'ISO22000', expiry_date: futureDate() },
+        { certificate_type: 'ISO9001', expiry_date: futureDate() },
+        { certificate_type: 'Kosher', expiry_date: futureDate() },
+      ],
+    });
+    const r = topicById(brc, 't-all');
+    expect(r.matchedOptions).toHaveLength(4); // all four matched
+    expect(r.score).toBe(10);                 // ...but only the best one scores
+    expect(r.score).toBeLessThanOrEqual(r.maxScore);
+  });
+
   it('additive sums every distinct matched option', () => {
     const brc = evalWith({
       docs: [
