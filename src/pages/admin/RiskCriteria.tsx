@@ -28,8 +28,13 @@ const GRADE_COLOR: Record<string, string> = {
 };
 
 function SourceBadge({ opt, topic }: { opt: BrcOption; topic: BrcTopic }) {
-  if (topic.auto_source === 'quotation' || opt.match_type === 'auto') {
+  // Only a quotation-driven TOPIC is scored from the quotation. An 'auto' option
+  // sitting in an evidence topic is never matched, so it must not claim to be.
+  if (topic.auto_source === 'quotation') {
     return <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-50 text-amber-700 border border-amber-200"><Zap className="w-3 h-3" />Auto จากใบเสนอราคา</Badge>;
+  }
+  if (opt.match_type === 'auto') {
+    return <Badge variant="secondary" className="text-[10px] gap-1 bg-red-50 text-red-700 border border-red-200"><AlertTriangle className="w-3 h-3" />ตั้งค่าไม่ถูกต้อง — จับคู่ไม่ได้</Badge>;
   }
   if (opt.match_type === 'certificate') {
     return <Badge variant="secondary" className="text-[10px] gap-1 bg-blue-50 text-blue-700 border border-blue-200"><FileBadge className="w-3 h-3" />Auto จากใบรับรอง</Badge>;
@@ -72,9 +77,28 @@ export default function RiskCriteria() {
 
   // Add new criterion (topic) dialog
   const [addTopicType, setAddTopicType] = useState<string | null>(null); // supplier_type
-  const [newTopic, setNewTopic] = useState<{ section: string; topic: string; target_score: number; scoring_mode: 'best_match' | 'additive'; criterion_group: 'safety_quality' | 'commercial'; auto_source: 'manual' | 'evidence' }>({
-    section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual',
+  const [newTopic, setNewTopic] = useState<{
+    section: string; topic: string; target_score: number;
+    scoring_mode: 'best_match' | 'additive';
+    criterion_group: 'safety_quality' | 'commercial';
+    auto_source: 'manual' | 'evidence' | 'quotation';
+    quotation_field: 'price' | 'delivery' | 'credit' | null;
+  }>({
+    section: '', topic: '', target_score: 10, scoring_mode: 'best_match',
+    criterion_group: 'safety_quality', auto_source: 'manual', quotation_field: null,
   });
+
+  /** The engine can only derive three things from a quotation, and each may be
+   *  used by at most one topic per supplier type. */
+  const QUOTATION_FIELDS = [
+    { value: 'price' as const, label: 'ราคา (เทียบกับข้อเสนอที่ต่ำสุดในรอบนั้น)' },
+    { value: 'delivery' as const, label: 'การส่งมอบ (เทียบ Lead time ที่เร็วที่สุด)' },
+    { value: 'credit' as const, label: 'เครดิตเทอม (เกณฑ์ 30 วัน)' },
+  ];
+  const usedQuotationFields = (st: string | null) => new Set(
+    topics.filter(t => t.supplier_type === st && t.active && t.quotation_field)
+      .map(t => t.quotation_field as string),
+  );
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -374,6 +398,9 @@ export default function RiskCriteria() {
     if (!addTopicType || !newTopic.section.trim() || !newTopic.topic.trim()) {
       toast({ title: 'กรุณาระบุหมวดและชื่อหัวข้อ', variant: 'destructive' }); return;
     }
+    if (newTopic.auto_source === 'quotation' && !newTopic.quotation_field) {
+      toast({ title: 'กรุณาเลือกข้อมูลจากใบเสนอราคาที่ใช้คิดคะแนน', variant: 'destructive' }); return;
+    }
     const { rows, bandDraft, base, baseTotal } = buildRebalance(addTopicType, { addPending: newTopic });
     setRebalance({ mode: 'add', st: addTopicType, rows, bandDraft, baseBands: base, baseTotal, bandsAuto: true, pending: { ...newTopic } });
   };
@@ -447,7 +474,7 @@ export default function RiskCriteria() {
           target_score: newRow.target,
           scoring_mode: pending.scoring_mode,
           auto_source: pending.auto_source,
-          quotation_field: null,
+          quotation_field: pending.auto_source === 'quotation' ? pending.quotation_field : null,
           criterion_group: pending.criterion_group,
           sort_order: maxOrder + 10,
           active: true,
@@ -497,7 +524,10 @@ export default function RiskCriteria() {
 
   const openAddTopic = (st: string) => {
     setAddTopicType(st);
-    setNewTopic({ section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual' });
+    setNewTopic({
+      section: '', topic: '', target_score: 10, scoring_mode: 'best_match',
+      criterion_group: 'safety_quality', auto_source: 'manual', quotation_field: null,
+    });
   };
   const removeOpt = async (id: string) => {
     const opt = options.find(o => o.id === id);
@@ -1005,9 +1035,16 @@ export default function RiskCriteria() {
                 <Label>ตรวจจาก</Label>
                 <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
                   value={addForm.match_type} onChange={e => setAddForm(p => ({ ...p, match_type: e.target.value }))}>
-                  <option value="certificate">ใบรับรอง (auto)</option>
-                  <option value="document">เอกสาร (auto)</option>
-                  <option value="manual">ประเมินเอง</option>
+                  {addTopic?.auto_source === 'quotation' ? (
+                    // A quotation topic resolves its own tier — there is nothing to match on.
+                    <option value="auto">จากใบเสนอราคา (ระบบเลือกระดับให้เอง)</option>
+                  ) : (
+                    <>
+                      <option value="certificate">ใบรับรอง (auto)</option>
+                      <option value="document">เอกสาร (auto)</option>
+                      <option value="manual">ประเมินเอง</option>
+                    </>
+                  )}
                 </select>
               </div>
             </div>
@@ -1086,12 +1123,51 @@ export default function RiskCriteria() {
               <div>
                 <Label>แหล่งตรวจ</Label>
                 <select className="w-full h-10 border rounded-md px-3 text-sm bg-background"
-                  value={newTopic.auto_source} onChange={e => setNewTopic(p => ({ ...p, auto_source: e.target.value as 'manual' | 'evidence' }))}>
+                  value={newTopic.auto_source}
+                  onChange={e => {
+                    const src = e.target.value as 'manual' | 'evidence' | 'quotation';
+                    setNewTopic(p => ({
+                      ...p,
+                      auto_source: src,
+                      // A quotation criterion is commercial by definition and always
+                      // resolves to exactly one tier.
+                      criterion_group: src === 'quotation' ? 'commercial' : p.criterion_group,
+                      scoring_mode: src === 'quotation' ? 'best_match' : p.scoring_mode,
+                      quotation_field: src === 'quotation' ? p.quotation_field : null,
+                    }));
+                  }}>
                   <option value="manual">ประเมินเอง (ผู้ประเมินเลือกระดับ)</option>
                   <option value="evidence">Auto จากใบรับรอง/เอกสาร</option>
+                  <option value="quotation">Auto จากใบเสนอราคา</option>
                 </select>
               </div>
             </div>
+
+            {newTopic.auto_source === 'quotation' && (() => {
+              const used = usedQuotationFields(addTopicType);
+              const free = QUOTATION_FIELDS.filter(f => !used.has(f.value));
+              return (
+                <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+                  <Label className="text-xs">ข้อมูลที่ใช้คิดคะแนน *</Label>
+                  {free.length === 0 ? (
+                    <p className="text-[11px] text-red-600">
+                      ข้อมูลจากใบเสนอราคาทั้ง 3 แบบถูกใช้ครบแล้วในหมวดนี้ — ปิดหรือลบหัวข้อเดิมก่อนจึงจะสร้างใหม่ได้
+                    </p>
+                  ) : (
+                    <select className="w-full h-9 border rounded-md px-3 text-sm bg-background"
+                      value={newTopic.quotation_field ?? ''}
+                      onChange={e => setNewTopic(p => ({ ...p, quotation_field: (e.target.value || null) as any }))}>
+                      <option value="">— เลือกข้อมูล —</option>
+                      {free.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                    </select>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    ระบบคิดคะแนนได้เฉพาะ 3 อย่างนี้จากใบเสนอราคา และแต่ละอย่างใช้ได้หัวข้อเดียวต่อหมวดผู้ขาย ·
+                    หลังสร้างแล้วให้เพิ่มตัวเลือก <b>3 ระดับเรียงจากดีที่สุดไปแย่ที่สุด</b> (เช่น 15 / 10 / 0) ระบบจะเลือกให้เองตอนเปรียบเทียบราคา
+                  </p>
+                </div>
+              );
+            })()}
             <p className="text-[11px] text-muted-foreground">
               💡 สร้างหัวข้อแบบ 3 ระดับ (15/10/0): เลือก "เลือกคะแนนสูงสุด" แล้วเพิ่มตัวเลือก 3 ระดับที่ปุ่ม "+ ตัวเลือก" ของหัวข้อ ·
               <b className="text-teal-700"> ขั้นถัดไปจะให้ปรับคะแนนรายหัวข้อและช่วงเกรดให้สอดคล้องกันก่อนบันทึก</b>
