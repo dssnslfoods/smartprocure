@@ -124,11 +124,14 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
   const [myInviteRow, setMyInviteRow] = useState<{ id: string; declined_at: string | null; declined_reason: string | null; responded: boolean } | null>(null);
 
   const fetchQuotations = async () => {
-    const { data } = await supabase
+    // Bid confidentiality: a supplier only ever loads its own quotation.
+    // RLS enforces this server-side; this filter is defence in depth.
+    let query = supabase
       .from('quotations')
       .select('*, suppliers(company_name)')
-      .eq('rfq_id', rfqId)
-      .order('created_at', { ascending: false });
+      .eq('rfq_id', rfqId);
+    if (isSupplier && mySupplierId) query = query.eq('supplier_id', mySupplierId);
+    const { data } = await query.order('created_at', { ascending: false });
     if (data) setQuotations(data);
     setLoading(false);
   };
