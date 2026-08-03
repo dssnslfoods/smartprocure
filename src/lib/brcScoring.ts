@@ -250,8 +250,16 @@ export function evaluateBrc(
       // are supporting attachments only — staff still confirms the pick)
       if (manualOpt) matched.push({ option: manualOpt, via: 'manual' });
       const hasManualOptions = options.some(o => o.match_type === 'manual');
-      if (hasManualOptions && !manualOpt) pending = true;
-      if (topic.auto_source === 'manual' && !manualOpt) pending = true;
+      // A topic is only "awaiting assessment" when there is nothing to score yet.
+      // Evidence that already matched counts immediately — previously a single
+      // manual fallback option (e.g. "No certificate but audit > 75%") held the
+      // whole topic pending even when a certificate had been matched, so the
+      // supplier's uploads produced no score at all.
+      if (topic.auto_source === 'manual') {
+        if (!manualOpt) pending = true;
+      } else if (hasManualOptions && !manualOpt && matched.length === 0) {
+        pending = true;
+      }
     }
 
     // Mandatory options are a pass/fail gate, not a rated criterion — exclude them

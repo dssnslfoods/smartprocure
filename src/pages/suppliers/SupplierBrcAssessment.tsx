@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   FileBadge, FileText, Zap, UserCheck, CheckCircle2, CircleDashed, Trophy,
-  Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle,
+  Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle, ListChecks,
 } from 'lucide-react';
 import {
   evaluateBrc, loadBrcStandard, loadSupplierEvidence, groupWeightsFor,
@@ -252,6 +252,15 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   // Portal shows document completeness instead of score/grade.
   const docsCompleteCount = shownTopics.filter(r => r.matchedOptions.length > 0).length;
 
+  // Why a topic is still open — drives the guidance panel and the per-topic badges.
+  const awaitingQuotation = shownTopics.filter(r => r.pending && r.topic.auto_source === 'quotation');
+  const awaitingAssessor = shownTopics.filter(r => r.pending && r.topic.auto_source !== 'quotation');
+  const noEvidence = shownTopics.filter(r =>
+    !r.pending && r.topic.auto_source !== 'quotation' && r.matchedOptions.length === 0);
+  const assessedCount = shownTopics.filter(r => !r.pending).length;
+  const isComplete = shownTopics.length > 0 && assessedCount === shownTopics.length;
+  const progressPct = shownTopics.length ? Math.round((assessedCount / shownTopics.length) * 100) : 0;
+
   const topicName = (id: string) => topics.find(t => t.id === id)?.topic || '';
   const expiredEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expired');
   const expiringEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expiring');
@@ -322,16 +331,24 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
             ) : (
               <div className="flex items-center gap-4">
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">คะแนนรวม (ส่วนที่ประเมินได้)</p>
-                  <p className="text-2xl font-bold tabular-nums">{brc.totalScore} <span className="text-sm text-muted-foreground font-normal">/ {brc.assessedMax}</span></p>
-                  {brc.pendingCount > 0 && (
-                    <p className="text-[11px] text-amber-600">รอประเมิน {brc.pendingCount} หัวข้อ (Competition ประเมิน auto ตอน RFQ)</p>
-                  )}
+                  <p className="text-xs text-muted-foreground">คะแนนจากหัวข้อที่ประเมินแล้ว</p>
+                  <p className="text-2xl font-bold tabular-nums">
+                    {brc.totalScore} <span className="text-sm text-muted-foreground font-normal">/ {brc.assessedMax}</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    คะแนนเต็มทั้งหมด {brc.maxScore} · ประเมินแล้ว {assessedCount}/{shownTopics.length} หัวข้อ
+                  </p>
                 </div>
                 {brc.grade && (
                   <div className="text-center">
-                    <span className={`inline-flex items-center justify-center w-14 h-14 rounded-full text-2xl font-bold ${gs?.badge}`}>{brc.grade}</span>
-                    <p className="text-[11px] text-muted-foreground mt-1 max-w-[140px]">{brc.gradeLabel?.split('/')[0]}</p>
+                    <span className={`inline-flex items-center justify-center w-14 h-14 rounded-full text-2xl font-bold ${isComplete ? gs?.badge : 'bg-muted text-muted-foreground border-2 border-dashed'}`}>
+                      {brc.grade}
+                    </span>
+                    <p className="text-[11px] mt-1 max-w-[140px]">
+                      {isComplete
+                        ? <span className="text-muted-foreground">{brc.gradeLabel?.split('/')[0]}</span>
+                        : <span className="text-amber-600 font-medium">เกรดชั่วคราว</span>}
+                    </p>
                   </div>
                 )}
               </div>
@@ -362,6 +379,71 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
           )}
         </CardContent>
       </Card>
+
+      {/* What still has to happen for the assessment to be complete (staff view) */}
+      {!portalMode && shownTopics.length > 0 && (
+        isComplete ? (
+          <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-green-800 text-sm">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>ประเมินครบทุกหัวข้อแล้ว — เกรด {brc.grade} เป็นผลสรุปที่ใช้อ้างอิงได้</span>
+          </div>
+        ) : (
+          <Card className="border-amber-200 bg-amber-50/40">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <p className="text-sm font-semibold flex items-center gap-1.5">
+                  <ListChecks className="w-4 h-4 text-amber-600" />สิ่งที่ต้องทำให้การประเมินสมบูรณ์
+                </p>
+                <span className="text-xs text-muted-foreground">{assessedCount}/{shownTopics.length} หัวข้อ ({progressPct}%)</span>
+              </div>
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-amber-500 transition-all" style={{ width: `${progressPct}%` }} />
+              </div>
+
+              {awaitingAssessor.length > 0 && (
+                <div className="text-xs space-y-1">
+                  <p className="font-medium flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-slate-600" />
+                    เจ้าหน้าที่ต้องเลือกผลประเมิน {awaitingAssessor.length} หัวข้อ
+                  </p>
+                  <ul className="list-disc list-inside text-muted-foreground space-y-0.5 ml-1">
+                    {awaitingAssessor.map(r => (
+                      <li key={r.topic.id}>
+                        {r.topic.topic} <span className="text-[11px]">— ยังไม่พบหลักฐานอัตโนมัติ ให้เลือกจาก dropdown ในหัวข้อนั้น</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {noEvidence.length > 0 && (
+                <div className="text-xs space-y-1">
+                  <p className="font-medium flex items-center gap-1.5">
+                    <Paperclip className="w-3.5 h-3.5 text-violet-600" />
+                    ยังไม่มีเอกสารเข้าเกณฑ์ {noEvidence.length} หัวข้อ (ได้ 0 คะแนน)
+                  </p>
+                  <ul className="list-disc list-inside text-muted-foreground space-y-0.5 ml-1">
+                    {noEvidence.map(r => <li key={r.topic.id}>{r.topic.topic}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {awaitingQuotation.length > 0 && (
+                <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                  <span>
+                    {awaitingQuotation.map(r => r.topic.topic).join(' และ ')} จะได้คะแนนอัตโนมัติเมื่อผู้ขายส่งใบเสนอราคาใน RFQ — ไม่ต้องทำอะไรที่หน้านี้
+                  </span>
+                </p>
+              )}
+
+              <p className="text-[11px] text-muted-foreground border-t pt-2">
+                หัวข้อที่ยังไม่ประเมินจะถูกตัดออกจากคะแนนเต็มชั่วคราว เกรดที่แสดงจึงเป็น "เกรดชั่วคราว" จนกว่าจะครบทุกหัวข้อ
+              </p>
+            </CardContent>
+          </Card>
+        )
+      )}
 
       {/* Mandatory qualification gate */}
       {hasMandatory && (
@@ -415,6 +497,16 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                         {isQuotation && (
                           <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-50 text-amber-700 border border-amber-200">
                             <Zap className="w-3 h-3" />Auto ตอน RFQ
+                          </Badge>
+                        )}
+                        {!portalMode && r.pending && !isQuotation && (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 bg-amber-100 text-amber-800">
+                            <UserCheck className="w-3 h-3" />รอเลือกผลประเมิน
+                          </Badge>
+                        )}
+                        {!portalMode && !r.pending && !isQuotation && r.matchedOptions.length === 0 && (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-red-300 bg-red-50 text-red-700">
+                            ยังไม่มีเอกสาร — 0 คะแนน
                           </Badge>
                         )}
                       </div>
@@ -508,9 +600,14 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
 
                       {/* Manual evaluation dropdown (staff only) */}
                       {hasManualChoice && !isQuotation && !portalMode && (
-                        <div className="mt-2 max-w-md">
+                        <div className="mt-2 max-w-md space-y-1">
+                          <Label className={`text-[11px] ${r.pending ? 'text-amber-700 font-medium' : 'text-muted-foreground'}`}>
+                            {r.pending
+                              ? '⚠ ต้องเลือกผลประเมินเพื่อให้หัวข้อนี้ถูกนับ'
+                              : 'ผลประเมินโดยเจ้าหน้าที่ (ถ้ามี)'}
+                          </Label>
                           <Select value={selected} onValueChange={v => pickManual(t.id, v)} disabled={!canEdit}>
-                            <SelectTrigger className="h-8 text-xs">
+                            <SelectTrigger className={`h-8 text-xs ${r.pending ? 'border-amber-400 ring-1 ring-amber-300' : ''}`}>
                               <SelectValue placeholder="เลือกผลประเมิน (Manual)" />
                             </SelectTrigger>
                             <SelectContent>

@@ -497,25 +497,39 @@ describe('evaluateBrc — manual evaluation', () => {
     expect(topicById(brc, 't-man').pending).toBe(true);
   });
 
-  // Documents current behaviour: ONE manual option makes the WHOLE topic pending
-  // until staff picks, so matched certificates in that topic are excluded from
-  // the grade entirely (pending topics drop out of assessedMax and the group).
-  it('marks a mixed evidence+manual topic pending even when a certificate matched', () => {
-    const mixed = mkTopic({ id: 't-mix', topic: 'Mixed', target_score: 10, scoring_mode: 'best_match' });
-    const opts = {
-      't-mix': [
-        mkOption({ id: 'x-cert', topic_id: 't-mix', label: 'GFSI', score: 10, match_keywords: ['gfsi'] }),
-        mkOption({ id: 'x-man', topic_id: 't-mix', label: 'Audit >75%', score: 5, match_type: 'manual', sort_order: 20 }),
-      ],
-    };
+  // A topic that merely offers a manual fallback must not be held pending once
+  // evidence has matched — otherwise the supplier's uploads score nothing.
+  const MIXED = mkTopic({ id: 't-mix', topic: 'Mixed', target_score: 10, scoring_mode: 'best_match' });
+  const MIXED_OPTS = {
+    't-mix': [
+      mkOption({ id: 'x-cert', topic_id: 't-mix', label: 'GFSI', score: 10, match_keywords: ['gfsi'] }),
+      mkOption({ id: 'x-man', topic_id: 't-mix', label: 'Audit >75%', score: 5, match_type: 'manual', sort_order: 20 }),
+    ],
+  };
+
+  it('counts a mixed evidence+manual topic as soon as a certificate matches', () => {
     const brc = evalWith({
-      topics: [mixed], optionsByTopic: opts,
+      topics: [MIXED], optionsByTopic: MIXED_OPTS,
       certs: [{ certificate_type: 'GFSI', expiry_date: futureDate() }],
     });
     const t = topicById(brc, 't-mix');
-    expect(t.score).toBe(10);          // the certificate did score
-    expect(t.pending).toBe(true);      // ...but the topic is still pending
-    expect(brc.assessedMax).toBe(0);   // ...so it contributes nothing to the grade
+    expect(t.score).toBe(10);
+    expect(t.pending).toBe(false);
+    expect(brc.assessedMax).toBe(10); // it contributes to the grade
+  });
+
+  it('keeps a mixed topic pending while nothing has matched at all', () => {
+    const brc = evalWith({ topics: [MIXED], optionsByTopic: MIXED_OPTS });
+    expect(topicById(brc, 't-mix').pending).toBe(true);
+    expect(brc.assessedMax).toBe(0);
+  });
+
+  it('lets a manual pick resolve a mixed topic with no evidence', () => {
+    const manual = { 't-mix': { supplier_id: 's1', topic_id: 't-mix', option_id: 'x-man', note: null } };
+    const brc = evalWith({ topics: [MIXED], optionsByTopic: MIXED_OPTS, manual });
+    const t = topicById(brc, 't-mix');
+    expect(t.pending).toBe(false);
+    expect(t.score).toBe(5);
   });
 });
 
