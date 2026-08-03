@@ -89,9 +89,11 @@ export function scoreQuotations(
 
     const ptScore = paymentTermScore(q.payment_term ?? q.payment_terms, q.credit_term_days);
 
-    const commercialScore = Math.round(
-      priceScore * 0.60 + leadScore * 0.30 + ptScore * 0.10
-    );
+    // The Commercial pillar scores PRICE only. Delivery (lead time) and credit
+    // term are scored by the BRCGS Competition criteria and reach the Final Score
+    // through the Risk pillar, so counting them here too would double-weight them.
+    // lead_time_score / payment_term_score stay on the result for display.
+    const commercialScore = priceScore;
 
     const specScore = q.spec_compliance_score ?? 0;
     const technicalScore = Math.round(specScore);

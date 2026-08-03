@@ -355,8 +355,8 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
               </div>
               <p className="text-[11px] text-muted-foreground mt-2">
                 {commercialExcluded
-                  ? 'เกรด BRCGS คิดจากเกณฑ์ความปลอดภัย/คุณภาพ 100% ตาม BRCGS Clause 3.5.1.3 — ราคา/การส่งมอบ/เครดิต ประเมินแยกที่ขั้นตอนเปรียบเทียบราคา (Commercial) ใน RFQ'
-                  : `เกรดคำนวณแบบถ่วงน้ำหนัก — ความปลอดภัย ${brc.safetyWeight}% / เชิงพาณิชย์ ${brc.commercialWeight}% · คะแนนถ่วงน้ำหนักรวม ${brc.percent}%`}
+                  ? 'เกรด BRCGS คิดจากเกณฑ์ความปลอดภัย/คุณภาพ 100% ตาม BRCGS Clause 3.5.1.3'
+                  : `เกรดคำนวณแบบถ่วงน้ำหนัก — ความปลอดภัย ${brc.safetyWeight}% / เชิงพาณิชย์ ${brc.commercialWeight}% (Delivery + Credit term จากใบเสนอราคา) · รวม ${brc.percent}% — ส่วน "ราคา" ประเมินแยกที่เสา Commercial ตอนเปรียบเทียบราคา`}
               </p>
             </>
           )}

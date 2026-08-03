@@ -849,11 +849,13 @@ export default function AdminSettingsPage() {
                 </p>
                 <div className="space-y-1 text-muted-foreground">
                   <p><b className="text-foreground">ชั้นที่ 1 — หน้านี้:</b> น้ำหนักตัดสินผู้ชนะ RFQ ว่าแต่ละด้านสำคัญแค่ไหน (Commercial / Technical / Risk)</p>
-                  <p><b className="text-foreground">ชั้นที่ 2 — หน้า "เกณฑ์ความเสี่ยง":</b> กำหนดว่า "เกรด BRCGS" (ที่ป้อนเข้าเสา Risk) คิดจากอะไร — ปัจจุบันตั้งเป็น <b className="text-teal-700">ความปลอดภัย/คุณภาพ 100%</b></p>
+                  <p><b className="text-foreground">ชั้นที่ 2 — หน้า "เกณฑ์ความเสี่ยง":</b> กำหนดว่า "เกรด BRCGS" (ที่ป้อนเข้าเสา Risk) คิดจากอะไร</p>
                 </div>
                 <div className="pt-1 border-t border-blue-200/60 text-muted-foreground">
-                  <p>• <b>ราคา/ส่งมอบ/เครดิต</b> → นับที่เสา <b>Commercial</b> เท่านั้น</p>
-                  <p>• <b>ความปลอดภัย/คุณภาพ</b> → นับที่เสา <b>Risk (BRCGS)</b> เท่านั้น</p>
+                  <p>• <b>ราคา</b> → นับที่เสา <b>Commercial</b> เท่านั้น</p>
+                  <p>• <b>Delivery + Credit term</b> → นับที่ <b>เกณฑ์ BRCGS</b> (เข้ามาทางเสา Risk)</p>
+                  <p>• <b>ความปลอดภัย/คุณภาพ</b> → นับที่ <b>เกณฑ์ BRCGS</b> เช่นกัน</p>
+                  <p>• <b>Technical</b> → เกณฑ์ทางเทคนิคที่นอกเหนือจาก BRCGS</p>
                   <p className="text-[11px] mt-0.5">แต่ละด้านถูกนับที่เดียว จึงไม่ทับซ้อน และสอดคล้อง BRCGS Clause 3.5.1.3</p>
                 </div>
               </div>

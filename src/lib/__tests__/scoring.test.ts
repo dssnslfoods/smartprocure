@@ -79,14 +79,31 @@ describe('scoreQuotations — commercial pillar', () => {
     expect(byId(rows, 'q1').lead_time_score).toBe(0);
   });
 
-  it('weights the commercial pillar 60/30/10', () => {
+  // Delivery and credit term are scored by the BRCGS Competition criteria and
+  // reach the Final Score through the Risk pillar, so the Commercial pillar
+  // carries price alone — counting them here too would double-weight them.
+  it('scores the commercial pillar on price alone', () => {
     const rows = scoreQuotations([mkQuote({
       id: 'q1', supplier_id: 's1', price: 100, lead_time_days: 10, payment_term: 'Net 30',
     })], LOW, W);
     const r = byId(rows, 'q1');
-    // 100×0.6 + 100×0.3 + 80×0.1
-    expect(r.commercial_score).toBe(Math.round(r.price_score * 0.6 + r.lead_time_score * 0.3 + r.payment_term_score * 0.1));
-    expect(r.commercial_score).toBe(98);
+    expect(r.commercial_score).toBe(r.price_score);
+    expect(r.commercial_score).toBe(100);
+  });
+
+  it('does not let lead time or credit term move the commercial score', () => {
+    const suppliers: Record<string, SupplierInput> = {
+      s1: { id: 's1', risk_level: 'low' },
+      s2: { id: 's2', risk_level: 'low' },
+    };
+    const rows = scoreQuotations([
+      mkQuote({ id: 'fast', supplier_id: 's1', price: 100, lead_time_days: 1, credit_term_days: 90 }),
+      mkQuote({ id: 'slow', supplier_id: 's2', price: 100, lead_time_days: 60, credit_term_days: 0 }),
+    ], suppliers, W);
+    expect(byId(rows, 'fast').commercial_score).toBe(byId(rows, 'slow').commercial_score);
+    // ...but both are still reported for display
+    expect(byId(rows, 'fast').lead_time_score).toBeGreaterThan(byId(rows, 'slow').lead_time_score);
+    expect(byId(rows, 'fast').payment_term_score).toBeGreaterThan(byId(rows, 'slow').payment_term_score);
   });
 });
 

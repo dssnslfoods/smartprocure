@@ -144,8 +144,8 @@ export default function QuotationBrcScorecard({ brc, ctx }: { brc: BrcAssessment
           {commercial.map(r => <TopicRow key={r.topic.id} r={r} />)}
           <p className="text-[10px] text-muted-foreground mt-1.5">
             {brc.commercialWeight === 0
-              ? 'หมวดนี้ให้คะแนนไว้เพื่อตรวจสอบ แต่ไม่นับในเกรด BRCGS — ราคา/ส่งมอบ/เครดิต ถูกคิดที่เสา Commercial ตอนเปรียบเทียบราคา จึงไม่นับซ้ำ'
-              : `หมวดนี้นับในเกรด BRCGS ตามน้ำหนักเชิงพาณิชย์ ${brc.commercialWeight}%`}
+              ? 'หมวดนี้ให้คะแนนไว้เพื่อตรวจสอบ แต่ไม่นับในเกรด BRCGS (น้ำหนักเชิงพาณิชย์ = 0%)'
+              : `หมวดนี้นับในเกรด BRCGS ตามน้ำหนักเชิงพาณิชย์ ${brc.commercialWeight}% — ส่วน "ราคา" ประเมินแยกที่เสา Commercial จึงไม่นับซ้ำ`}
           </p>
         </div>
       )}

@@ -187,6 +187,36 @@ export default function RiskCriteria() {
     setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false }); load(true);
   };
 
+  // Deleting a topic cascades to its options, manual scores and evidence rows,
+  // so the confirmation shows exactly what will be lost.
+  const [delTopic, setDelTopic] = useState<
+    { topic: BrcTopic; options: number; manual: number; evidence: number } | null
+  >(null);
+
+  const askDeleteTopic = async (t: BrcTopic) => {
+    const [m, e] = await Promise.all([
+      supabase.from('brc_manual_scores' as any).select('*', { count: 'exact', head: true }).eq('topic_id', t.id),
+      supabase.from('brc_evidence' as any).select('*', { count: 'exact', head: true }).eq('topic_id', t.id),
+    ]);
+    setDelTopic({
+      topic: t,
+      options: (optionsByTopic[t.id] || []).length,
+      manual: m.count ?? 0,
+      evidence: e.count ?? 0,
+    });
+  };
+
+  const doDeleteTopic = async () => {
+    if (!delTopic) return;
+    setSaving(true);
+    const { error } = await supabase.from('brc_topics' as any).delete().eq('id', delTopic.topic.id);
+    setSaving(false);
+    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'ลบหัวข้อแล้ว', description: `${delTopic.topic.topic} · อย่าลืมตรวจ "แก้ไขช่วงเกรด" เพราะคะแนนเต็มรวมเปลี่ยน` });
+    setDelTopic(null);
+    load(true);
+  };
+
   const openAddTopic = (st: string) => {
     setAddTopicType(st);
     setNewTopic({ section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual' });
@@ -511,6 +541,10 @@ export default function RiskCriteria() {
                                 <Plus className="w-3 h-3" />ตัวเลือก
                               </Button>
                               <Switch checked={t.active} onCheckedChange={v => toggleTopic(t, v)} />
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="ลบหัวข้อนี้"
+                                onClick={() => askDeleteTopic(t)}>
+                                <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -674,10 +708,12 @@ export default function RiskCriteria() {
               <div>
                 <Label>หมวด (Section) *</Label>
                 <Input list="brc-sections" value={newTopic.section}
-                  onChange={e => setNewTopic(p => ({ ...p, section: e.target.value }))} placeholder="เช่น Food Safety" />
+                  onChange={e => setNewTopic(p => ({ ...p, section: e.target.value }))}
+                  placeholder="พิมพ์ชื่อใหม่ หรือเลือกจากรายการ" />
                 <datalist id="brc-sections">
                   {Array.from(new Set(topics.filter(t => t.supplier_type === addTopicType).map(t => t.section))).map(s => <option key={s} value={s} />)}
                 </datalist>
+                <p className="text-[11px] text-muted-foreground mt-1">พิมพ์ชื่อหมวดใหม่ได้เลย — ระบบจะสร้างหมวดให้อัตโนมัติ</p>
               </div>
               <div>
                 <Label>ชื่อหัวข้อ *</Label>
@@ -728,6 +764,37 @@ export default function RiskCriteria() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm topic delete — shows the cascade impact */}
+      <AlertDialog open={!!delTopic} onOpenChange={v => !v && setDelTopic(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ลบหัวข้อ "{delTopic?.topic.topic}"?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>การลบนี้กู้คืนไม่ได้ และจะลบข้อมูลที่ผูกกับหัวข้อนี้ทั้งหมด:</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>ตัวเลือก/ระดับคะแนน <b>{delTopic?.options ?? 0}</b> รายการ</li>
+                  <li>ผลประเมินเอง (manual) ของ supplier <b>{delTopic?.manual ?? 0}</b> รายการ</li>
+                  <li>เอกสารที่แนบไว้ในหัวข้อนี้ <b>{delTopic?.evidence ?? 0}</b> ไฟล์ (ไฟล์ยังอยู่ใน storage แต่จะไม่ผูกกับเกณฑ์อีก)</li>
+                </ul>
+                {(delTopic?.manual ?? 0) + (delTopic?.evidence ?? 0) > 0 && (
+                  <p className="text-red-600 font-medium">
+                    ⚠️ มีข้อมูลการประเมินของ supplier ผูกอยู่ — หากต้องการเก็บประวัติไว้ ให้ใช้สวิตช์ปิดใช้งานแทนการลบ
+                  </p>
+                )}
+                <p className="text-amber-700">คะแนนเต็มรวมจะเปลี่ยน — ควรกด "แก้ไขช่วงเกรด" ปรับตามหลังลบ</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction disabled={saving} onClick={doDeleteTopic} className="bg-red-600 hover:bg-red-700">
+              {saving ? 'กำลังลบ...' : 'ยืนยันลบหัวข้อ'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit topic full mark + scoring mode */}
       <Dialog open={!!editTopic} onOpenChange={v => !v && setEditTopic(null)}>
