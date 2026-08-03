@@ -100,14 +100,14 @@ describe('scoreQuotations — credit term', () => {
       id: 'q1', supplier_id: 's1', payment_term: '2/10 Net 30', credit_term_days: null,
     })], LOW, W);
     expect(byId(withField, 'q1').payment_term_score).toBe(80);   // 30 days
-    expect(byId(withoutField, 'q1').payment_term_score).toBe(90); // mis-parsed as 2 days
+    expect(byId(withoutField, 'q1').payment_term_score).toBe(40); // mis-parsed as 2 days
   });
 
   it('treats an explicit 0 as a real value, not as missing', () => {
     const rows = scoreQuotations([mkQuote({
       id: 'q1', supplier_id: 's1', payment_term: 'COD', credit_term_days: 0,
     })], LOW, W);
-    expect(byId(rows, 'q1').payment_term_score).toBe(100);
+    expect(byId(rows, 'q1').payment_term_score).toBe(0); // no credit — worst
   });
 
   it('defaults to 30 days when no term is given at all', () => {
@@ -117,22 +117,29 @@ describe('scoreQuotations — credit term', () => {
     expect(byId(rows, 'q1').payment_term_score).toBe(80); // same as "Net 30"
   });
 
-  // ⚠️ SUSPECTED BUG — documents CURRENT behaviour, which looks inverted.
-  // For the buyer, a LONGER credit term is better (cash stays longer), and the
-  // BRCGS credit criterion agrees: ">= 30 days" scores 15, "< 30 days" 10,
-  // "no credit" 0. paymentTermScore in scoring.ts does the opposite: 0 days
-  // scores 100 and 120+ days scores 15. See scoring.ts:50-61.
-  it('CURRENT: scores shorter credit terms HIGHER (looks inverted)', () => {
+  // Longer credit is better for the buyer, matching the BRCGS credit criterion
+  // (">= 30 days" = 15, "< 30 days" = 10, "no credit" = 0).
+  it('scores longer credit terms higher', () => {
     const run = (credit_term_days: number) =>
       byId(scoreQuotations([mkQuote({ id: 'q1', supplier_id: 's1', credit_term_days })], LOW, W), 'q1').payment_term_score;
-    expect(run(0)).toBe(100);   // COD scores best
-    expect(run(15)).toBe(90);
-    expect(run(30)).toBe(80);
-    expect(run(45)).toBe(70);
-    expect(run(60)).toBe(60);
-    expect(run(90)).toBe(45);
-    expect(run(120)).toBe(30);
-    expect(run(180)).toBe(15);  // most generous credit scores worst
+    expect(run(0)).toBe(0);      // COD — no credit at all
+    expect(run(7)).toBe(40);
+    expect(run(14)).toBe(40);
+    expect(run(15)).toBe(60);
+    expect(run(29)).toBe(60);
+    expect(run(30)).toBe(80);    // meets the BRCGS benchmark
+    expect(run(45)).toBe(80);
+    expect(run(60)).toBe(90);
+    expect(run(90)).toBe(100);
+    expect(run(180)).toBe(100);  // most generous credit scores best
+  });
+
+  it('is monotonic — more credit never scores worse', () => {
+    const run = (credit_term_days: number) =>
+      byId(scoreQuotations([mkQuote({ id: 'q1', supplier_id: 's1', credit_term_days })], LOW, W), 'q1').payment_term_score;
+    const days = [0, 7, 14, 15, 29, 30, 45, 59, 60, 89, 90, 120, 365];
+    const scores = days.map(run);
+    expect(scores).toEqual([...scores].sort((a, b) => a - b));
   });
 });
 

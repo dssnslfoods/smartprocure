@@ -43,22 +43,24 @@ function effectivePrice(q: QuotationInput): number {
   return Math.max(0, base - (q.discount ?? 0));
 }
 
+/** Days of credit. Falls back to 30 (a typical term) when nothing is stated, so a
+ *  quotation with no captured term is neither rewarded nor punished. */
 function paymentTermDays(term: string | null | undefined): number {
   if (!term) return 30;
   const match = term.match(/\d+/);
   return match ? parseInt(match[0], 10) : 30;
 }
 
+/** Longer credit is better for the buyer — the same direction as the BRCGS credit
+ *  criterion (">= 30 days" scores best, "no credit term" scores zero). */
 function paymentTermScore(term: string | null | undefined, explicitDays?: number | null): number {
   const days = explicitDays ?? paymentTermDays(term);
-  if (days <= 0)   return 100;
-  if (days <= 15)  return 90;
-  if (days <= 30)  return 80;
-  if (days <= 45)  return 70;
-  if (days <= 60)  return 60;
-  if (days <= 90)  return 45;
-  if (days <= 120) return 30;
-  return 15;
+  if (days <= 0)  return 0;    // COD / prepaid — no credit at all
+  if (days < 15)  return 40;
+  if (days < 30)  return 60;   // below the 30-day benchmark
+  if (days < 60)  return 80;   // meets the benchmark
+  if (days < 90)  return 90;
+  return 100;                  // 90+ days
 }
 
 export function scoreQuotations(
