@@ -263,6 +263,8 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const shownTopics = commercialExcluded ? brc.topics.filter(r => r.topic.criterion_group !== 'commercial') : brc.topics;
   const sections = Array.from(new Set(shownTopics.map(r => r.topic.section)));
   const hasMandatory = shownTopics.some(r => r.options.some(o => o.is_mandatory));
+  // Portal shows document completeness instead of score/grade.
+  const docsCompleteCount = shownTopics.filter(r => r.matchedOptions.length > 0).length;
 
   const topicName = (id: string) => topics.find(t => t.id === id)?.topic || '';
   const expiredEvidence = evidence.filter(e => evidenceExpiry(e.expiry_date) === 'expired');
@@ -301,8 +303,8 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
         </div>
       )}
 
-      {/* Type + grade summary */}
-      <Card className={gs?.card || ''}>
+      {/* Type + (staff only) grade summary — the portal never shows score or grade */}
+      <Card className={portalMode ? '' : (gs?.card || '')}>
         <CardContent className="p-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="space-y-1.5 min-w-[260px]">
@@ -317,41 +319,61 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                 <p className="text-[11px] text-muted-foreground">อัปโหลดเอกสารประกอบในแต่ละข้อด้านล่าง — AI จะตรวจสอบความถูกต้องและวันหมดอายุให้อัตโนมัติ</p>
               )}
             </div>
-            <div className="flex items-center gap-4">
+
+            {portalMode ? (
+              /* Completeness only — no score, no grade */
               <div className="text-right">
-                <p className="text-xs text-muted-foreground">คะแนนรวม (ส่วนที่ประเมินได้)</p>
-                <p className="text-2xl font-bold tabular-nums">{brc.totalScore} <span className="text-sm text-muted-foreground font-normal">/ {brc.assessedMax}</span></p>
-                {brc.pendingCount > 0 && (
-                  <p className="text-[11px] text-amber-600">รอประเมิน {brc.pendingCount} หัวข้อ (Competition ประเมิน auto ตอน RFQ)</p>
+                <p className="text-xs text-muted-foreground">ความครบถ้วนของเอกสาร</p>
+                <p className="text-2xl font-bold tabular-nums">
+                  {docsCompleteCount} <span className="text-sm text-muted-foreground font-normal">/ {shownTopics.length} หัวข้อ</span>
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {docsCompleteCount >= shownTopics.length
+                    ? 'ส่งเอกสารครบทุกหัวข้อแล้ว'
+                    : `ยังขาดเอกสาร ${shownTopics.length - docsCompleteCount} หัวข้อ`}
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">คะแนนรวม (ส่วนที่ประเมินได้)</p>
+                  <p className="text-2xl font-bold tabular-nums">{brc.totalScore} <span className="text-sm text-muted-foreground font-normal">/ {brc.assessedMax}</span></p>
+                  {brc.pendingCount > 0 && (
+                    <p className="text-[11px] text-amber-600">รอประเมิน {brc.pendingCount} หัวข้อ (Competition ประเมิน auto ตอน RFQ)</p>
+                  )}
+                </div>
+                {brc.grade && (
+                  <div className="text-center">
+                    <span className={`inline-flex items-center justify-center w-14 h-14 rounded-full text-2xl font-bold ${gs?.badge}`}>{brc.grade}</span>
+                    <p className="text-[11px] text-muted-foreground mt-1 max-w-[140px]">{brc.gradeLabel?.split('/')[0]}</p>
+                  </div>
                 )}
               </div>
-              {brc.grade && (
-                <div className="text-center">
-                  <span className={`inline-flex items-center justify-center w-14 h-14 rounded-full text-2xl font-bold ${gs?.badge}`}>{brc.grade}</span>
-                  <p className="text-[11px] text-muted-foreground mt-1 max-w-[140px]">{brc.gradeLabel?.split('/')[0]}</p>
-                </div>
-              )}
-            </div>
+            )}
           </div>
 
-          {/* Group breakdown */}
-          <div className="mt-4 pt-3 border-t space-y-1">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium">ความปลอดภัย & คุณภาพ</span>
-              <span className="text-muted-foreground">น้ำหนัก {brc.safetyWeight}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div className="h-full bg-emerald-500" style={{ width: `${brc.safetyPercent ?? 0}%` }} />
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              {brc.safetyPercent == null ? 'ยังไม่มีข้อมูล (รอประเมิน)' : `ได้ ${brc.safetyPercent}% · ${brc.safetyScore}/${brc.safetyMax} คะแนน`}
-            </p>
-          </div>
-          <p className="text-[11px] text-muted-foreground mt-2">
-            {commercialExcluded
-              ? 'เกรด BRCGS คิดจากเกณฑ์ความปลอดภัย/คุณภาพ 100% ตาม BRCGS Clause 3.5.1.3 — ราคา/การส่งมอบ/เครดิต ประเมินแยกที่ขั้นตอนเปรียบเทียบราคา (Commercial) ใน RFQ'
-              : `เกรดคำนวณแบบถ่วงน้ำหนัก — ความปลอดภัย ${brc.safetyWeight}% / เชิงพาณิชย์ ${brc.commercialWeight}% · คะแนนถ่วงน้ำหนักรวม ${brc.percent}%`}
-          </p>
+          {/* Group breakdown + grading note — staff only */}
+          {!portalMode && (
+            <>
+              <div className="mt-4 pt-3 border-t space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium">ความปลอดภัย & คุณภาพ</span>
+                  <span className="text-muted-foreground">น้ำหนัก {brc.safetyWeight}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full bg-emerald-500" style={{ width: `${brc.safetyPercent ?? 0}%` }} />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {brc.safetyPercent == null ? 'ยังไม่มีข้อมูล (รอประเมิน)' : `ได้ ${brc.safetyPercent}% · ${brc.safetyScore}/${brc.safetyMax} คะแนน`}
+                </p>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                {commercialExcluded
+                  ? 'เกรด BRCGS คิดจากเกณฑ์ความปลอดภัย/คุณภาพ 100% ตาม BRCGS Clause 3.5.1.3 — ราคา/การส่งมอบ/เครดิต ประเมินแยกที่ขั้นตอนเปรียบเทียบราคา (Commercial) ใน RFQ'
+                  : `เกรดคำนวณแบบถ่วงน้ำหนัก — ความปลอดภัย ${brc.safetyWeight}% / เชิงพาณิชย์ ${brc.commercialWeight}% · คะแนนถ่วงน้ำหนักรวม ${brc.percent}%`}
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -395,9 +417,14 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="flex-1 min-w-[220px]">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {r.pending
-                          ? <CircleDashed className="w-4 h-4 text-amber-500 shrink-0" />
-                          : <CheckCircle2 className={`w-4 h-4 shrink-0 ${r.score >= r.maxScore ? 'text-green-600' : r.score > 0 ? 'text-blue-500' : 'text-red-400'}`} />}
+                        {portalMode
+                          /* Portal: submitted vs not — colour must not hint at the score */
+                          ? (r.matchedOptions.length > 0
+                              ? <CheckCircle2 className="w-4 h-4 shrink-0 text-green-600" />
+                              : <CircleDashed className="w-4 h-4 shrink-0 text-muted-foreground/50" />)
+                          : r.pending
+                            ? <CircleDashed className="w-4 h-4 text-amber-500 shrink-0" />
+                            : <CheckCircle2 className={`w-4 h-4 shrink-0 ${r.score >= r.maxScore ? 'text-green-600' : r.score > 0 ? 'text-blue-500' : 'text-red-400'}`} />}
                         <span className="font-medium text-sm">{t.topic}</span>
                         {isQuotation && (
                           <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-50 text-amber-700 border border-amber-200">
@@ -429,9 +456,9 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                   <span className={`text-xs ${met ? 'font-medium' : 'text-muted-foreground'}`}>{o.label}</span>
                                   {o.is_mandatory ? (
                                     <Badge variant="outline" className="text-[9px] gap-0.5 border-red-300 bg-red-50 text-red-700 py-0">
-                                      <AlertTriangle className="w-2.5 h-2.5" />บังคับ · ไม่คิดคะแนน
+                                      <AlertTriangle className="w-2.5 h-2.5" />{portalMode ? 'บังคับ' : 'บังคับ · ไม่คิดคะแนน'}
                                     </Badge>
-                                  ) : (
+                                  ) : !portalMode && (
                                     <span className="text-xs text-muted-foreground">(+{Number(o.score)})</span>
                                   )}
                                   {met && via && via !== 'manual' && via !== 'quotation' && (
@@ -512,9 +539,22 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                       )}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className={`text-lg font-bold tabular-nums ${r.pending ? 'text-amber-500' : r.score >= r.maxScore ? 'text-green-600' : r.score > 0 ? 'text-blue-600' : 'text-red-500'}`}>
-                        {r.pending ? '—' : r.score}<span className="text-xs text-muted-foreground font-normal">/{r.maxScore}</span>
-                      </p>
+                      {portalMode ? (
+                        /* Status only — the supplier never sees the score */
+                        r.matchedOptions.length > 0 ? (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-green-300 bg-green-50 text-green-700">
+                            <CheckCircle2 className="w-3 h-3" />ส่งแล้ว
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-amber-300 bg-amber-50 text-amber-700">
+                            <CircleDashed className="w-3 h-3" />ยังไม่ส่ง
+                          </Badge>
+                        )
+                      ) : (
+                        <p className={`text-lg font-bold tabular-nums ${r.pending ? 'text-amber-500' : r.score >= r.maxScore ? 'text-green-600' : r.score > 0 ? 'text-blue-600' : 'text-red-500'}`}>
+                          {r.pending ? '—' : r.score}<span className="text-xs text-muted-foreground font-normal">/{r.maxScore}</span>
+                        </p>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -524,7 +564,8 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
         </div>
       ))}
 
-      {/* Grade bands reference */}
+      {/* Grade bands reference — staff only */}
+      {!portalMode && (
       <Card>
         <CardContent className="p-4">
           <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Trophy className="w-3.5 h-3.5" />ช่วงคะแนนเกรด — {SUPPLIER_TYPE_LABEL[supplierType]}</p>
@@ -537,6 +578,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* AI verification dialog */}
       <Dialog open={verify !== null} onOpenChange={v => { if (!v && !verify?.saving) setVerify(null); }}>
