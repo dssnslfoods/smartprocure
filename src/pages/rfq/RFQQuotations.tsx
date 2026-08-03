@@ -11,6 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { computeTechnicalScore, type TechCriterion } from '@/lib/technicalScore';
+import { computeRfqBidRisk, type BidRiskResult } from '@/lib/bidRisk';
+import { parsePaymentTermDays } from '@/lib/brcScoring';
+import QuotationBrcScorecard from './QuotationBrcScorecard';
 import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2, Trash2, Eye, ExternalLink, ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -41,6 +44,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     supplier_id: '',
     currency: 'USD',
     payment_term: '',
+    credit_term_days: '',
     delivery_terms: '',
     validity_days: '30',
     lead_time_days: '',
@@ -77,6 +81,16 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
     setPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [scanFile]);
+
+  // BRCGS assessment per quoting supplier (procurement view only)
+  const [bidRisk, setBidRisk] = useState<BidRiskResult | null>(null);
+
+  // Net price / lead-time baselines used by the Competition scoring (mirrors bidRisk.ts)
+  const netOfQuote = (q: any) => Math.max(0, Number(q.price ?? q.total_amount ?? 0) - (Number(q.discount) || 0));
+  const netPricesAll = quotations.map(netOfQuote).filter(p => p > 0);
+  const minQuoteNet = netPricesAll.length ? Math.min(...netPricesAll) : 0;
+  const leadTimesAll = quotations.map(q => Number(q.lead_time_days) || 0).filter(d => d > 0);
+  const minQuoteLead = leadTimesAll.length ? Math.min(...leadTimesAll) : null;
 
   // Expand/view quotation state
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -155,6 +169,21 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       .then(({ data }) => setTechCriteria((data as TechCriterion[]) || []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rfqId, mySupplierId]);
+
+  // Evaluate every quoting supplier against the BRCGS standard using this RFQ's
+  // quotations (Competition topics are scored from price / lead time / credit).
+  const quotedIdsKey = quotations.map(q => `${q.supplier_id}:${q.id}`).join(',');
+  useEffect(() => {
+    if (isSupplier || quotations.length === 0) { setBidRisk(null); return; }
+    const ids = Array.from(new Set(quotations.map(q => q.supplier_id).filter(Boolean)));
+    if (ids.length === 0) { setBidRisk(null); return; }
+    let cancelled = false;
+    computeRfqBidRisk(rfqId, ids)
+      .then(r => { if (!cancelled) setBidRisk(r); })
+      .catch(() => { if (!cancelled) setBidRisk(null); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rfqId, quotedIdsKey, isSupplier]);
 
   const handleDecline = async () => {
     if (!mySupplierId) return;
@@ -276,6 +305,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
         discount: data.discount?.toString() || prev.discount,
         vat: data.vat?.toString() || prev.vat,
         payment_term: data.payment_term || prev.payment_term,
+        credit_term_days: data.credit_term_days != null ? String(data.credit_term_days) : prev.credit_term_days,
         delivery_terms: data.delivery_terms || prev.delivery_terms,
         warranty: data.warranty || prev.warranty,
         validity_days: data.validity_days?.toString() || prev.validity_days,
@@ -361,6 +391,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
       currency: form.currency,
       payment_terms: form.payment_term,
       payment_term: form.payment_term,
+      credit_term_days: form.credit_term_days !== '' ? parseInt(form.credit_term_days) : null,
       delivery_terms: form.delivery_terms,
       validity_days: parseInt(form.validity_days) || 30,
       lead_time_days: form.lead_time_days ? parseInt(form.lead_time_days) : null,
@@ -426,7 +457,7 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
 
     toast({ title: 'Quotation submitted' });
     setOpen(false);
-    setForm({ supplier_id: '', currency: 'USD', payment_term: '', delivery_terms: '', validity_days: '30', lead_time_days: '', warranty: '', discount: '0', vat: '0', spec_compliance_score: '', remark: '', notes: '' });
+    setForm({ supplier_id: '', currency: 'USD', payment_term: '', credit_term_days: '', delivery_terms: '', validity_days: '30', lead_time_days: '', warranty: '', discount: '0', vat: '0', spec_compliance_score: '', remark: '', notes: '' });
     setItemPrices({});
     setTechResp({});
     setScanFile(null);
@@ -680,6 +711,13 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                     <Label className="text-xs">Payment Term</Label>
                     <Input value={form.payment_term} onChange={e => setForm(p => ({ ...p, payment_term: e.target.value }))} placeholder="Net 30" />
                   </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">เครดิต (วัน) — ใช้คิดคะแนน</Label>
+                    <Input type="number" min="0" value={form.credit_term_days}
+                      onChange={e => setForm(p => ({ ...p, credit_term_days: e.target.value }))}
+                      placeholder="30 (0 = เงินสด/COD)" />
+                    <p className="text-[10px] text-muted-foreground">AI กรอกให้จากเอกสาร — ตรวจสอบและแก้ไขได้</p>
+                  </div>
                   {techCriteria.length === 0 && (
                     <div className="space-y-1">
                       <Label className="text-xs">Spec Compliance % (0–100)</Label>
@@ -882,6 +920,22 @@ export default function RFQQuotations({ rfqId, rfqItems }: Props) {
                       {q.warranty && <div><span className="text-muted-foreground">Warranty:</span> <span className="font-medium">{q.warranty}</span></div>}
                       {q.spec_compliance_score != null && <div><span className="text-muted-foreground">Spec:</span> <span className="font-medium">{q.spec_compliance_score}%</span></div>}
                     </div>
+
+                    {/* BRCGS scorecard for this quotation (procurement view) */}
+                    {!isSupplier && bidRisk?.bySupplier[q.supplier_id]?.brc && (
+                      <QuotationBrcScorecard
+                        brc={bidRisk.bySupplier[q.supplier_id].brc!}
+                        ctx={{
+                          netPrice: netOfQuote(q),
+                          minPrice: minQuoteNet,
+                          currency: q.currency || 'THB',
+                          leadTimeDays: Number(q.lead_time_days) || null,
+                          minLeadTimeDays: minQuoteLead,
+                          paymentTerm: q.payment_term || q.payment_terms || null,
+                          paymentTermDays: parsePaymentTermDays(q.payment_term ?? q.payment_terms),
+                        }}
+                      />
+                    )}
                     {q.remark && (
                       <div className="text-xs"><span className="text-muted-foreground">Remark:</span> {q.remark}</div>
                     )}

@@ -84,7 +84,7 @@ export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): P
     loadBrcStandard(),
     loadSupplierEvidence(ids),
     supabase.from('quotations')
-      .select('supplier_id, price, total_amount, discount, lead_time_days, payment_term, payment_terms')
+      .select('supplier_id, price, total_amount, discount, lead_time_days, payment_term, payment_terms, credit_term_days')
       .eq('rfq_id', rfqId),
   ]);
 
@@ -112,7 +112,9 @@ export async function computeRfqBidRisk(rfqId: string, supplierIds: string[]): P
       minPrice: minPrice || netOf(q),
       leadTimeDays: q.lead_time_days ?? null,
       minLeadTimeDays: minLead,
-      paymentTermDays: parsePaymentTermDays(q.payment_term ?? q.payment_terms),
+      // Prefer the explicit numeric credit term (AI-extracted / procurement-verified);
+      // fall back to parsing the free-text payment term.
+      paymentTermDays: q.credit_term_days ?? parsePaymentTermDays(q.payment_term ?? q.payment_terms),
     } : undefined;
 
     const supplierType = (evidence.typesBy[sid] as BrcSupplierType) || 'rm_primary_pk';

@@ -10,6 +10,8 @@ export interface QuotationInput {
   lead_time_days: number | null;
   payment_term: string | null;
   payment_terms: string | null;
+  /** Explicit numeric credit term (AI-extracted / procurement-verified). */
+  credit_term_days?: number | null;
   spec_compliance_score: number | null;
 }
 
@@ -47,8 +49,8 @@ function paymentTermDays(term: string | null | undefined): number {
   return match ? parseInt(match[0], 10) : 30;
 }
 
-function paymentTermScore(term: string | null | undefined): number {
-  const days = paymentTermDays(term);
+function paymentTermScore(term: string | null | undefined, explicitDays?: number | null): number {
+  const days = explicitDays ?? paymentTermDays(term);
   if (days <= 0)   return 100;
   if (days <= 15)  return 90;
   if (days <= 30)  return 80;
@@ -83,7 +85,7 @@ export function scoreQuotations(
     const ltd = q.lead_time_days ?? 0;
     const leadScore = ltd > 0 ? Math.min(100, Math.round((minLead / ltd) * 100)) : 0;
 
-    const ptScore = paymentTermScore(q.payment_term ?? q.payment_terms);
+    const ptScore = paymentTermScore(q.payment_term ?? q.payment_terms, q.credit_term_days);
 
     const commercialScore = Math.round(
       priceScore * 0.60 + leadScore * 0.30 + ptScore * 0.10
