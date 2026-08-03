@@ -533,16 +533,99 @@ export default function RiskCriteria() {
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); load(true); }
   };
 
+  /** Highest score a supplier can actually reach on a topic, ignoring mandatory
+   *  options (those are a gate and score nothing). */
+  const achievableMax = (t: BrcTopic, opts: BrcOption[]) => {
+    const scoring = opts.filter(o => !o.is_mandatory);
+    return t.scoring_mode === 'best_match'
+      ? scoring.reduce((m, o) => Math.max(m, Number(o.score)), 0)
+      : scoring.reduce((a, o) => a + Number(o.score), 0);
+  };
+
+  // Marking the top-scoring option mandatory makes a topic's full marks
+  // unreachable, so offer to rebalance it right away.
+  const [mandatoryFix, setMandatoryFix] = useState<null | {
+    topic: BrcTopic;
+    opts: BrcOption[];
+    rawMax: number;
+    target: number;
+    scaled: { id: string; label: string; from: number; to: number }[];
+  }>(null);
+
   const toggleMandatory = async (o: BrcOption) => {
     const next = !o.is_mandatory;
-    setOptions(prev => prev.map(x => x.id === o.id ? { ...x, is_mandatory: next } : x)); // optimistic, no reload
+    const optimistic = options.map(x => x.id === o.id ? { ...x, is_mandatory: next } : x);
+    setOptions(optimistic); // optimistic, no reload
     const { error } = await supabase.from('brc_options' as any).update({ is_mandatory: next }).eq('id', o.id);
     if (error) {
       setOptions(prev => prev.map(x => x.id === o.id ? { ...x, is_mandatory: o.is_mandatory } : x)); // revert
       toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
       return;
     }
+    const parent = topics.find(t => t.id === o.topic_id);
+    if (parent) {
+      await logCriteria('update_option', parent.supplier_type,
+        `${next ? 'ตั้ง' : 'ยกเลิก'}เอกสารบังคับ "${o.label}" ในหัวข้อ "${parent.topic}"`,
+        { option: o }, { is_mandatory: next });
+    }
     toast({ title: next ? 'ตั้งเป็นเอกสารบังคับแล้ว' : 'ยกเลิกบังคับแล้ว' });
+
+    // Does the topic still reach its full marks?
+    if (!parent) return;
+    const topicOpts = optimistic.filter(x => x.topic_id === parent.id);
+    const rawMax = achievableMax(parent, topicOpts);
+    const target = Number(parent.target_score);
+    const mismatch = parent.scoring_mode === 'best_match' ? rawMax !== target : rawMax < target;
+    if (!mismatch || rawMax <= 0) return;
+
+    const factor = target / rawMax;
+    const scaled = topicOpts
+      .filter(x => !x.is_mandatory && Number(x.score) > 0)
+      .map(x => ({ id: x.id, label: x.label, from: Number(x.score), to: Math.round(Number(x.score) * factor) }));
+    setMandatoryFix({ topic: parent, opts: topicOpts, rawMax, target, scaled });
+  };
+
+  /** Scale the remaining options so the best of them reaches the topic's marks. */
+  const applyScaleOptions = async () => {
+    if (!mandatoryFix) return;
+    setSaving(true);
+    try {
+      const before = mandatoryFix.opts.map(o => ({ ...o, score: Number(o.score) }));
+      const results = await Promise.all(mandatoryFix.scaled.map(s =>
+        supabase.from('brc_options' as any).update({ score: s.to }).eq('id', s.id)));
+      const failed = results.find((r: any) => r?.error);
+      if (failed?.error) throw failed.error;
+      await logCriteria('update_option', mandatoryFix.topic.supplier_type,
+        `ปรับคะแนนตัวเลือกในหัวข้อ "${mandatoryFix.topic.topic}" ให้ทำคะแนนเต็ม ${mandatoryFix.target} ได้`,
+        { options: before }, { scaled: mandatoryFix.scaled });
+      toast({ title: 'ปรับคะแนนตัวเลือกแล้ว' });
+      setMandatoryFix(null); load(true);
+    } catch (e: any) {
+      toast({ title: 'ปรับไม่สำเร็จ', description: e?.message ?? String(e), variant: 'destructive' });
+    } finally { setSaving(false); }
+  };
+
+  /** Lower the topic's marks to what is actually achievable. */
+  const applyLowerTarget = async () => {
+    if (!mandatoryFix) return;
+    setSaving(true);
+    try {
+      const st = mandatoryFix.topic.supplier_type;
+      const before = snapshotType(st);
+      const { error } = await supabase.from('brc_topics' as any)
+        .update({ target_score: mandatoryFix.rawMax }).eq('id', mandatoryFix.topic.id);
+      if (error) throw error;
+      await logCriteria('update_topic', st,
+        `ลดคะแนนเต็มหัวข้อ "${mandatoryFix.topic.topic}" จาก ${mandatoryFix.target} เป็น ${mandatoryFix.rawMax}`,
+        before, { target_score: mandatoryFix.rawMax });
+      toast({
+        title: 'ปรับคะแนนเต็มแล้ว',
+        description: 'คะแนนเต็มรวมของหมวดเปลี่ยน — ควรกด "แก้ไขช่วงเกรด" ปรับตาม',
+      });
+      setMandatoryFix(null); load(true);
+    } catch (e: any) {
+      toast({ title: 'ปรับไม่สำเร็จ', description: e?.message ?? String(e), variant: 'destructive' });
+    } finally { setSaving(false); }
   };
 
   // Edit topic full mark (target_score) + scoring mode
@@ -1043,6 +1126,78 @@ export default function RiskCriteria() {
               ถัดไป: ปรับคะแนน →
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Full marks became unreachable after a mandatory change — offer a fix */}
+      <Dialog open={!!mandatoryFix} onOpenChange={v => { if (!v && !saving) setMandatoryFix(null); }}>
+        <DialogContent className="max-w-lg">
+          {mandatoryFix && (() => {
+            const isBest = mandatoryFix.topic.scoring_mode === 'best_match';
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-base">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />คะแนนเต็มของหัวข้อนี้ทำไม่ถึงแล้ว
+                  </DialogTitle>
+                  <DialogDescription asChild>
+                    <div className="space-y-1">
+                      <p>
+                        หัวข้อ <b>{mandatoryFix.topic.topic}</b> ตั้งคะแนนเต็มไว้ <b>{mandatoryFix.target}</b> แต่
+                        {isBest ? ' คะแนนสูงสุดของตัวเลือกที่คิดคะแนน' : ' ผลรวมของตัวเลือกที่คิดคะแนน'} เหลือเพียง <b className="text-amber-700">{mandatoryFix.rawMax}</b>
+                      </p>
+                      <p className="text-[11px]">เพราะตัวเลือกที่ตั้งเป็น "บังคับ" เป็นด่านเข้า จึงไม่คิดคะแนน</p>
+                    </div>
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-3">
+                  {/* Option A — scale remaining options */}
+                  <div className="rounded-lg border border-teal-300 bg-teal-50/50 p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-teal-600 text-white text-[10px]">แนะนำ</Badge>
+                      <p className="text-sm font-medium">ปรับคะแนนตัวเลือกที่เหลือขึ้นให้ถึง {mandatoryFix.target}</p>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      คงน้ำหนักของหัวข้อไว้เท่าเดิม — คะแนนเต็มรวมของหมวดไม่เปลี่ยน จึงไม่ต้องแก้ช่วงเกรด
+                    </p>
+                    <div className="rounded-md border bg-background divide-y max-h-40 overflow-y-auto">
+                      {mandatoryFix.scaled.map(s => (
+                        <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1 text-xs">
+                          <span className="truncate flex-1">{s.label}</span>
+                          <span className="tabular-nums shrink-0">
+                            <span className="text-muted-foreground">{s.from}</span>
+                            <span className="mx-1">→</span>
+                            <b className="text-teal-700">{s.to}</b>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <Button size="sm" className="w-full h-8" disabled={saving} onClick={applyScaleOptions}>
+                      {saving ? 'กำลังปรับ...' : 'ใช้วิธีนี้'}
+                    </Button>
+                  </div>
+
+                  {/* Option B — lower the topic target */}
+                  <div className="rounded-lg border p-3 space-y-2">
+                    <p className="text-sm font-medium">ลดคะแนนเต็มของหัวข้อเป็น {mandatoryFix.rawMax}</p>
+                    <p className="text-[11px] text-amber-700">
+                      ⚠️ คะแนนเต็มรวมของหมวดจะเปลี่ยน ({mandatoryFix.target} → {mandatoryFix.rawMax}) ต้องกด "แก้ไขช่วงเกรด" ปรับตาม
+                    </p>
+                    <Button size="sm" variant="outline" className="w-full h-8" disabled={saving} onClick={applyLowerTarget}>
+                      ใช้วิธีนี้
+                    </Button>
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button variant="ghost" size="sm" disabled={saving} onClick={() => setMandatoryFix(null)}>
+                    ไว้ก่อน (ปล่อยให้ทำคะแนนเต็มไม่ได้)
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
