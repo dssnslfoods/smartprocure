@@ -165,6 +165,12 @@ export default function RiskCriteria() {
     }).eq('id', editOpt.id);
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    const parent = topics.find(t => t.id === editOpt.topic_id);
+    if (parent) {
+      await logCriteria('update_option', parent.supplier_type,
+        `แก้ไขตัวเลือก "${editOpt.label}" ในหัวข้อ "${parent.topic}"`,
+        { option: editOpt }, { label: optForm.label, score: Number(optForm.score) || 0 });
+    }
     toast({ title: 'บันทึกแล้ว' });
     setEditOpt(null); load(true);
   };
@@ -172,7 +178,7 @@ export default function RiskCriteria() {
   const saveNewOpt = async () => {
     if (!addTopic || !addForm.label.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from('brc_options' as any).insert({
+    const { data, error } = await supabase.from('brc_options' as any).insert({
       topic_id: addTopic.id,
       label: addForm.label.trim(),
       score: Number(addForm.score) || 0,
@@ -180,9 +186,15 @@ export default function RiskCriteria() {
       match_keywords: addForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
       is_mandatory: addForm.is_mandatory,
       sort_order: ((optionsByTopic[addTopic.id] || []).length + 1) * 10,
-    });
+    }).select('id').single();
     setSaving(false);
     if (error) { toast({ title: 'เพิ่มไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    const parent = topics.find(t => t.id === addTopic.id);
+    if (parent) {
+      await logCriteria('add_option', parent.supplier_type,
+        `เพิ่มตัวเลือก "${addForm.label.trim()}" ในหัวข้อ "${parent.topic}"`,
+        null, { created_option_id: (data as any)?.id ?? null });
+    }
     toast({ title: 'เพิ่มตัวเลือกแล้ว' });
     setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false }); load(true);
   };
@@ -206,20 +218,149 @@ export default function RiskCriteria() {
     });
   };
 
+  // ── Criteria audit log ────────────────────────────────────────────────────
+  const [critLog, setCritLog] = useState<any[]>([]);
+  const [critLogOpen, setCritLogOpen] = useState(false);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
+
+  const loadCritLog = async () => {
+    const { data } = await supabase.from('brc_criteria_audit' as any)
+      .select('*').order('changed_at', { ascending: false }).limit(100);
+    setCritLog((data as any[]) || []);
+    setCritLogOpen(true);
+  };
+
+  const logCriteria = (
+    action: string, st: string, summary: string,
+    before: unknown, after: unknown,
+  ) => supabase.from('brc_criteria_audit' as any).insert({
+    supplier_type: st, action, summary,
+    before_state: before as any, after_state: after as any,
+    changed_by: user?.id ?? null, changed_by_email: profile?.email ?? null,
+  });
+
+  /** Snapshot every topic + band of a supplier type (what a rebalance can touch). */
+  const snapshotType = (st: string) => ({
+    topics: topics.filter(t => t.supplier_type === st)
+      .map(t => ({ ...t, target_score: Number(t.target_score) })),
+    bands: bands.filter(b => b.supplier_type === st)
+      .map(b => ({ grade: b.grade, min_score: b.min_score, max_score: b.max_score })),
+  });
+
+  const rollbackCriteria = async (entry: any) => {
+    setRollingBack(entry.id);
+    try {
+      const before = entry.before_state || {};
+      const st = entry.supplier_type;
+
+      if (entry.action === 'add_topic') {
+        // Undo = remove the topic that was created.
+        const createdId = entry.after_state?.created_topic_id;
+        if (createdId) {
+          const { error } = await supabase.from('brc_topics' as any).delete().eq('id', createdId);
+          if (error) throw error;
+        }
+      }
+
+      if (entry.action === 'delete_topic' || entry.action === 'delete_option') {
+        // Undo = put the removed rows back, original ids included.
+        if (before.topic) {
+          const { error } = await supabase.from('brc_topics' as any).insert(before.topic);
+          if (error) throw error;
+        }
+        if (before.options?.length) {
+          const { error } = await supabase.from('brc_options' as any).insert(before.options);
+          if (error) throw error;
+        }
+        if (before.manual_scores?.length) {
+          await supabase.from('brc_manual_scores' as any).insert(before.manual_scores);
+        }
+        if (before.evidence?.length) {
+          await supabase.from('brc_evidence' as any).insert(before.evidence);
+        }
+      }
+
+      if (entry.action === 'add_option') {
+        const createdId = entry.after_state?.created_option_id;
+        if (createdId) {
+          const { error } = await supabase.from('brc_options' as any).delete().eq('id', createdId);
+          if (error) throw error;
+        }
+      }
+
+      if (entry.action === 'update_option' && before.option) {
+        const { id, ...rest } = before.option;
+        const { error } = await supabase.from('brc_options' as any).update(rest).eq('id', id);
+        if (error) throw error;
+      }
+
+      // Restore the marks and bands captured at the time of the change.
+      if (before.topics?.length) {
+        await Promise.all(before.topics.map((t: any) =>
+          supabase.from('brc_topics' as any)
+            .update({ target_score: t.target_score, active: t.active }).eq('id', t.id)));
+      }
+      if (before.bands?.length) {
+        await Promise.all(before.bands.map((b: any) =>
+          supabase.from('brc_grade_bands' as any)
+            .update({ min_score: b.min_score, max_score: b.max_score })
+            .eq('supplier_type', st).eq('grade', b.grade)));
+      }
+
+      await supabase.from('brc_criteria_audit' as any)
+        .update({ rolled_back_at: new Date().toISOString(), rolled_back_by: user?.id ?? null })
+        .eq('id', entry.id);
+
+      toast({ title: 'ย้อนกลับสำเร็จ', description: entry.summary });
+      await load(true);
+      const { data } = await supabase.from('brc_criteria_audit' as any)
+        .select('*').order('changed_at', { ascending: false }).limit(100);
+      setCritLog((data as any[]) || []);
+    } catch (e: any) {
+      toast({ title: 'ย้อนกลับไม่สำเร็จ', description: e?.message ?? String(e), variant: 'destructive' });
+    } finally {
+      setRollingBack(null);
+    }
+  };
+
   // ── Rebalance step ────────────────────────────────────────────────────────
   // Adding or removing a topic changes the total available marks, which would
   // silently invalidate the A/B/C/D bands. Both actions therefore route through a
   // mandatory step where the marks and the bands are reviewed together, and only
   // then is anything written.
   type RebalanceRow = { id: string; topic: string; section: string; target: number; isNew?: boolean };
+  type BandDraft = Record<string, { min: number; max: number }>;
   const [rebalance, setRebalance] = useState<null | {
     mode: 'add' | 'delete';
     st: string;
     rows: RebalanceRow[];
-    bandDraft: Record<string, { min: number; max: number }>;
+    bandDraft: BandDraft;
+    /** Original bands + total, so repeated suggestions never drift. */
+    baseBands: BandDraft;
+    baseTotal: number;
+    /** While true the bands follow the marks automatically; a manual edit stops it. */
+    bandsAuto: boolean;
     pending?: typeof newTopic;
     deleteId?: string;
   }>(null);
+
+  /** Rescale the grade bands onto a new total, keeping the original proportions
+   *  and leaving them contiguous from 0 to the total. */
+  const suggestBands = (base: BandDraft, baseTotal: number, newTotal: number): BandDraft => {
+    const order = ['D', 'C', 'B', 'A'].filter(g => base[g]);
+    const out: BandDraft = {};
+    let prevMax = -1;
+    order.forEach((g, i) => {
+      const isLast = i === order.length - 1;
+      const scaled = isLast
+        ? newTotal
+        : Math.round((base[g].max / Math.max(baseTotal, 1)) * newTotal);
+      const min = prevMax + 1;
+      out[g] = { min, max: Math.max(min, Math.min(scaled, newTotal)) };
+      prevMax = out[g].max;
+    });
+    return out;
+  };
 
   const buildRebalance = (st: string, opts: { addPending?: typeof newTopic; removeId?: string }) => {
     const rows: RebalanceRow[] = topics
@@ -234,63 +375,87 @@ export default function RiskCriteria() {
         target: Number(opts.addPending.target_score) || 0,
       });
     }
-    const bd: Record<string, { min: number; max: number }> = {};
-    bands.filter(b => b.supplier_type === st).forEach(b => { bd[b.grade] = { min: b.min_score, max: b.max_score }; });
-    return { rows, bandDraft: bd };
+    const base: BandDraft = {};
+    bands.filter(b => b.supplier_type === st).forEach(b => { base[b.grade] = { min: b.min_score, max: b.max_score }; });
+    // The scale the existing bands were written against.
+    const baseTotal = topics
+      .filter(t => t.supplier_type === st && t.active)
+      .reduce((a, t) => a + Number(t.target_score), 0);
+    const newTotal = rows.reduce((a, r) => a + (r.target || 0), 0);
+    return { rows, base, baseTotal, bandDraft: suggestBands(base, baseTotal, newTotal) };
   };
 
   const startAddRebalance = () => {
     if (!addTopicType || !newTopic.section.trim() || !newTopic.topic.trim()) {
       toast({ title: 'กรุณาระบุหมวดและชื่อหัวข้อ', variant: 'destructive' }); return;
     }
-    const { rows, bandDraft } = buildRebalance(addTopicType, { addPending: newTopic });
-    setRebalance({ mode: 'add', st: addTopicType, rows, bandDraft, pending: { ...newTopic } });
+    const { rows, bandDraft, base, baseTotal } = buildRebalance(addTopicType, { addPending: newTopic });
+    setRebalance({ mode: 'add', st: addTopicType, rows, bandDraft, baseBands: base, baseTotal, bandsAuto: true, pending: { ...newTopic } });
   };
 
   const startDeleteRebalance = () => {
     if (!delTopic) return;
     const st = delTopic.topic.supplier_type;
-    const { rows, bandDraft } = buildRebalance(st, { removeId: delTopic.topic.id });
-    setRebalance({ mode: 'delete', st, rows, bandDraft, deleteId: delTopic.topic.id });
+    const { rows, bandDraft, base, baseTotal } = buildRebalance(st, { removeId: delTopic.topic.id });
+    setRebalance({ mode: 'delete', st, rows, bandDraft, baseBands: base, baseTotal, bandsAuto: true, deleteId: delTopic.topic.id });
   };
 
+  /** Editing marks re-suggests the bands, unless the user has taken them over. */
   const setRebalanceTarget = (id: string, target: number) =>
-    setRebalance(p => p ? { ...p, rows: p.rows.map(r => r.id === id ? { ...r, target } : r) } : p);
-  const setRebalanceBand = (grade: string, key: 'min' | 'max', v: number) =>
-    setRebalance(p => p ? { ...p, bandDraft: { ...p.bandDraft, [grade]: { ...p.bandDraft[grade], [key]: v } } } : p);
-
-  /** Scale the bands proportionally onto the new total, keeping them contiguous. */
-  const autoScaleBands = () => {
     setRebalance(p => {
       if (!p) return p;
-      const total = p.rows.reduce((a, r) => a + (r.target || 0), 0);
-      const oldTotal = Math.max(...Object.values(p.bandDraft).map(b => b.max), 1);
-      const order = ['D', 'C', 'B', 'A'].filter(g => p.bandDraft[g]);
-      const next: Record<string, { min: number; max: number }> = {};
-      let prevMax = -1;
-      order.forEach((g, i) => {
-        const isLast = i === order.length - 1;
-        const scaledMax = isLast ? total : Math.round((p.bandDraft[g].max / oldTotal) * total);
-        next[g] = { min: prevMax + 1, max: Math.max(prevMax + 1, scaledMax) };
-        prevMax = next[g].max;
-      });
-      return { ...p, bandDraft: next };
+      const rows = p.rows.map(r => r.id === id ? { ...r, target } : r);
+      if (!p.bandsAuto) return { ...p, rows };
+      const newTotal = rows.reduce((a, r) => a + (r.target || 0), 0);
+      return { ...p, rows, bandDraft: suggestBands(p.baseBands, p.baseTotal, newTotal) };
     });
-  };
+
+  const setRebalanceBand = (grade: string, key: 'min' | 'max', v: number) =>
+    setRebalance(p => p ? {
+      ...p,
+      bandsAuto: false, // manual edit wins from here on
+      bandDraft: { ...p.bandDraft, [grade]: { ...p.bandDraft[grade], [key]: v } },
+    } : p);
+
+  /** Re-apply the automatic suggestion after a manual edit. */
+  const autoScaleBands = () =>
+    setRebalance(p => {
+      if (!p) return p;
+      const newTotal = p.rows.reduce((a, r) => a + (r.target || 0), 0);
+      return { ...p, bandsAuto: true, bandDraft: suggestBands(p.baseBands, p.baseTotal, newTotal) };
+    });
 
   const commitRebalance = async () => {
     if (!rebalance) return;
     const { mode, st, rows, bandDraft, pending, deleteId } = rebalance;
     setSaving(true);
     try {
+      // Snapshot everything this change can touch, so it can be rolled back.
+      const before: any = snapshotType(st);
+      let createdTopicId: string | null = null;
+      let summary = '';
+
       if (mode === 'delete' && deleteId) {
+        const doomed = topics.find(t => t.id === deleteId)!;
+        // Capture the topic and every row that will cascade with it.
+        const [optRes, manRes, evRes] = await Promise.all([
+          supabase.from('brc_options' as any).select('*').eq('topic_id', deleteId),
+          supabase.from('brc_manual_scores' as any).select('*').eq('topic_id', deleteId),
+          supabase.from('brc_evidence' as any).select('*').eq('topic_id', deleteId),
+        ]);
+        before.topic = { ...doomed, target_score: Number(doomed.target_score) };
+        before.options = optRes.data ?? [];
+        before.manual_scores = manRes.data ?? [];
+        before.evidence = evRes.data ?? [];
+        summary = `ลบหัวข้อ "${doomed.topic}" (${doomed.section})`;
+
         const { error } = await supabase.from('brc_topics' as any).delete().eq('id', deleteId);
         if (error) throw error;
       }
       if (mode === 'add' && pending) {
         const maxOrder = topics.filter(t => t.supplier_type === st).reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
         const newRow = rows.find(r => r.isNew)!;
-        const { error } = await supabase.from('brc_topics' as any).insert({
+        const { data, error } = await supabase.from('brc_topics' as any).insert({
           supplier_type: st,
           section: pending.section.trim(),
           topic: pending.topic.trim(),
@@ -301,8 +466,10 @@ export default function RiskCriteria() {
           criterion_group: pending.criterion_group,
           sort_order: maxOrder + 10,
           active: true,
-        });
+        }).select('id').single();
         if (error) throw error;
+        createdTopicId = (data as any)?.id ?? null;
+        summary = `เพิ่มหัวข้อ "${pending.topic.trim()}" (${pending.section.trim()}) — ${newRow.target} คะแนน`;
       }
       // Persist any changed marks on the surviving topics, then the bands.
       const ops: any[] = [];
@@ -321,9 +488,18 @@ export default function RiskCriteria() {
       const failed = results.find((r: any) => r?.error);
       if (failed?.error) throw failed.error;
 
+      const newTotal = rows.reduce((a, r) => a + (r.target || 0), 0);
+      await logCriteria(
+        mode === 'add' ? 'add_topic' : 'delete_topic',
+        st,
+        `${summary} · คะแนนเต็มรวมใหม่ ${newTotal}`,
+        before,
+        { created_topic_id: createdTopicId, total: newTotal, bands: bandDraft },
+      );
+
       toast({
         title: mode === 'add' ? 'เพิ่มหัวข้อและปรับคะแนนแล้ว' : 'ลบหัวข้อและปรับคะแนนแล้ว',
-        description: `คะแนนเต็มรวม ${rows.reduce((a, r) => a + (r.target || 0), 0)} · ช่วงเกรดอัปเดตแล้ว`,
+        description: `คะแนนเต็มรวม ${newTotal} · ช่วงเกรดอัปเดตแล้ว · ย้อนกลับได้ที่ปุ่ม "ประวัติเกณฑ์"`,
       });
       setRebalance(null); setAddTopicType(null); setDelTopic(null);
       load(true);
@@ -339,8 +515,15 @@ export default function RiskCriteria() {
     setNewTopic({ section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual' });
   };
   const removeOpt = async (id: string) => {
+    const opt = options.find(o => o.id === id);
+    const topic = opt ? topics.find(t => t.id === opt.topic_id) : undefined;
     const { error } = await supabase.from('brc_options' as any).delete().eq('id', id);
     if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    if (opt && topic) {
+      await logCriteria('delete_option', topic.supplier_type,
+        `ลบตัวเลือก "${opt.label}" จากหัวข้อ "${topic.topic}"`,
+        { options: [opt] }, null);
+    }
     toast({ title: 'ลบแล้ว' }); load(true);
   };
 
@@ -488,7 +671,10 @@ export default function RiskCriteria() {
                 </Button>
               )}
               <Button size="sm" variant="ghost" className="h-8" onClick={loadAudit}>
-                <History className="w-3.5 h-3.5 mr-1" />ประวัติ
+                <History className="w-3.5 h-3.5 mr-1" />ประวัติน้ำหนัก
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8" onClick={loadCritLog}>
+                <History className="w-3.5 h-3.5 mr-1" />ประวัติเกณฑ์
               </Button>
             </div>
           </div>
@@ -860,6 +1046,59 @@ export default function RiskCriteria() {
         </DialogContent>
       </Dialog>
 
+      {/* Criteria change log + rollback */}
+      <Dialog open={critLogOpen} onOpenChange={setCritLogOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><History className="w-5 h-5" />ประวัติการแก้ไขเกณฑ์</DialogTitle>
+            <DialogDescription>
+              บันทึกการเพิ่ม/ลบหมวด หัวข้อ และตัวเลือก พร้อมย้อนกลับได้ — การย้อนกลับจะคืนคะแนน ช่วงเกรด และข้อมูลที่ถูกลบไปพร้อมกัน
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 -mx-6 px-6">
+            {critLog.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">ยังไม่มีประวัติการแก้ไข</p>
+            ) : (
+              <div className="space-y-2">
+                {critLog.map(e => (
+                  <div key={e.id} className={`rounded-lg border p-3 ${e.rolled_back_at ? 'opacity-60 bg-muted/30' : ''}`}>
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div className="flex-1 min-w-[240px]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge variant="outline" className={`text-[10px] ${
+                            e.action.startsWith('delete') ? 'border-red-300 bg-red-50 text-red-700'
+                            : e.action.startsWith('add') ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                            : 'border-blue-300 bg-blue-50 text-blue-700'
+                          }`}>
+                            {e.action.startsWith('delete') ? 'ลบ' : e.action.startsWith('add') ? 'เพิ่ม' : 'แก้ไข'}
+                          </Badge>
+                          <span className="text-sm font-medium">{e.summary}</span>
+                          {e.rolled_back_at && (
+                            <Badge variant="secondary" className="text-[10px]">ย้อนกลับแล้ว</Badge>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          {SUPPLIER_TYPE_LABEL[e.supplier_type as BrcSupplierType]?.split('(')[0].trim() || e.supplier_type}
+                          {' · '}{e.changed_by_email || '—'}
+                          {' · '}{new Date(e.changed_at).toLocaleString('th-TH')}
+                        </p>
+                      </div>
+                      {canEdit && !e.rolled_back_at && (
+                        <Button variant="outline" size="sm" className="h-7 text-xs shrink-0"
+                          disabled={rollingBack !== null}
+                          onClick={() => rollbackCriteria(e)}>
+                          {rollingBack === e.id ? 'กำลังย้อนกลับ...' : '↩ ย้อนกลับ'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Mandatory rebalance step after adding / removing a topic */}
       <Dialog open={!!rebalance} onOpenChange={v => { if (!v && !saving) setRebalance(null); }}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
@@ -925,12 +1164,24 @@ export default function RiskCriteria() {
 
                 {/* Grade bands */}
                 <div className="space-y-1.5 border-t pt-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-semibold">ช่วงเกรด (ต้องครอบคลุม 0–{total})</Label>
-                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={autoScaleBands}>
-                      ปรับอัตโนมัติตามสัดส่วนเดิม
-                    </Button>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <Label className="text-xs font-semibold">
+                      ช่วงเกรด (0–{total})
+                      {rebalance.bandsAuto
+                        ? <Badge variant="outline" className="ml-1.5 text-[9px] border-teal-300 bg-teal-50 text-teal-700">แนะนำอัตโนมัติ</Badge>
+                        : <Badge variant="outline" className="ml-1.5 text-[9px] border-amber-300 bg-amber-50 text-amber-700">แก้ไขเอง</Badge>}
+                    </Label>
+                    {!rebalance.bandsAuto && (
+                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={autoScaleBands}>
+                        กลับไปใช้ค่าแนะนำ
+                      </Button>
+                    )}
                   </div>
+                  {rebalance.bandsAuto && (
+                    <p className="text-[11px] text-muted-foreground">
+                      ระบบคำนวณให้ตามสัดส่วนเดิม (จากคะแนนเต็ม {rebalance.baseTotal} → {total}) — แก้ไขเองได้
+                    </p>
+                  )}
                   {grades.map(g => (
                     <div key={g} className="flex items-center gap-2">
                       <Badge variant="outline" className={`${GRADE_COLOR[g]} w-8 justify-center`}>{g}</Badge>
