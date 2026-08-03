@@ -16,6 +16,9 @@ import {
   SUPPLIER_TYPES, SUPPLIER_TYPE_LABEL, BRC_SAFETY_MIN_DEFAULT, BRC_SAFETY_RECOMMENDED,
   type BrcTopic, type BrcOption, type BrcGradeBand, type BrcSupplierType, type BrcCategoryWeight,
 } from '@/lib/brcScoring';
+import {
+  achievableMax, needsRebalance, buildScaleSuggestion, suggestBands, type BandDraft,
+} from '@/lib/brcRebalance';
 
 const GRADE_COLOR: Record<string, string> = {
   A: 'bg-green-100 text-green-800 border-green-300',
@@ -329,7 +332,6 @@ export default function RiskCriteria() {
   // mandatory step where the marks and the bands are reviewed together, and only
   // then is anything written.
   type RebalanceRow = { id: string; topic: string; section: string; target: number; isNew?: boolean };
-  type BandDraft = Record<string, { min: number; max: number }>;
   const [rebalance, setRebalance] = useState<null | {
     mode: 'add' | 'delete';
     st: string;
@@ -344,23 +346,6 @@ export default function RiskCriteria() {
     deleteId?: string;
   }>(null);
 
-  /** Rescale the grade bands onto a new total, keeping the original proportions
-   *  and leaving them contiguous from 0 to the total. */
-  const suggestBands = (base: BandDraft, baseTotal: number, newTotal: number): BandDraft => {
-    const order = ['D', 'C', 'B', 'A'].filter(g => base[g]);
-    const out: BandDraft = {};
-    let prevMax = -1;
-    order.forEach((g, i) => {
-      const isLast = i === order.length - 1;
-      const scaled = isLast
-        ? newTotal
-        : Math.round((base[g].max / Math.max(baseTotal, 1)) * newTotal);
-      const min = prevMax + 1;
-      out[g] = { min, max: Math.max(min, Math.min(scaled, newTotal)) };
-      prevMax = out[g].max;
-    });
-    return out;
-  };
 
   const buildRebalance = (st: string, opts: { addPending?: typeof newTopic; removeId?: string }) => {
     const rows: RebalanceRow[] = topics
@@ -533,14 +518,8 @@ export default function RiskCriteria() {
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); load(true); }
   };
 
-  /** Highest score a supplier can actually reach on a topic, ignoring mandatory
-   *  options (those are a gate and score nothing). */
-  const achievableMax = (t: BrcTopic, opts: BrcOption[]) => {
-    const scoring = opts.filter(o => !o.is_mandatory);
-    return t.scoring_mode === 'best_match'
-      ? scoring.reduce((m, o) => Math.max(m, Number(o.score)), 0)
-      : scoring.reduce((a, o) => a + Number(o.score), 0);
-  };
+  const toScoreOptions = (opts: BrcOption[]) =>
+    opts.map(o => ({ id: o.id, label: o.label, score: Number(o.score), is_mandatory: o.is_mandatory }));
 
   // Marking the top-scoring option mandatory makes a topic's full marks
   // unreachable, so offer to rebalance it right away.
@@ -549,7 +528,7 @@ export default function RiskCriteria() {
     opts: BrcOption[];
     rawMax: number;
     target: number;
-    scaled: { id: string; label: string; from: number; to: number }[];
+    scaled: { id: string; label: string; from: number; to: number; changed: boolean }[];
   }>(null);
 
   const toggleMandatory = async (o: BrcOption) => {
@@ -573,15 +552,13 @@ export default function RiskCriteria() {
     // Does the topic still reach its full marks?
     if (!parent) return;
     const topicOpts = optimistic.filter(x => x.topic_id === parent.id);
-    const rawMax = achievableMax(parent, topicOpts);
+    const scoreOpts = toScoreOptions(topicOpts);
+    const rawMax = achievableMax(parent.scoring_mode, scoreOpts);
     const target = Number(parent.target_score);
-    const mismatch = parent.scoring_mode === 'best_match' ? rawMax !== target : rawMax < target;
-    if (!mismatch || rawMax <= 0) return;
+    if (!needsRebalance(parent.scoring_mode, target, rawMax)) return;
 
-    const factor = target / rawMax;
-    const scaled = topicOpts
-      .filter(x => !x.is_mandatory && Number(x.score) > 0)
-      .map(x => ({ id: x.id, label: x.label, from: Number(x.score), to: Math.round(Number(x.score) * factor) }));
+    const scaled = buildScaleSuggestion(parent.scoring_mode, target, scoreOpts, rawMax);
+    if (!scaled.some(s => s.changed)) return; // nothing meaningful to change
     setMandatoryFix({ topic: parent, opts: topicOpts, rawMax, target, scaled });
   };
 
@@ -591,7 +568,7 @@ export default function RiskCriteria() {
     setSaving(true);
     try {
       const before = mandatoryFix.opts.map(o => ({ ...o, score: Number(o.score) }));
-      const results = await Promise.all(mandatoryFix.scaled.map(s =>
+      const results = await Promise.all(mandatoryFix.scaled.filter(s => s.changed).map(s =>
         supabase.from('brc_options' as any).update({ score: s.to }).eq('id', s.id)));
       const failed = results.find((r: any) => r?.error);
       if (failed?.error) throw failed.error;
@@ -1161,18 +1138,27 @@ export default function RiskCriteria() {
                     <p className="text-[11px] text-muted-foreground">
                       คงน้ำหนักของหัวข้อไว้เท่าเดิม — คะแนนเต็มรวมของหมวดไม่เปลี่ยน จึงไม่ต้องแก้ช่วงเกรด
                     </p>
-                    <div className="rounded-md border bg-background divide-y max-h-40 overflow-y-auto">
+                    <div className="rounded-md border bg-background divide-y max-h-44 overflow-y-auto">
                       {mandatoryFix.scaled.map(s => (
-                        <div key={s.id} className="flex items-center justify-between gap-2 px-2.5 py-1 text-xs">
+                        <div key={s.id} className={`flex items-center justify-between gap-2 px-2.5 py-1 text-xs ${s.changed ? '' : 'opacity-60'}`}>
                           <span className="truncate flex-1">{s.label}</span>
                           <span className="tabular-nums shrink-0">
-                            <span className="text-muted-foreground">{s.from}</span>
-                            <span className="mx-1">→</span>
-                            <b className="text-teal-700">{s.to}</b>
+                            {s.changed ? (
+                              <>
+                                <span className="text-muted-foreground">{s.from}</span>
+                                <span className="mx-1">→</span>
+                                <b className="text-teal-700">{s.to}</b>
+                              </>
+                            ) : (
+                              <span className="text-muted-foreground">{s.to} (เท่าเดิม)</span>
+                            )}
                           </span>
                         </div>
                       ))}
                     </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      ตัวเลือกที่คะแนนเท่ากันอยู่แล้วจะยังเท่ากัน · ตัวเลือกที่คะแนนต่างกันจะไม่ถูกปรับมาชนกัน · ข้อที่ได้ 0 คะแนนไม่ถูกแตะ
+                    </p>
                     <Button size="sm" className="w-full h-8" disabled={saving} onClick={applyScaleOptions}>
                       {saving ? 'กำลังปรับ...' : 'ใช้วิธีนี้'}
                     </Button>
