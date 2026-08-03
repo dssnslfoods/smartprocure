@@ -206,45 +206,138 @@ export default function RiskCriteria() {
     });
   };
 
-  const doDeleteTopic = async () => {
+  // ── Rebalance step ────────────────────────────────────────────────────────
+  // Adding or removing a topic changes the total available marks, which would
+  // silently invalidate the A/B/C/D bands. Both actions therefore route through a
+  // mandatory step where the marks and the bands are reviewed together, and only
+  // then is anything written.
+  type RebalanceRow = { id: string; topic: string; section: string; target: number; isNew?: boolean };
+  const [rebalance, setRebalance] = useState<null | {
+    mode: 'add' | 'delete';
+    st: string;
+    rows: RebalanceRow[];
+    bandDraft: Record<string, { min: number; max: number }>;
+    pending?: typeof newTopic;
+    deleteId?: string;
+  }>(null);
+
+  const buildRebalance = (st: string, opts: { addPending?: typeof newTopic; removeId?: string }) => {
+    const rows: RebalanceRow[] = topics
+      .filter(t => t.supplier_type === st && t.active && t.id !== opts.removeId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(t => ({ id: t.id, topic: t.topic, section: t.section, target: Number(t.target_score) }));
+    if (opts.addPending) {
+      rows.push({
+        id: '__new__', isNew: true,
+        topic: opts.addPending.topic.trim(),
+        section: opts.addPending.section.trim(),
+        target: Number(opts.addPending.target_score) || 0,
+      });
+    }
+    const bd: Record<string, { min: number; max: number }> = {};
+    bands.filter(b => b.supplier_type === st).forEach(b => { bd[b.grade] = { min: b.min_score, max: b.max_score }; });
+    return { rows, bandDraft: bd };
+  };
+
+  const startAddRebalance = () => {
+    if (!addTopicType || !newTopic.section.trim() || !newTopic.topic.trim()) {
+      toast({ title: 'กรุณาระบุหมวดและชื่อหัวข้อ', variant: 'destructive' }); return;
+    }
+    const { rows, bandDraft } = buildRebalance(addTopicType, { addPending: newTopic });
+    setRebalance({ mode: 'add', st: addTopicType, rows, bandDraft, pending: { ...newTopic } });
+  };
+
+  const startDeleteRebalance = () => {
     if (!delTopic) return;
+    const st = delTopic.topic.supplier_type;
+    const { rows, bandDraft } = buildRebalance(st, { removeId: delTopic.topic.id });
+    setRebalance({ mode: 'delete', st, rows, bandDraft, deleteId: delTopic.topic.id });
+  };
+
+  const setRebalanceTarget = (id: string, target: number) =>
+    setRebalance(p => p ? { ...p, rows: p.rows.map(r => r.id === id ? { ...r, target } : r) } : p);
+  const setRebalanceBand = (grade: string, key: 'min' | 'max', v: number) =>
+    setRebalance(p => p ? { ...p, bandDraft: { ...p.bandDraft, [grade]: { ...p.bandDraft[grade], [key]: v } } } : p);
+
+  /** Scale the bands proportionally onto the new total, keeping them contiguous. */
+  const autoScaleBands = () => {
+    setRebalance(p => {
+      if (!p) return p;
+      const total = p.rows.reduce((a, r) => a + (r.target || 0), 0);
+      const oldTotal = Math.max(...Object.values(p.bandDraft).map(b => b.max), 1);
+      const order = ['D', 'C', 'B', 'A'].filter(g => p.bandDraft[g]);
+      const next: Record<string, { min: number; max: number }> = {};
+      let prevMax = -1;
+      order.forEach((g, i) => {
+        const isLast = i === order.length - 1;
+        const scaledMax = isLast ? total : Math.round((p.bandDraft[g].max / oldTotal) * total);
+        next[g] = { min: prevMax + 1, max: Math.max(prevMax + 1, scaledMax) };
+        prevMax = next[g].max;
+      });
+      return { ...p, bandDraft: next };
+    });
+  };
+
+  const commitRebalance = async () => {
+    if (!rebalance) return;
+    const { mode, st, rows, bandDraft, pending, deleteId } = rebalance;
     setSaving(true);
-    const { error } = await supabase.from('brc_topics' as any).delete().eq('id', delTopic.topic.id);
-    setSaving(false);
-    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'ลบหัวข้อแล้ว', description: `${delTopic.topic.topic} · อย่าลืมตรวจ "แก้ไขช่วงเกรด" เพราะคะแนนเต็มรวมเปลี่ยน` });
-    setDelTopic(null);
-    load(true);
+    try {
+      if (mode === 'delete' && deleteId) {
+        const { error } = await supabase.from('brc_topics' as any).delete().eq('id', deleteId);
+        if (error) throw error;
+      }
+      if (mode === 'add' && pending) {
+        const maxOrder = topics.filter(t => t.supplier_type === st).reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
+        const newRow = rows.find(r => r.isNew)!;
+        const { error } = await supabase.from('brc_topics' as any).insert({
+          supplier_type: st,
+          section: pending.section.trim(),
+          topic: pending.topic.trim(),
+          target_score: newRow.target,
+          scoring_mode: pending.scoring_mode,
+          auto_source: pending.auto_source,
+          quotation_field: null,
+          criterion_group: pending.criterion_group,
+          sort_order: maxOrder + 10,
+          active: true,
+        });
+        if (error) throw error;
+      }
+      // Persist any changed marks on the surviving topics, then the bands.
+      const ops: any[] = [];
+      rows.filter(r => !r.isNew).forEach(r => {
+        const orig = topics.find(t => t.id === r.id);
+        if (orig && Number(orig.target_score) !== r.target) {
+          ops.push(supabase.from('brc_topics' as any).update({ target_score: r.target }).eq('id', r.id));
+        }
+      });
+      Object.entries(bandDraft).forEach(([grade, v]) => {
+        ops.push(supabase.from('brc_grade_bands' as any)
+          .update({ min_score: v.min, max_score: v.max })
+          .eq('supplier_type', st).eq('grade', grade));
+      });
+      const results = await Promise.all(ops);
+      const failed = results.find((r: any) => r?.error);
+      if (failed?.error) throw failed.error;
+
+      toast({
+        title: mode === 'add' ? 'เพิ่มหัวข้อและปรับคะแนนแล้ว' : 'ลบหัวข้อและปรับคะแนนแล้ว',
+        description: `คะแนนเต็มรวม ${rows.reduce((a, r) => a + (r.target || 0), 0)} · ช่วงเกรดอัปเดตแล้ว`,
+      });
+      setRebalance(null); setAddTopicType(null); setDelTopic(null);
+      load(true);
+    } catch (e: any) {
+      toast({ title: 'บันทึกไม่สำเร็จ', description: e?.message ?? String(e), variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openAddTopic = (st: string) => {
     setAddTopicType(st);
     setNewTopic({ section: '', topic: '', target_score: 10, scoring_mode: 'best_match', criterion_group: 'safety_quality', auto_source: 'manual' });
   };
-  const saveNewTopic = async () => {
-    if (!addTopicType || !newTopic.section.trim() || !newTopic.topic.trim()) {
-      toast({ title: 'กรุณาระบุหมวดและชื่อหัวข้อ', variant: 'destructive' }); return;
-    }
-    setSaving(true);
-    const maxOrder = topics.filter(t => t.supplier_type === addTopicType).reduce((m, t) => Math.max(m, t.sort_order || 0), 0);
-    const { error } = await supabase.from('brc_topics' as any).insert({
-      supplier_type: addTopicType,
-      section: newTopic.section.trim(),
-      topic: newTopic.topic.trim(),
-      target_score: Number(newTopic.target_score) || 0,
-      scoring_mode: newTopic.scoring_mode,
-      auto_source: newTopic.auto_source,
-      quotation_field: null,
-      criterion_group: newTopic.criterion_group,
-      sort_order: maxOrder + 10,
-      active: true,
-    });
-    setSaving(false);
-    if (error) { toast({ title: 'เพิ่มหัวข้อไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'เพิ่มหัวข้อแล้ว', description: 'เพิ่มตัวเลือก/ระดับคะแนนได้ที่ปุ่ม "+ ตัวเลือก" ของหัวข้อ' });
-    setAddTopicType(null); load(true);
-  };
-
   const removeOpt = async (id: string) => {
     const { error } = await supabase.from('brc_options' as any).delete().eq('id', id);
     if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
@@ -755,13 +848,118 @@ export default function RiskCriteria() {
             </div>
             <p className="text-[11px] text-muted-foreground">
               💡 สร้างหัวข้อแบบ 3 ระดับ (15/10/0): เลือก "เลือกคะแนนสูงสุด" แล้วเพิ่มตัวเลือก 3 ระดับที่ปุ่ม "+ ตัวเลือก" ของหัวข้อ ·
-              <b className="text-amber-700"> การเพิ่มหัวข้อทำให้คะแนนเต็มรวมเปลี่ยน — ควรกด "แก้ไขช่วงเกรด" ปรับตามด้วย</b>
+              <b className="text-teal-700"> ขั้นถัดไปจะให้ปรับคะแนนรายหัวข้อและช่วงเกรดให้สอดคล้องกันก่อนบันทึก</b>
             </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddTopicType(null)}>ยกเลิก</Button>
-            <Button onClick={saveNewTopic} disabled={saving || !newTopic.section.trim() || !newTopic.topic.trim()}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่มหัวข้อ'}</Button>
+            <Button onClick={startAddRebalance} disabled={saving || !newTopic.section.trim() || !newTopic.topic.trim()}>
+              ถัดไป: ปรับคะแนน →
+            </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mandatory rebalance step after adding / removing a topic */}
+      <Dialog open={!!rebalance} onOpenChange={v => { if (!v && !saving) setRebalance(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {rebalance && (() => {
+            const total = rebalance.rows.reduce((a, r) => a + (r.target || 0), 0);
+            const grades = ['A', 'B', 'C', 'D'].filter(g => rebalance.bandDraft[g]);
+            const bandErrors: string[] = [];
+            grades.forEach(g => {
+              const b = rebalance.bandDraft[g];
+              if (b.min > b.max) bandErrors.push(`เกรด ${g}: ค่าต่ำสุดมากกว่าค่าสูงสุด`);
+            });
+            const topBand = rebalance.bandDraft['A'];
+            if (topBand && topBand.max !== total) bandErrors.push(`เกรด A ต้องสูงสุดที่ ${total} (คะแนนเต็มรวม)`);
+            // contiguity check, best → worst
+            const asc = ['D', 'C', 'B', 'A'].filter(g => rebalance.bandDraft[g]);
+            for (let i = 1; i < asc.length; i++) {
+              const prev = rebalance.bandDraft[asc[i - 1]], cur = rebalance.bandDraft[asc[i]];
+              if (cur.min !== prev.max + 1) bandErrors.push(`ช่วงเกรด ${asc[i - 1]} → ${asc[i]} ไม่ต่อเนื่องกัน`);
+            }
+            const blocked = bandErrors.length > 0 || total <= 0;
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>
+                    {rebalance.mode === 'add' ? 'ปรับคะแนนก่อนเพิ่มหัวข้อ' : 'ปรับคะแนนก่อนลบหัวข้อ'}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {SUPPLIER_TYPE_LABEL[rebalance.st as BrcSupplierType]} — คะแนนเต็มรวมเปลี่ยน จึงต้องตรวจคะแนนรายหัวข้อและช่วงเกรดให้สอดคล้องกันก่อนบันทึก
+                  </DialogDescription>
+                </DialogHeader>
+
+                {/* Marks per topic */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold">
+                      คะแนนเต็มรายหัวข้อ
+                      {rebalance.mode === 'add' && <span className="font-normal text-muted-foreground"> — ใส่คะแนนของหัวข้อใหม่ และปรับหัวข้ออื่นได้ตามต้องการ</span>}
+                    </Label>
+                    <span className="text-xs text-muted-foreground">
+                      รวม <b className="text-foreground tabular-nums">{total}</b> คะแนน
+                    </span>
+                  </div>
+                  <div className="border rounded-md divide-y max-h-60 overflow-y-auto">
+                    {rebalance.rows.map(r => (
+                      <div key={r.id} className={`flex items-center gap-2 px-3 py-1.5 ${r.isNew ? 'bg-emerald-50' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium truncate">
+                            {r.topic}
+                            {r.isNew && <Badge variant="outline" className="ml-1.5 text-[9px] border-emerald-300 bg-emerald-100 text-emerald-700">ใหม่</Badge>}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">{r.section}</p>
+                        </div>
+                        <Input type="number" min={0} value={r.target} autoFocus={r.isNew}
+                          className={`h-8 w-20 text-right ${r.isNew ? 'border-emerald-400 ring-1 ring-emerald-300' : ''}`}
+                          onChange={e => setRebalanceTarget(r.id, parseInt(e.target.value) || 0)} />
+                      </div>
+                    ))}
+                  </div>
+                  {rebalance.mode === 'delete' && (
+                    <p className="text-[11px] text-red-600">หัวข้อที่จะลบถูกนำออกจากรายการนี้แล้ว</p>
+                  )}
+                </div>
+
+                {/* Grade bands */}
+                <div className="space-y-1.5 border-t pt-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold">ช่วงเกรด (ต้องครอบคลุม 0–{total})</Label>
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={autoScaleBands}>
+                      ปรับอัตโนมัติตามสัดส่วนเดิม
+                    </Button>
+                  </div>
+                  {grades.map(g => (
+                    <div key={g} className="flex items-center gap-2">
+                      <Badge variant="outline" className={`${GRADE_COLOR[g]} w-8 justify-center`}>{g}</Badge>
+                      <Input type="number" className="h-8" value={rebalance.bandDraft[g].min}
+                        onChange={e => setRebalanceBand(g, 'min', parseInt(e.target.value) || 0)} />
+                      <span className="text-muted-foreground">–</span>
+                      <Input type="number" className="h-8" value={rebalance.bandDraft[g].max}
+                        onChange={e => setRebalanceBand(g, 'max', parseInt(e.target.value) || 0)} />
+                    </div>
+                  ))}
+                  {bandErrors.length > 0 ? (
+                    <div className="rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700 space-y-0.5">
+                      {bandErrors.map((e, i) => <p key={i}>• {e}</p>)}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-emerald-700">✓ ช่วงเกรดต่อเนื่องและครอบคลุมคะแนนเต็มพอดี</p>
+                  )}
+                </div>
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setRebalance(null)} disabled={saving}>ย้อนกลับ</Button>
+                  <Button onClick={commitRebalance} disabled={saving || blocked}
+                    className={rebalance.mode === 'delete' ? 'bg-red-600 hover:bg-red-700' : ''}>
+                    {saving ? 'กำลังบันทึก...' : rebalance.mode === 'add' ? 'ยืนยันเพิ่มหัวข้อ' : 'ยืนยันลบหัวข้อ'}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -783,14 +981,14 @@ export default function RiskCriteria() {
                     ⚠️ มีข้อมูลการประเมินของ supplier ผูกอยู่ — หากต้องการเก็บประวัติไว้ ให้ใช้สวิตช์ปิดใช้งานแทนการลบ
                   </p>
                 )}
-                <p className="text-amber-700">คะแนนเต็มรวมจะเปลี่ยน — ควรกด "แก้ไขช่วงเกรด" ปรับตามหลังลบ</p>
+                <p className="text-teal-700">ขั้นถัดไปจะให้ปรับคะแนนรายหัวข้อและช่วงเกรดให้สอดคล้องกันก่อนลบจริง</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={saving}>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction disabled={saving} onClick={doDeleteTopic} className="bg-red-600 hover:bg-red-700">
-              {saving ? 'กำลังลบ...' : 'ยืนยันลบหัวข้อ'}
+            <AlertDialogAction disabled={saving} onClick={startDeleteRebalance} className="bg-red-600 hover:bg-red-700">
+              ถัดไป: ปรับคะแนน →
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -809,6 +1007,22 @@ export default function RiskCriteria() {
               <Input type="number" min={0} value={topicForm.target_score}
                 onChange={e => setTopicForm(p => ({ ...p, target_score: parseInt(e.target.value) || 0 }))} />
               <p className="text-[11px] text-muted-foreground mt-1">คะแนนสูงสุดที่หัวข้อนี้ทำได้ (เพดานของ "บวกสะสม")</p>
+              {editTopic && (() => {
+                const others = topics
+                  .filter(t => t.supplier_type === editTopic.supplier_type && t.active && t.id !== editTopic.id)
+                  .reduce((a, t) => a + Number(t.target_score), 0);
+                const newTotal = others + (Number(topicForm.target_score) || 0);
+                const topBand = bands.find(b => b.supplier_type === editTopic.supplier_type && b.grade === 'A');
+                const mismatch = topBand && topBand.max !== newTotal;
+                return (
+                  <p className={`text-[11px] mt-1 ${mismatch ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    คะแนนเต็มรวมใหม่ = <b>{newTotal}</b>
+                    {mismatch
+                      ? ` — ไม่ตรงกับเกรด A สูงสุด (${topBand!.max}) ควรกด "แก้ไขช่วงเกรด" ปรับตาม`
+                      : ' — ตรงกับช่วงเกรดปัจจุบัน'}
+                  </p>
+                );
+              })()}
             </div>
             <div>
               <Label>วิธีรวมคะแนน</Label>
