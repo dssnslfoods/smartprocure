@@ -6,6 +6,7 @@
 //   - any mandatory criterion unmet  => 10 (highest risk)
 //   - no active criteria             => null (not assessed; never gates a catalog)
 import { RISK_FACTORS } from '@/types/procurement';
+import { isExpired } from '@/lib/dateUtils';
 
 export type RiskDimension = typeof RISK_FACTORS[number]['key'];
 export type CatalogCategory = 'raw_material' | 'packaging' | 'service' | 'other';
@@ -40,14 +41,6 @@ export interface DimensionResult {
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
-
-function isExpired(expiry: string | null): boolean {
-  if (!expiry) return false;          // no expiry recorded ⇒ treat as valid
-  const d = new Date(expiry);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return d < today;
-}
 
 /** True when the supplier satisfies a single criterion. */
 export function isCriterionMet(c: RiskCriterion, certs: SupplierCert[], docs: SupplierDoc[]): boolean {
@@ -100,8 +93,14 @@ export function computeDimensionRisks(
         return { ...c, met };
       });
 
-    const ratio = totalWeight > 0 ? metWeight / totalWeight : 1;
-    const score = mandatoryUnmet ? 10 : Math.round((1 - ratio) * 10);
+    // With no weight there is nothing to measure — report "not assessed" (null)
+    // rather than a perfect 0, which would read as zero risk. An unmet mandatory
+    // criterion still forces the maximum risk regardless of weight.
+    const score = mandatoryUnmet
+      ? 10
+      : totalWeight > 0
+        ? Math.round((1 - metWeight / totalWeight) * 10)
+        : null;
     out[dimension] = { dimension: dimension as RiskDimension, score, metWeight, totalWeight, mandatoryUnmet, criteria };
   }
   return out;

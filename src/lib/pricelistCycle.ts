@@ -41,6 +41,11 @@ export function assessCycle(lastSubmissionISO: string | null, cycleDays: number)
     return { status: 'never', lastAt: null, nextDueAt: null, daysSince: null, daysRemaining: null };
   }
   const last = new Date(lastSubmissionISO);
+  // An unreadable timestamp is not evidence of a submission — report it as
+  // "never" rather than letting NaN comparisons fall through to "fresh".
+  if (Number.isNaN(last.getTime())) {
+    return { status: 'never', lastAt: null, nextDueAt: null, daysSince: null, daysRemaining: null };
+  }
   const now  = new Date();
   const ms   = 24 * 3600 * 1000;
   const daysSince = Math.floor((now.getTime() - last.getTime()) / ms);

@@ -18,10 +18,7 @@ import { Plus, FileText, Building2, XCircle, Upload, Sparkles, Loader2, Trash2, 
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 
-function safeStorageName(fileName: string): string {
-  const ext = fileName.split('.').pop() || 'bin';
-  return `${crypto.randomUUID()}.${ext}`;
-}
+import { randomStorageName as safeStorageName } from '@/lib/storage';
 
 interface Props {
   rfqId: string;

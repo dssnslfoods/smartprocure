@@ -1,4 +1,5 @@
 import type { EligibilityResult, RiskLevel, SupplierType } from '@/types/procurement';
+import { expiryStatus } from '@/lib/dateUtils';
 
 export function checkSupplierEligibility(supplier: {
   supplier_type?: SupplierType | null;
@@ -38,20 +39,19 @@ export function checkSupplierEligibility(supplier: {
   }
 
   if (supplier.certificate_expiry_date) {
-    const expiry = new Date(supplier.certificate_expiry_date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (expiry < today) {
+    // Same 30-day, inclusive boundary as docExpiryStatus so a certificate never
+    // reads as fine on one screen and expiring on another.
+    const certStatus = expiryStatus(supplier.certificate_expiry_date, 30);
+    if (certStatus === 'expired') {
       reasons.push('Certificate has expired. An exception approval is required before award.');
       canAward = false;
       if (status === 'eligible') status = 'warning';
-    } else {
-      const thirtyDays = new Date(today);
-      thirtyDays.setDate(thirtyDays.getDate() + 30);
-      if (expiry < thirtyDays) {
-        reasons.push('Certificate expires within 30 days.');
-        if (status === 'eligible') status = 'warning';
-      }
+    } else if (certStatus === 'expiring') {
+      reasons.push('Certificate expires within 30 days.');
+      if (status === 'eligible') status = 'warning';
+    } else if (certStatus === 'invalid') {
+      reasons.push('Certificate expiry date is unreadable and must be corrected.');
+      if (status === 'eligible') status = 'warning';
     }
   }
 

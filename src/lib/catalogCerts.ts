@@ -5,6 +5,7 @@
 // This layers on top of the BRCGS supplier-category gate (see brcScoring.ts).
 import { supabase } from '@/integrations/supabase/client';
 import { loadSupplierEvidence } from '@/lib/brcScoring';
+import { isExpired } from '@/lib/dateUtils';
 
 export interface CatalogCertRequirement {
   id: string;
@@ -35,12 +36,6 @@ export async function loadBrcCertOptions(): Promise<CertOption[]> {
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
-function isExpired(expiry: string | null): boolean {
-  if (!expiry) return false;
-  const d = new Date(expiry); d.setHours(0, 0, 0, 0);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  return d < today;
-}
 
 /** Load requirements for a catalog + optionally its items. */
 export async function loadCatalogRequirements(priceListId: string): Promise<{

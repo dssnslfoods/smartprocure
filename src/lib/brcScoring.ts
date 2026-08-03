@@ -7,6 +7,7 @@
 // scoring_mode 'best_match' picks the highest-scoring matched option;
 // 'additive' sums every matched option (capped at target_score).
 import { supabase } from '@/integrations/supabase/client';
+import { isExpired } from '@/lib/dateUtils';
 import type { RiskLevel } from '@/types/procurement';
 
 export type BrcSupplierType =
@@ -146,13 +147,8 @@ export interface BrcAssessment {
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
 
-function isExpired(expiry: string | null): boolean {
-  if (!expiry) return false;
-  const d = new Date(expiry);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return d < today;
-}
+// Expiry handling lives in dateUtils so every module treats a bare `yyyy-mm-dd`
+// the same way (parsed as LOCAL midnight, not UTC).
 
 /** Returns matched evidence name, or null. */
 function matchEvidence(opt: BrcOption, certs: SupplierCert[], docs: SupplierDoc[]): string | null {

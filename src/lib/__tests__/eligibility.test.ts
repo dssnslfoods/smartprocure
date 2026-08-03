@@ -210,11 +210,12 @@ describe('checkSupplierEligibility', () => {
       expect(r.reasons).toEqual(['Certificate expires within 30 days.']);
     });
 
-    it('does NOT warn for a certificate expiring exactly in 30 days (strict <)', () => {
-      // Boundary: `expiry < thirtyDays` is false when expiry is midnight of day+30.
+    it('warns for a certificate expiring exactly in 30 days (inclusive boundary)', () => {
+      // Matches docExpiryStatus so the same certificate never reads as fine on one
+      // screen and expiring on another.
       const r = checkSupplierEligibility({ certificate_expiry_date: isoDaysFromNow(30) });
-      expect(r.status).toBe('eligible');
-      expect(r.reasons).toEqual([]);
+      expect(r.status).toBe('warning');
+      expect(r.reasons).toContain('Certificate expires within 30 days.');
     });
 
     it('does not warn for a certificate expiring in 31+ days', () => {
@@ -224,26 +225,21 @@ describe('checkSupplierEligibility', () => {
       expect(r.canAward).toBe(true);
     });
 
-    it('an unparseable date string yields no certificate reasons (NaN comparisons)', () => {
+    it('surfaces an unparseable expiry date instead of ignoring it', () => {
       const r = checkSupplierEligibility({ certificate_expiry_date: 'not-a-date' });
-      expect(r.status).toBe('eligible');
-      expect(r.reasons).toEqual([]);
+      expect(r.status).toBe('warning');
+      expect(r.reasons).toContain('Certificate expiry date is unreadable and must be corrected.');
     });
 
-    it('a bare yyyy-mm-dd for today is parsed as UTC midnight (see report: TZ caveat)', () => {
-      // `new Date('2026-06-15')` is UTC midnight while `today` is LOCAL midnight.
-      // In UTC+X zones this is still >= today; in UTC-X zones the same cert would
-      // be reported as already expired.
+    it('treats a bare yyyy-mm-dd for today as still valid in any timezone', () => {
+      // A date-only value is parsed as LOCAL midnight, so a certificate expiring
+      // today is never reported as already expired — previously it was, in every
+      // timezone west of UTC.
       const r = checkSupplierEligibility({ certificate_expiry_date: isoDaysFromNow(0) });
-      const utcMidnightIsBeforeLocalMidnight =
-        new Date(isoDaysFromNow(0)).getTime() < new Date(2026, 5, 15).getTime();
-      if (utcMidnightIsBeforeLocalMidnight) {
-        expect(r.reasons).toContain(
-          'Certificate has expired. An exception approval is required before award.',
-        );
-      } else {
-        expect(r.canAward).toBe(true);
-      }
+      expect(r.canAward).toBe(true);
+      expect(r.reasons).not.toContain(
+        'Certificate has expired. An exception approval is required before award.',
+      );
     });
   });
 

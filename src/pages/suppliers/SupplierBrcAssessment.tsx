@@ -19,6 +19,8 @@ import {
   type BrcGradeBand, type BrcManualScore, type BrcEvidence, type BrcCategoryWeight,
   type SupplierCert, type SupplierDoc,
 } from '@/lib/brcScoring';
+import { expiryStatus } from '@/lib/dateUtils';
+import { safeStorageName } from '@/lib/companyDocs';
 
 const GRADE_STYLE: Record<string, { badge: string; card: string }> = {
   A: { badge: 'bg-green-600 text-white', card: 'border-green-300 bg-green-50/60' },
@@ -27,13 +29,6 @@ const GRADE_STYLE: Record<string, { badge: string; card: string }> = {
   D: { badge: 'bg-red-600 text-white', card: 'border-red-300 bg-red-50/60' },
 };
 
-// Supabase storage object keys must be ASCII-safe (no Thai / spaces)
-const safeStorageName = (name: string) => {
-  const dot = name.lastIndexOf('.');
-  const base = (dot > 0 ? name.slice(0, dot) : name).replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 60) || 'file';
-  const ext = dot > 0 ? name.slice(dot).replace(/[^A-Za-z0-9.]+/g, '') : '';
-  return `${base}${ext}`;
-};
 
 async function fileToBase64(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
@@ -58,16 +53,7 @@ interface VerifyResult {
   reason: string;
 }
 
-type EvidenceExpiry = 'valid' | 'expiring' | 'expired' | 'none';
-function evidenceExpiry(expiry: string | null): EvidenceExpiry {
-  if (!expiry) return 'none';
-  const d = new Date(expiry); d.setHours(0, 0, 0, 0);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (d < today) return 'expired';
-  const soon = new Date(today); soon.setDate(soon.getDate() + 30);
-  if (d <= soon) return 'expiring';
-  return 'valid';
-}
+const evidenceExpiry = (expiry: string | null) => expiryStatus(expiry, 30);
 
 interface Props {
   supplierId: string;
@@ -497,10 +483,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                             <span className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded-full border text-[10px] font-medium ${
                                               exp === 'expired' ? 'border-red-200 bg-red-50 text-red-700'
                                               : exp === 'expiring' ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                                              : exp === 'invalid' ? 'border-amber-300 bg-amber-50 text-amber-800'
                                               : 'border-green-200 bg-green-50 text-green-700'
                                             }`}>
-                                              {exp === 'expired' ? <AlertTriangle className="w-2.5 h-2.5" /> : exp === 'expiring' ? <Clock className="w-2.5 h-2.5" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
-                                              หมดอายุ {new Date(ev.expiry_date).toLocaleDateString('th-TH')}
+                                              {exp === 'expired' || exp === 'invalid' ? <AlertTriangle className="w-2.5 h-2.5" /> : exp === 'expiring' ? <Clock className="w-2.5 h-2.5" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
+                                              {exp === 'invalid' ? 'วันหมดอายุไม่ถูกต้อง' : `หมดอายุ ${new Date(ev.expiry_date!).toLocaleDateString('th-TH')}`}
                                             </span>
                                           )}
                                           {canUpload && (

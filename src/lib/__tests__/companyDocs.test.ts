@@ -182,10 +182,10 @@ describe('docExpiryStatus', () => {
     expect(docExpiryStatus(`${isoDaysFromNow(0)}T00:00:00`)).toBe('expiring');
   });
 
-  it("returns 'valid' for an unparseable date (see report: suspected bug)", () => {
-    // NaN fails every comparison, so garbage silently reads as a valid document.
-    expect(docExpiryStatus('not-a-date')).toBe('valid');
-    expect(docExpiryStatus('2026-13-45')).toBe('valid');
+  it("returns 'invalid' for an unparseable date, never a false 'valid'", () => {
+    expect(docExpiryStatus('not-a-date')).toBe('invalid');
+    expect(docExpiryStatus('2026-13-45')).toBe('invalid');
+    expect(docExpiryStatus('2026-02-31')).toBe('invalid'); // rolls over in raw JS
   });
 
   it('is stable across the day boundary via fake timers', () => {

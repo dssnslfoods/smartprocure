@@ -275,10 +275,16 @@ describe('computeDimensionRisks', () => {
   });
 
   describe('zero weights', () => {
-    it('scores 0 when all weights are zero and nothing is met (ratio defaults to 1)', () => {
+    it('reports "not assessed" (null) when all weights are zero, not a perfect 0', () => {
       const cs = [crit({ weight: 0 }), crit({ id: 'c2', weight: 0, match_keywords: ['halal'] })];
       const out = computeDimensionRisks(cs, [], [], 'all');
-      expect(out.food_safety_risk).toMatchObject({ score: 0, metWeight: 0, totalWeight: 0 });
+      expect(out.food_safety_risk).toMatchObject({ score: null, metWeight: 0, totalWeight: 0 });
+    });
+
+    it('still forces maximum risk when a zero-weight mandatory criterion is unmet', () => {
+      const cs = [crit({ weight: 0, is_mandatory: true, match_keywords: ['halal'] })];
+      const out = computeDimensionRisks(cs, [], [], 'all');
+      expect(out.food_safety_risk).toMatchObject({ score: 10, mandatoryUnmet: true });
     });
 
     it('a zero-weight criterion contributes nothing to the score', () => {

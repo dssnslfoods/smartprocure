@@ -206,10 +206,11 @@ export default function SupplierDocuments({ supplierId, portalMode = false }: Pr
                                 <span className={`inline-flex items-center gap-0.5 px-1.5 py-px rounded-full border text-[10px] font-medium ${
                                   exp === 'expired' ? 'border-red-200 bg-red-50 text-red-700'
                                   : exp === 'expiring' ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+                                  : exp === 'invalid' ? 'border-amber-300 bg-amber-50 text-amber-800'
                                   : 'border-green-200 bg-green-50 text-green-700'
                                 }`}>
-                                  {exp === 'expired' ? <AlertTriangle className="w-2.5 h-2.5" /> : exp === 'expiring' ? <Clock className="w-2.5 h-2.5" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
-                                  หมดอายุ {new Date(d.expiry_date).toLocaleDateString('th-TH')}
+                                  {exp === 'expired' || exp === 'invalid' ? <AlertTriangle className="w-2.5 h-2.5" /> : exp === 'expiring' ? <Clock className="w-2.5 h-2.5" /> : <CheckCircle2 className="w-2.5 h-2.5" />}
+                                  {exp === 'invalid' ? 'วันหมดอายุไม่ถูกต้อง' : `หมดอายุ ${new Date(d.expiry_date!).toLocaleDateString('th-TH')}`}
                                 </span>
                               )}
                               {canEdit && (

@@ -196,12 +196,13 @@ describe('assessCycle', () => {
 
     // Documents current behaviour: an unparsable date yields NaN arithmetic and,
     // because every NaN comparison is false, silently falls through to "fresh".
-    it('an unparsable date currently degrades to "fresh" with NaN fields', () => {
+    it('reports an unparsable date as "never" rather than a healthy "fresh"', () => {
       const r = assessCycle('not-a-real-date', 90);
-      expect(Number.isNaN(r.daysSince as number)).toBe(true);
-      expect(Number.isNaN(r.daysRemaining as number)).toBe(true);
-      expect(Number.isNaN(r.lastAt!.getTime())).toBe(true);
-      expect(r.status).toBe('fresh');
+      expect(r.status).toBe('never');
+      expect(r.lastAt).toBeNull();
+      expect(r.nextDueAt).toBeNull();
+      expect(r.daysSince).toBeNull();
+      expect(r.daysRemaining).toBeNull();
     });
 
     it('does not mutate or depend on call order', () => {

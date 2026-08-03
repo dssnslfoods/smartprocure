@@ -14,6 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, Upload, Sparkles, Loader2, FileText, CheckCircle, AlertTriangle, X, Eye, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { randomStorageName as safeStorageName } from '@/lib/storage';
 
 const CERT_DOC_LABELS = new Set(['company_cert', 'quality_cert']);
 
@@ -81,10 +82,6 @@ const EMPTY_FORM = {
 
 const FORM_KEYS = ['company_name', 'tax_id', 'address', 'city', 'country', 'phone', 'email', 'website', 'contact_person'] as const;
 
-function safeStorageName(fileName: string): string {
-  const ext = fileName.split('.').pop() || 'bin';
-  return `${crypto.randomUUID()}.${ext}`;
-}
 
 function guessDocLabel(fileName: string): string {
   const lower = fileName.toLowerCase();
