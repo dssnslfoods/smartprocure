@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Boxes, Package2, Wrench, FlaskConical, Beaker, Cog, Settings2, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown, Plus, Pencil } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
+import { CATEGORY_LABELS as DEFAULT_CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES as DEFAULT_CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
+import { loadSupplierTypes, type BrcSupplierTypeRow } from '@/lib/brcScoring';
 import { exportCatalog } from '@/lib/catalogExcel';
 import { useAuth } from '@/contexts/AuthContext';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
@@ -56,11 +57,27 @@ export default function PriceListPage() {
   const [reloadKey, setReloadKey] = useState(0);
 
   const canManage = !isSupplier && (roles.includes('admin') || roles.includes('procurement_officer'));
+
+  // Catalog categories mirror the admin-managed BRC supplier type list (see
+  // "จัดการหมวดหมู่" on the เกณฑ์ความเสี่ยง page) — DEFAULT_CATEGORIES is only a
+  // fallback for the instant before this loads.
+  const [typeRows, setTypeRows] = useState<BrcSupplierTypeRow[]>([]);
+  const CATEGORIES = useMemo(
+    () => (typeRows.length ? typeRows.filter(t => t.active).map(t => t.key) : [...DEFAULT_CATEGORIES]),
+    [typeRows],
+  );
+  const CATEGORY_LABELS = useMemo(
+    () => (typeRows.length
+      ? { ...DEFAULT_CATEGORY_LABELS, ...Object.fromEntries(typeRows.map(t => [t.key, t.label_th])) }
+      : DEFAULT_CATEGORY_LABELS),
+    [typeRows],
+  );
+
   const [editing, setEditing] = useState<CatalogRow | null | 'new'>(null);
-  const [form, setForm] = useState({ title: '', category: CATEGORIES[0] as string, valid_until: '', notes: '' });
+  const [form, setForm] = useState({ title: '', category: DEFAULT_CATEGORIES[0] as string, valid_until: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
-  const openNew = () => { setForm({ title: '', category: CATEGORIES[0], valid_until: '', notes: '' }); setEditing('new'); };
+  const openNew = () => { setForm({ title: '', category: CATEGORIES[0] || '', valid_until: '', notes: '' }); setEditing('new'); };
   const openEdit = (cat: CatalogRow) => {
     // A legacy category (not one of the 7 BRC types) shows blank — force
     // procurement to consciously pick the right BRC category rather than
@@ -101,6 +118,7 @@ export default function PriceListPage() {
   };
 
   useEffect(() => { loadPricelistCycle().then(setCycle); }, []);
+  useEffect(() => { loadSupplierTypes().then(setTypeRows); }, []);
 
   useEffect(() => {
     (async () => {

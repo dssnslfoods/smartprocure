@@ -10,12 +10,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { isExpired } from '@/lib/dateUtils';
 import type { RiskLevel } from '@/types/procurement';
 
-export type BrcSupplierType =
-  | 'rm_primary_pk' | 'secondary_pk' | 'service'
-  | 'chemical_food' | 'chemical_nonfood'
-  | 'equipment_food' | 'equipment_nonfood';
+// Admin-extendable — see brc_supplier_types table + loadSupplierTypes(). The
+// literal union is gone (supplier types are no longer a fixed set), but the
+// key still flows through as a plain string everywhere.
+export type BrcSupplierType = string;
 
-export const SUPPLIER_TYPE_LABEL: Record<BrcSupplierType, string> = {
+/** Seed/fallback labels for the 7 built-in types — used before the DB list loads, or if it's empty. */
+export const SUPPLIER_TYPE_LABEL: Record<string, string> = {
   rm_primary_pk: 'วัตถุดิบ / บรรจุภัณฑ์หลัก (RM / Primary PK)',
   secondary_pk: 'บรรจุภัณฑ์รอง (Secondary / Tertiary PK)',
   service: 'บริการ (Service)',
@@ -25,7 +26,23 @@ export const SUPPLIER_TYPE_LABEL: Record<BrcSupplierType, string> = {
   equipment_nonfood: 'อุปกรณ์ทั่วไป (Equipment non-food contact)',
 };
 
-export const SUPPLIER_TYPES = Object.keys(SUPPLIER_TYPE_LABEL) as BrcSupplierType[];
+export const SUPPLIER_TYPES = Object.keys(SUPPLIER_TYPE_LABEL);
+
+export interface BrcSupplierTypeRow {
+  id: string;
+  key: string;
+  label_th: string;
+  sort_order: number;
+  active: boolean;
+}
+
+/** Admin-managed supplier type list (see RiskCriteria.tsx "เพิ่มหมวด" / catalog categories). */
+export async function loadSupplierTypes(includeInactive = false): Promise<BrcSupplierTypeRow[]> {
+  let q = supabase.from('brc_supplier_types' as any).select('*').order('sort_order');
+  if (!includeInactive) q = q.eq('active', true);
+  const { data } = await q;
+  return (data as unknown as BrcSupplierTypeRow[]) || [];
+}
 
 export type CriterionGroup = 'safety_quality' | 'commercial';
 

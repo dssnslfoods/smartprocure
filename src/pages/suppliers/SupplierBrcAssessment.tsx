@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -13,11 +13,10 @@ import {
   Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle, ListChecks,
 } from 'lucide-react';
 import {
-  evaluateBrc, loadBrcStandard, loadSupplierEvidence, groupWeightsFor,
-  SUPPLIER_TYPES, SUPPLIER_TYPE_LABEL,
+  evaluateBrc, loadBrcStandard, loadSupplierEvidence, groupWeightsFor, loadSupplierTypes,
   type BrcAssessment, type BrcSupplierType, type BrcTopic, type BrcOption,
   type BrcGradeBand, type BrcManualScore, type BrcEvidence, type BrcCategoryWeight,
-  type SupplierCert, type SupplierDoc,
+  type SupplierCert, type SupplierDoc, type BrcSupplierTypeRow,
 } from '@/lib/brcScoring';
 import { expiryStatus } from '@/lib/dateUtils';
 import { safeStorageName } from '@/lib/companyDocs';
@@ -79,6 +78,12 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const [evidence, setEvidence] = useState<BrcEvidence[]>([]);
   const [supplierType, setSupplierType] = useState<BrcSupplierType>('rm_primary_pk');
   const [companyName, setCompanyName] = useState('');
+  const [typeRows, setTypeRows] = useState<BrcSupplierTypeRow[]>([]);
+  const SUPPLIER_TYPES = useMemo(() => typeRows.filter(t => t.active).map(t => t.key), [typeRows]);
+  const SUPPLIER_TYPE_LABEL = useMemo(
+    () => Object.fromEntries(typeRows.map(t => [t.key, t.label_th])) as Record<string, string>,
+    [typeRows],
+  );
 
   // AI verification dialog state
   const [verify, setVerify] = useState<null | {
@@ -97,10 +102,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [standard, ev, supRes] = await Promise.all([
+    const [standard, ev, supRes, typeRes] = await Promise.all([
       loadBrcStandard(),
       loadSupplierEvidence([supplierId]),
       supabase.from('suppliers').select('company_name').eq('id', supplierId).single(),
+      loadSupplierTypes(),
     ]);
     setTopics(standard.topics);
     setOptionsByTopic(standard.optionsByTopic);
@@ -111,8 +117,9 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     setManual(ev.manualBy[supplierId] || {});
     setEvidence(ev.evidenceBy[supplierId] || []);
     setCompanyName(supRes.data?.company_name || '');
+    setTypeRows(typeRes);
     const st = ev.typesBy[supplierId] as BrcSupplierType | null;
-    if (st && SUPPLIER_TYPES.includes(st)) setSupplierType(st);
+    if (st && typeRes.some(t => t.key === st)) setSupplierType(st);
     setLoading(false);
   }, [supplierId]);
 

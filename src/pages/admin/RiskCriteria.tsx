@@ -11,10 +11,10 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Pencil, Trash2, ShieldCheck, FileBadge, FileText, Info, ChevronDown, ChevronUp, Plus, Zap, UserCheck, Calculator, Scale, AlertTriangle, Save, History } from 'lucide-react';
+import { Pencil, Trash2, ShieldCheck, FileBadge, FileText, Info, ChevronDown, ChevronUp, Plus, Zap, UserCheck, Calculator, Scale, AlertTriangle, Save, History, Settings } from 'lucide-react';
 import {
-  SUPPLIER_TYPES, SUPPLIER_TYPE_LABEL, BRC_SAFETY_MIN_DEFAULT, BRC_SAFETY_RECOMMENDED,
-  type BrcTopic, type BrcOption, type BrcGradeBand, type BrcSupplierType, type BrcCategoryWeight,
+  loadSupplierTypes, BRC_SAFETY_MIN_DEFAULT, BRC_SAFETY_RECOMMENDED,
+  type BrcTopic, type BrcOption, type BrcGradeBand, type BrcSupplierType, type BrcCategoryWeight, type BrcSupplierTypeRow,
 } from '@/lib/brcScoring';
 import {
   achievableMax, needsRebalance, buildScaleSuggestion, suggestBands, type BandDraft,
@@ -53,8 +53,18 @@ export default function RiskCriteria() {
   const [topics, setTopics] = useState<BrcTopic[]>([]);
   const [options, setOptions] = useState<BrcOption[]>([]);
   const [bands, setBands] = useState<BrcGradeBand[]>([]);
+  const [typeRows, setTypeRows] = useState<BrcSupplierTypeRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [guideOpen, setGuideOpen] = useState(false);
+
+  // Admin-managed supplier type list (see brc_supplier_types) — shadows what
+  // used to be the hardcoded SUPPLIER_TYPES/SUPPLIER_TYPE_LABEL constants so
+  // every existing reference below keeps working unchanged.
+  const SUPPLIER_TYPES = useMemo(() => typeRows.filter(t => t.active).map(t => t.key), [typeRows]);
+  const SUPPLIER_TYPE_LABEL = useMemo(
+    () => Object.fromEntries(typeRows.map(t => [t.key, t.label_th])) as Record<string, string>,
+    [typeRows],
+  );
 
   // Scoring-weight config (BRCGS Clause 3.5.1.3)
   const [weights, setWeights] = useState<Record<string, BrcCategoryWeight>>({});
@@ -102,16 +112,18 @@ export default function RiskCriteria() {
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
-    const [tRes, oRes, bRes, wRes, sRes] = await Promise.all([
+    const [tRes, oRes, bRes, wRes, sRes, typesRes] = await Promise.all([
       supabase.from('brc_topics' as any).select('*').order('sort_order'),
       supabase.from('brc_options' as any).select('*').order('sort_order'),
       supabase.from('brc_grade_bands' as any).select('*').order('min_score', { ascending: false }),
       supabase.from('brc_weight_config' as any).select('*'),
       supabase.from('system_settings').select('value').eq('key', 'brc_safety_min_weight').maybeSingle(),
+      loadSupplierTypes(true),
     ]);
     setTopics((tRes.data as unknown as BrcTopic[]) || []);
     setOptions((oRes.data as unknown as BrcOption[]) || []);
     setBands((bRes.data as unknown as BrcGradeBand[]) || []);
+    setTypeRows(typesRes);
     const w = (wRes.data as unknown as BrcCategoryWeight[]) || [];
     const wm: Record<string, BrcCategoryWeight> = {};
     const wd: Record<string, number> = {};
@@ -267,6 +279,87 @@ export default function RiskCriteria() {
     before_state: before as any, after_state: after as any,
     changed_by: user?.id ?? null, changed_by_email: profile?.email ?? null,
   });
+
+  // ── Supplier type (catalog/BRC category) management ─────────────────────
+  const [manageTypesOpen, setManageTypesOpen] = useState(false);
+  const [newTypeForm, setNewTypeForm] = useState({ key: '', label_th: '' });
+  const [savingType, setSavingType] = useState(false);
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
+  const [deleteTypeTarget, setDeleteTypeTarget] = useState<BrcSupplierTypeRow | null>(null);
+  const [deleteTypeBlock, setDeleteTypeBlock] = useState<{ topics: number; suppliers: number } | null>(null);
+  const [deletingType, setDeletingType] = useState(false);
+
+  const KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+  const addSupplierType = async () => {
+    const key = newTypeForm.key.trim();
+    const label = newTypeForm.label_th.trim();
+    if (!KEY_PATTERN.test(key) || !label) return;
+    setSavingType(true);
+    const sortOrder = (typeRows.reduce((mx, t) => Math.max(mx, t.sort_order), 0) || 0) + 10;
+    const { error } = await supabase.from('brc_supplier_types' as any).insert({ key, label_th: label, sort_order: sortOrder });
+    if (error) {
+      setSavingType(false);
+      toast({ title: 'เพิ่มหมวดไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      return;
+    }
+    // Best-effort: also let this key be picked as a Catalog category. If it
+    // fails, the type is still fully usable for BRC criteria/assessment.
+    const { error: rpcErr } = await supabase.rpc('add_catalog_category_value' as any, { p_value: key });
+    if (rpcErr) {
+      toast({ title: 'เพิ่มหมวดสำเร็จ แต่เชื่อมกับ Catalog ไม่สำเร็จ', description: rpcErr.message, variant: 'destructive' });
+    }
+    await logCriteria('add_supplier_type', key, `เพิ่มหมวดผู้ขาย "${label}" (${key})`, null, { key, label_th: label });
+    setSavingType(false);
+    setNewTypeForm({ key: '', label_th: '' });
+    toast({ title: 'เพิ่มหมวดผู้ขายแล้ว' });
+    load(true);
+  };
+
+  const saveTypeLabel = async (t: BrcSupplierTypeRow) => {
+    const label = (labelDrafts[t.id] ?? t.label_th).trim();
+    if (!label || label === t.label_th) return;
+    const { error } = await supabase.from('brc_supplier_types' as any).update({ label_th: label }).eq('id', t.id);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    await logCriteria('update_supplier_type', t.key, `แก้ไขชื่อหมวด "${t.label_th}" → "${label}"`, { label_th: t.label_th }, { label_th: label });
+    toast({ title: 'บันทึกแล้ว' });
+    load(true);
+  };
+
+  const toggleTypeActive = async (t: BrcSupplierTypeRow) => {
+    const { error } = await supabase.from('brc_supplier_types' as any).update({ active: !t.active }).eq('id', t.id);
+    if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    await logCriteria('update_supplier_type', t.key, `${t.active ? 'ปิด' : 'เปิด'}ใช้งานหมวด "${t.label_th}"`, { active: t.active }, { active: !t.active });
+    load(true);
+  };
+
+  const askDeleteType = async (t: BrcSupplierTypeRow) => {
+    const [topicsRes, suppliersRes] = await Promise.all([
+      supabase.from('brc_topics' as any).select('*', { count: 'exact', head: true }).eq('supplier_type', t.key),
+      supabase.from('suppliers').select('*', { count: 'exact', head: true }).eq('brc_supplier_type', t.key),
+    ]);
+    const nTopics = topicsRes.count ?? 0;
+    const nSuppliers = suppliersRes.count ?? 0;
+    if (nTopics > 0 || nSuppliers > 0) {
+      setDeleteTypeTarget(t);
+      setDeleteTypeBlock({ topics: nTopics, suppliers: nSuppliers });
+    } else {
+      setDeleteTypeTarget(t);
+      setDeleteTypeBlock(null);
+    }
+  };
+
+  const confirmDeleteType = async () => {
+    if (!deleteTypeTarget || deleteTypeBlock) return;
+    setDeletingType(true);
+    const { error } = await supabase.from('brc_supplier_types' as any).delete().eq('id', deleteTypeTarget.id);
+    setDeletingType(false);
+    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    await logCriteria('delete_supplier_type', deleteTypeTarget.key, `ลบหมวดผู้ขาย "${deleteTypeTarget.label_th}"`, { row: deleteTypeTarget }, null);
+    toast({ title: 'ลบหมวดแล้ว' });
+    setDeleteTypeTarget(null);
+    load(true);
+  };
 
   /** Snapshot every topic + band of a supplier type (what a rebalance can touch). */
   const snapshotType = (st: string) => ({
@@ -789,6 +882,11 @@ export default function RiskCriteria() {
               <Button size="sm" variant="ghost" className="h-8" onClick={loadCritLog}>
                 <History className="w-3.5 h-3.5 mr-1" />ประวัติเกณฑ์
               </Button>
+              {canEdit && (
+                <Button size="sm" variant="ghost" className="h-8" onClick={() => setManageTypesOpen(true)}>
+                  <Settings className="w-3.5 h-3.5 mr-1" />จัดการหมวดหมู่
+                </Button>
+              )}
             </div>
           </div>
         </CardContent>
@@ -1644,6 +1742,93 @@ export default function RiskCriteria() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Manage supplier types (Catalog/BRC categories) */}
+      <Dialog open={manageTypesOpen} onOpenChange={setManageTypesOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>จัดการหมวดหมู่ผู้ขาย</DialogTitle>
+            <DialogDescription>
+              หมวดนี้ใช้ทั้งเป็นแท็บเกณฑ์ BRCGS ด้านล่างและเป็นตัวเลือกหมวดหมู่ Catalog
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">เพิ่มหมวดใหม่</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Key (a-z, 0-9, _)</Label>
+                  <Input className="h-8" placeholder="เช่น cold_chain_logistics"
+                    value={newTypeForm.key}
+                    onChange={e => setNewTypeForm(p => ({ ...p, key: e.target.value.trim().toLowerCase() }))} />
+                </div>
+                <div>
+                  <Label className="text-xs">ชื่อภาษาไทย</Label>
+                  <Input className="h-8" placeholder="เช่น โลจิสติกส์ห้องเย็น"
+                    value={newTypeForm.label_th}
+                    onChange={e => setNewTypeForm(p => ({ ...p, label_th: e.target.value }))} />
+                </div>
+              </div>
+              {newTypeForm.key && !KEY_PATTERN.test(newTypeForm.key) && (
+                <p className="text-[11px] text-red-600">Key ต้องขึ้นต้นด้วยตัวอักษร a-z และมีแค่ a-z, 0-9, _</p>
+              )}
+              <Button size="sm" className="w-full"
+                disabled={savingType || !KEY_PATTERN.test(newTypeForm.key) || !newTypeForm.label_th.trim()}
+                onClick={addSupplierType}>
+                <Plus className="w-3.5 h-3.5 mr-1" />{savingType ? 'กำลังเพิ่ม...' : 'เพิ่มหมวด'}
+              </Button>
+            </div>
+
+            <div className="space-y-1.5">
+              {typeRows.map(t => (
+                <div key={t.id} className={`flex items-center gap-2 rounded-lg border p-2 ${!t.active ? 'opacity-50' : ''}`}>
+                  <Input className="h-8 flex-1" value={labelDrafts[t.id] ?? t.label_th}
+                    onChange={e => setLabelDrafts(p => ({ ...p, [t.id]: e.target.value }))} />
+                  <span className="text-[10px] text-muted-foreground font-mono shrink-0">{t.key}</span>
+                  {(labelDrafts[t.id] ?? t.label_th) !== t.label_th && (
+                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0" onClick={() => saveTypeLabel(t)}>
+                      <Save className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-8 text-xs shrink-0" onClick={() => toggleTypeActive(t)}>
+                    {t.active ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-8 w-8 p-0 shrink-0" onClick={() => askDeleteType(t)}>
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete supplier type — blocked if in use */}
+      <AlertDialog open={!!deleteTypeTarget} onOpenChange={v => { if (!v) { setDeleteTypeTarget(null); setDeleteTypeBlock(null); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{deleteTypeBlock ? 'ลบหมวดนี้ไม่ได้' : `ลบหมวด "${deleteTypeTarget?.label_th}"?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTypeBlock ? (
+                <>
+                  หมวดนี้ยังมีข้อมูลผูกอยู่ — ลบไม่ได้จนกว่าจะย้ายออกก่อน:
+                  {deleteTypeBlock.topics > 0 && <> ยังมีเกณฑ์ประเมิน {deleteTypeBlock.topics} หัวข้อ</>}
+                  {deleteTypeBlock.topics > 0 && deleteTypeBlock.suppliers > 0 && ' และ '}
+                  {deleteTypeBlock.suppliers > 0 && <>มี supplier {deleteTypeBlock.suppliers} รายที่ใช้หมวดนี้อยู่</>}
+                </>
+              ) : 'ลบแล้วไม่สามารถย้อนกลับผ่านประวัติเกณฑ์ได้ (ต่างจากการลบหัวข้อ/ตัวเลือก)'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{deleteTypeBlock ? 'ปิด' : 'ยกเลิก'}</AlertDialogCancel>
+            {!deleteTypeBlock && (
+              <AlertDialogAction disabled={deletingType} onClick={confirmDeleteType} className="bg-red-600 hover:bg-red-700">
+                {deletingType ? 'กำลังลบ...' : 'ลบ'}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
