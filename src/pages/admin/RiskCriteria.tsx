@@ -68,12 +68,12 @@ export default function RiskCriteria() {
 
   // Option edit dialog
   const [editOpt, setEditOpt] = useState<BrcOption | null>(null);
-  const [optForm, setOptForm] = useState({ label: '', score: 0, keywordsText: '' });
+  const [optForm, setOptForm] = useState({ label: '', score: 0, keywordsText: '', requirement: '' });
   const [saving, setSaving] = useState(false);
 
   // Add option dialog
   const [addTopic, setAddTopic] = useState<BrcTopic | null>(null);
-  const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false });
+  const [addForm, setAddForm] = useState({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false, requirement: '' });
 
   // Add new criterion (topic) dialog
   const [addTopicType, setAddTopicType] = useState<string | null>(null); // supplier_type
@@ -179,7 +179,7 @@ export default function RiskCriteria() {
 
   const openEditOpt = (o: BrcOption) => {
     setEditOpt(o);
-    setOptForm({ label: o.label, score: o.score, keywordsText: (o.match_keywords || []).join(', ') });
+    setOptForm({ label: o.label, score: o.score, keywordsText: (o.match_keywords || []).join(', '), requirement: o.requirement || '' });
   };
 
   const saveOpt = async () => {
@@ -189,6 +189,7 @@ export default function RiskCriteria() {
       label: optForm.label,
       score: Number(optForm.score) || 0,
       match_keywords: optForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
+      requirement: optForm.requirement.trim() || null,
     }).eq('id', editOpt.id);
     setSaving(false);
     if (error) { toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
@@ -196,7 +197,7 @@ export default function RiskCriteria() {
     if (parent) {
       await logCriteria('update_option', parent.supplier_type,
         `แก้ไขตัวเลือก "${editOpt.label}" ในหัวข้อ "${parent.topic}"`,
-        { option: editOpt }, { label: optForm.label, score: Number(optForm.score) || 0 });
+        { option: editOpt }, { label: optForm.label, score: Number(optForm.score) || 0, requirement: optForm.requirement.trim() || null });
     }
     toast({ title: 'บันทึกแล้ว' });
     setEditOpt(null); load(true);
@@ -212,6 +213,7 @@ export default function RiskCriteria() {
       match_type: addForm.match_type,
       match_keywords: addForm.keywordsText.split(',').map(s => s.trim()).filter(Boolean),
       is_mandatory: addForm.is_mandatory,
+      requirement: addForm.requirement.trim() || null,
       sort_order: ((optionsByTopic[addTopic.id] || []).length + 1) * 10,
     }).select('id').single();
     setSaving(false);
@@ -223,7 +225,7 @@ export default function RiskCriteria() {
         null, { created_option_id: (data as any)?.id ?? null });
     }
     toast({ title: 'เพิ่มตัวเลือกแล้ว' });
-    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false }); load(true);
+    setAddTopic(null); setAddForm({ label: '', score: 0, match_type: 'certificate', keywordsText: '', is_mandatory: false, requirement: '' }); load(true);
   };
 
   // Deleting a topic cascades to its options, manual scores and evidence rows,
@@ -927,7 +929,7 @@ export default function RiskCriteria() {
                                 <Pencil className="w-3 h-3" />แก้ไขคะแนนเต็ม
                               </Button>
                               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
-                                onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '', is_mandatory: false }); }}>
+                                onClick={() => { setAddTopic(t); setAddForm({ label: '', score: 0, match_type: t.auto_source === 'quotation' ? 'auto' : 'certificate', keywordsText: '', is_mandatory: false, requirement: '' }); }}>
                                 <Plus className="w-3 h-3" />ตัวเลือก
                               </Button>
                               <Switch checked={t.active} onCheckedChange={v => toggleTopic(t, v)} />
@@ -1017,12 +1019,19 @@ export default function RiskCriteria() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>แก้ไขตัวเลือก</DialogTitle>
-            <DialogDescription>ปรับชื่อ คะแนน หรือคำค้นสำหรับจับคู่อัตโนมัติ</DialogDescription>
+            <DialogDescription>ปรับชื่อ คำอธิบาย คะแนน หรือคำค้นสำหรับจับคู่อัตโนมัติ</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
               <Label>ชื่อ</Label>
               <Input value={optForm.label} onChange={e => setOptForm(p => ({ ...p, label: e.target.value }))} />
+            </div>
+            <div>
+              <Label>คำอธิบาย / อ้างอิงเอกสาร</Label>
+              <Input value={optForm.requirement}
+                placeholder="เช่น FM-PUR-000-03 >73"
+                onChange={e => setOptForm(p => ({ ...p, requirement: e.target.value }))} />
+              <p className="text-[11px] text-muted-foreground mt-1">แสดงเป็นบรรทัดคำอธิบายใต้ชื่อตัวเลือก — เว้นว่างได้</p>
             </div>
             <div>
               <Label>คะแนน</Label>
@@ -1055,6 +1064,12 @@ export default function RiskCriteria() {
             <div>
               <Label>ชื่อ *</Label>
               <Input value={addForm.label} onChange={e => setAddForm(p => ({ ...p, label: e.target.value }))} />
+            </div>
+            <div>
+              <Label>คำอธิบาย / อ้างอิงเอกสาร</Label>
+              <Input value={addForm.requirement}
+                placeholder="เช่น FM-PUR-000-03 >73"
+                onChange={e => setAddForm(p => ({ ...p, requirement: e.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
