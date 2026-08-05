@@ -1,7 +1,11 @@
 // Shared Excel import/export logic for the Master Catalog (price_lists + price_list_items).
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
-import { CATEGORY_LABELS, CATEGORIES } from '@/lib/priceListConstants';
+import { CATEGORY_LABELS, CATEGORIES, LEGACY_CATEGORIES } from '@/lib/priceListConstants';
+
+// Accepted for validation/import — current BRC categories plus the old
+// 4-value set so previously exported catalogs still re-import cleanly.
+const ALL_CATEGORY_KEYS: readonly string[] = [...CATEGORIES, ...LEGACY_CATEGORIES];
 
 export type ColType = 'text' | 'number' | 'int' | 'bool';
 
@@ -16,7 +20,7 @@ export interface CatalogColumn {
 
 // One Excel row = one catalog item. category + (optional) catalog_title decide which book it lands in.
 export const CATALOG_COLUMNS: CatalogColumn[] = [
-  { key: 'category',         label: 'Category',          required: true,  hint: 'raw_material | packaging | service | other (หรือ วัตถุดิบ/บรรจุภัณฑ์/บริการ/อื่นๆ)', allowed: ['raw_material', 'packaging', 'service', 'other'] },
+  { key: 'category',         label: 'Category',          required: true,  hint: 'rm_primary_pk | secondary_pk | service | chemical_food | chemical_nonfood | equipment_food | equipment_nonfood (หมวด BRC — ค่าเดิม raw_material/packaging/other ก็ยังใช้ได้)', allowed: [...CATEGORIES] },
   { key: 'catalog_title',    label: 'Catalog Title',     required: false, hint: 'ชื่อเล่ม (เว้นว่าง = ใช้ชื่อหมวดอัตโนมัติ)' },
   { key: 'item_code',        label: 'Item Code',         required: false, hint: 'รหัสสินค้า เช่น RM-001' },
   { key: 'item_name',        label: 'Item Name',         required: true,  hint: 'ชื่อรายการ (จำเป็น)' },
@@ -32,8 +36,8 @@ export const CATALOG_COLUMNS: CatalogColumn[] = [
 ];
 
 const EXAMPLE_ROWS: (string | number)[][] = [
-  ['raw_material', 'วัตถุดิบ', 'RM-001', 'น้ำตาลทรายขาว', 'น้ำตาล', 'น้ำตาลทรายขาวบริสุทธิ์ เกรดอาหาร', 'kg', 25, 500, 7, 1000, 'FALSE', ''],
-  ['packaging', 'บรรจุภัณฑ์', 'PK-001', 'ขวดแก้วใส 250ml', 'ขวดแก้ว', 'ขวดแก้วใสฝาเกลียว', 'ใบ', 2.5, 10000, 14, 50000, 'FALSE', ''],
+  ['rm_primary_pk', 'วัตถุดิบ', 'RM-001', 'น้ำตาลทรายขาว', 'น้ำตาล', 'น้ำตาลทรายขาวบริสุทธิ์ เกรดอาหาร', 'kg', 25, 500, 7, 1000, 'FALSE', ''],
+  ['secondary_pk', 'บรรจุภัณฑ์รอง', 'PK-001', 'กล่องกระดาษลูกฟูก', 'กล่อง', 'กล่องกระดาษลูกฟูก 5 ชั้น', 'ใบ', 18.5, 1000, 7, 50000, 'FALSE', ''],
 ];
 
 // ── value normalisers ────────────────────────────────────────────────────────
@@ -49,11 +53,19 @@ function parseNumber(val: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// Accept English enum keys or Thai labels for category.
+// Accept English enum keys or Thai labels for category (BRC categories, plus
+// the old 4-value set so previously exported catalogs still re-import).
 const THAI_CATEGORY: Record<string, string> = {
-  'วัตถุดิบ': 'raw_material',
-  'บรรจุภัณฑ์': 'packaging',
+  'วัตถุดิบ': 'rm_primary_pk',
+  'บรรจุภัณฑ์หลัก': 'rm_primary_pk',
+  'บรรจุภัณฑ์รอง': 'secondary_pk',
   'บริการ': 'service',
+  'เคมี food grade': 'chemical_food',
+  'เคมี non-food grade': 'chemical_nonfood',
+  'อุปกรณ์สัมผัสอาหาร': 'equipment_food',
+  'อุปกรณ์ทั่วไป': 'equipment_nonfood',
+  // legacy 4-value set
+  'บรรจุภัณฑ์': 'packaging',
   'อื่นๆ': 'other',
   'อื่น ๆ': 'other',
 };
@@ -61,8 +73,8 @@ export function normalizeCategory(val: any): string | null {
   const s = String(val ?? '').trim();
   if (!s) return null;
   const lower = s.toLowerCase();
-  if ((CATEGORIES as readonly string[]).includes(lower)) return lower;
-  if (THAI_CATEGORY[s]) return THAI_CATEGORY[s];
+  if (ALL_CATEGORY_KEYS.includes(lower)) return lower;
+  if (THAI_CATEGORY[s] || THAI_CATEGORY[lower]) return THAI_CATEGORY[s] ?? THAI_CATEGORY[lower];
   return null;
 }
 
@@ -88,7 +100,7 @@ export function validateRow(row: Record<string, any>, index: number): { valid: b
     }
     if (!str) continue;
     if (col.key === 'category' && !normalizeCategory(str)) {
-      errors.push(`แถว ${index + 1}: "Category" = "${str}" ไม่ถูกต้อง (ใช้ ${(CATEGORIES as readonly string[]).join(', ')})`);
+      errors.push(`แถว ${index + 1}: "Category" = "${str}" ไม่ถูกต้อง (ใช้ ${(CATEGORIES as readonly string[]).join(', ')} หรือค่าเดิม ${LEGACY_CATEGORIES.join(', ')})`);
     }
     if (col.type === 'number' || col.type === 'int') {
       if (parseNumber(str) === null) {

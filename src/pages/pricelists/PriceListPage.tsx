@@ -8,19 +8,26 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown, Plus, Pencil } from 'lucide-react';
+import { Boxes, Package2, Wrench, FlaskConical, Beaker, Cog, Settings2, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown, Plus, Pencil } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
+import { CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES, LEGACY_CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
 import { exportCatalog } from '@/lib/catalogExcel';
 import { useAuth } from '@/contexts/AuthContext';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
 
 const CATEGORY_ICONS: Record<string, any> = {
+  rm_primary_pk:     Boxes,
+  secondary_pk:      Package2,
+  service:           Wrench,
+  chemical_food:     FlaskConical,
+  chemical_nonfood:  Beaker,
+  equipment_food:    Cog,
+  equipment_nonfood: Settings2,
+  // legacy 4-value set
   raw_material: Boxes,
   packaging:    Package2,
-  service:      Wrench,
   other:        MoreHorizontal,
 };
 
@@ -50,10 +57,10 @@ export default function PriceListPage() {
 
   const canManage = !isSupplier && (roles.includes('admin') || roles.includes('procurement_officer'));
   const [editing, setEditing] = useState<CatalogRow | null | 'new'>(null);
-  const [form, setForm] = useState({ title: '', category: 'raw_material' as PriceListCategory, valid_until: '', notes: '' });
+  const [form, setForm] = useState({ title: '', category: CATEGORIES[0] as string, valid_until: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
-  const openNew = () => { setForm({ title: '', category: 'raw_material', valid_until: '', notes: '' }); setEditing('new'); };
+  const openNew = () => { setForm({ title: '', category: CATEGORIES[0], valid_until: '', notes: '' }); setEditing('new'); };
   const openEdit = (cat: CatalogRow) => {
     setForm({ title: cat.title, category: cat.category, valid_until: cat.valid_until || '', notes: cat.notes || '' });
     setEditing(cat);
@@ -276,10 +283,13 @@ export default function PriceListPage() {
               <Input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
             </div>
             <div>
-              <Label>หมวดหมู่</Label>
-              <Select value={form.category} onValueChange={(v: PriceListCategory) => setForm(p => ({ ...p, category: v }))}>
+              <Label>หมวดหมู่ (ตามประเภท BRC)</Label>
+              <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  {(LEGACY_CATEGORIES as readonly string[]).includes(form.category) && (
+                    <SelectItem value={form.category}>{CATEGORY_LABELS[form.category]} — เลือกหมวดใหม่ด้านล่าง</SelectItem>
+                  )}
                   {CATEGORIES.map(c => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
                 </SelectContent>
               </Select>
