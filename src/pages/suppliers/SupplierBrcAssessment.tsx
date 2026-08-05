@@ -235,6 +235,19 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
         notes: result ? `แนบจากการประเมิน BRCGS — ${result.reason}`.slice(0, 500) : 'แนบจากการประเมิน BRCGS',
         created_by: user?.id ?? null,
       });
+    } else if (option?.match_type === 'document') {
+      // Same idea for document-type options — the file also shows up under
+      // "เอกสารบริษัท" ▸ เอกสารอื่นๆ instead of being visible only on this criterion.
+      await supabase.from('supplier_documents').insert({
+        supplier_id: supplierId,
+        document_type_id: null,
+        document_type: option.label,
+        document_name: option.label,
+        file_url: urlData.publicUrl,
+        file_size: file.size,
+        expiry_date: result?.expiry_date ?? null,
+        uploaded_by: user?.id ?? null,
+      });
     }
     toast({
       title: '✅ แนบเอกสารเรียบร้อย',
