@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   isCriterionMet,
   computeDimensionRisks,
-  passesCatalogGate,
   DIMENSION_LABEL,
   CATEGORY_OPTIONS,
   type RiskCriterion,
@@ -410,71 +409,5 @@ describe('computeDimensionRisks', () => {
     ];
     const out = computeDimensionRisks(cs, [cert('ISO 9001')], [doc('COA')], 'all');
     expect(out.food_safety_risk).toMatchObject({ score: 0, metWeight: 2, totalWeight: 2 });
-  });
-});
-
-describe('passesCatalogGate', () => {
-  it('passes when the rules are null', () => {
-    expect(passesCatalogGate(null, { food_safety_risk: 10 })).toEqual({ passes: true, failed: [] });
-  });
-
-  it('passes when the rules are undefined', () => {
-    expect(passesCatalogGate(undefined, { food_safety_risk: 10 })).toEqual({ passes: true, failed: [] });
-  });
-
-  it('passes when the rules are an empty object', () => {
-    expect(passesCatalogGate({}, { food_safety_risk: 10 })).toEqual({ passes: true, failed: [] });
-  });
-
-  it('passes when the score is below the threshold', () => {
-    expect(passesCatalogGate({ food_safety_risk: 5 }, { food_safety_risk: 3 }).passes).toBe(true);
-  });
-
-  it('passes when the score equals the threshold exactly (boundary, inclusive)', () => {
-    expect(passesCatalogGate({ food_safety_risk: 5 }, { food_safety_risk: 5 }).passes).toBe(true);
-  });
-
-  it('fails one point over the threshold and reports the detail', () => {
-    const r = passesCatalogGate({ food_safety_risk: 5 }, { food_safety_risk: 6 });
-    expect(r.passes).toBe(false);
-    expect(r.failed).toEqual([{ dimension: 'food_safety_risk', score: 6, max: 5 }]);
-  });
-
-  it('treats an unassessed (null) dimension as passing', () => {
-    expect(passesCatalogGate({ food_safety_risk: 0 }, { food_safety_risk: null })).toEqual({
-      passes: true,
-      failed: [],
-    });
-  });
-
-  it('treats a missing (undefined) dimension as passing', () => {
-    expect(passesCatalogGate({ food_safety_risk: 0 }, {})).toEqual({ passes: true, failed: [] });
-  });
-
-  it('does not confuse a score of 0 with "not assessed"', () => {
-    expect(passesCatalogGate({ food_safety_risk: 0 }, { food_safety_risk: 0 }).passes).toBe(true);
-    const r = passesCatalogGate({ food_safety_risk: -1 }, { food_safety_risk: 0 });
-    expect(r.passes).toBe(false);
-    expect(r.failed).toEqual([{ dimension: 'food_safety_risk', score: 0, max: -1 }]);
-  });
-
-  it('collects every failing dimension', () => {
-    const r = passesCatalogGate(
-      { food_safety_risk: 2, quality_risk: 3, delivery_risk: 9 },
-      { food_safety_risk: 10, quality_risk: 4, delivery_risk: 1 },
-    );
-    expect(r.passes).toBe(false);
-    expect(r.failed).toEqual([
-      { dimension: 'food_safety_risk', score: 10, max: 2 },
-      { dimension: 'quality_risk', score: 4, max: 3 },
-    ]);
-  });
-
-  it('passes only when every listed dimension passes', () => {
-    const r = passesCatalogGate(
-      { food_safety_risk: 5, quality_risk: 5 },
-      { food_safety_risk: 5, quality_risk: 0, delivery_risk: 10 },
-    );
-    expect(r).toEqual({ passes: true, failed: [] });
   });
 });

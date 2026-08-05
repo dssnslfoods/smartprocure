@@ -111,19 +111,6 @@ export function computeDimensionRisks(
  * every listed dimension's effective score is <= its threshold. Dimensions that are
  * not assessed (null) are treated as passing (no evidence to block on).
  */
-export function passesCatalogGate(
-  rules: Record<string, number> | null | undefined,
-  effectiveScores: Record<string, number | null>,
-): { passes: boolean; failed: { dimension: string; score: number; max: number }[] } {
-  const failed: { dimension: string; score: number; max: number }[] = [];
-  for (const [dim, max] of Object.entries(rules || {})) {
-    const score = effectiveScores[dim];
-    if (score == null) continue;
-    if (score > max) failed.push({ dimension: dim, score, max });
-  }
-  return { passes: failed.length === 0, failed };
-}
-
 export const DIMENSION_LABEL: Record<string, string> = Object.fromEntries(
   RISK_FACTORS.map(f => [f.key, f.label]),
 );

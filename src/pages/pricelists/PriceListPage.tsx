@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown, ShieldCheck, Lock } from 'lucide-react';
+import { Boxes, Package2, Wrench, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { CATEGORY_LABELS, CATEGORY_COLORS, type PriceListCategory } from '@/lib/priceListConstants';
 import { exportCatalog } from '@/lib/catalogExcel';
@@ -11,9 +11,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
   type PricelistCycleSettings, DEFAULT_CYCLE } from '@/lib/pricelistCycle';
-import { computeDimensionRisks, passesCatalogGate, DIMENSION_LABEL,
-  type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
-import { CatalogAccessDialog } from './CatalogAccessDialog';
 
 const CATEGORY_ICONS: Record<string, any> = {
   raw_material: Boxes,
@@ -32,7 +29,6 @@ interface CatalogRow {
   itemCount:   number;
   nominatedCount: number;
   myLastSubmissionAt?: string | null;   // supplier-only
-  accessRiskRules: Record<string, number>;
 }
 
 export default function PriceListPage() {
@@ -42,12 +38,9 @@ export default function PriceListPage() {
   const mySupplierId = profile?.supplier_id ?? null;
 
   const [catalogs, setCatalogs] = useState<CatalogRow[]>([]);
-  const [hiddenCount, setHiddenCount] = useState(0);
   const [loading,  setLoading]  = useState(true);
   const [exporting, setExporting] = useState(false);
   const [cycle, setCycle] = useState<PricelistCycleSettings>(DEFAULT_CYCLE);
-  const [accessEditFor, setAccessEditFor] = useState<CatalogRow | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
 
   const handleExport = async () => {
     setExporting(true);
@@ -67,7 +60,7 @@ export default function PriceListPage() {
       setLoading(true);
       const { data: lists } = await supabase
         .from('price_lists')
-        .select('id, title, category, status, valid_until, notes, access_risk_rules, price_list_items(id, is_nominated)')
+        .select('id, title, category, status, valid_until, notes, price_list_items(id, is_nominated)')
         .order('category');
 
       let mySubmissionsByCatalog: Record<string, string> = {};
@@ -103,39 +96,12 @@ export default function PriceListPage() {
         itemCount: l.price_list_items?.length ?? 0,
         nominatedCount: (l.price_list_items || []).filter((i: any) => i.is_nominated).length,
         myLastSubmissionAt: mySubmissionsByCatalog[l.id] || null,
-        accessRiskRules: (l.access_risk_rules as Record<string, number>) || {},
       }));
 
-      // Supplier gating: hide catalogs whose risk thresholds the supplier fails.
-      let hidden = 0;
-      if (isSupplier && mySupplierId) {
-        const hasRules = rows.some(r => Object.keys(r.accessRiskRules).length > 0);
-        if (hasRules) {
-          const [critRes, certRes, docRes] = await Promise.all([
-            supabase.from('risk_criteria').select('*').eq('active', true),
-            supabase.from('supplier_certificates').select('certificate_type, expiry_date').eq('supplier_id', mySupplierId),
-            supabase.from('supplier_documents').select('document_type, document_name').eq('supplier_id', mySupplierId),
-          ]);
-          const criteria = (critRes.data as RiskCriterion[]) || [];
-          const certs = (certRes.data as SupplierCert[]) || [];
-          const docs = (docRes.data as SupplierDoc[]) || [];
-          rows = rows.filter(r => {
-            if (Object.keys(r.accessRiskRules).length === 0) return true;
-            const dims = computeDimensionRisks(criteria, certs, docs, r.category as any);
-            const effective: Record<string, number | null> = {};
-            for (const [dim, res] of Object.entries(dims)) effective[dim] = res.score;
-            const { passes } = passesCatalogGate(r.accessRiskRules, effective);
-            if (!passes) hidden++;
-            return passes;
-          });
-        }
-      }
-
-      setHiddenCount(hidden);
       setCatalogs(rows);
       setLoading(false);
     })();
-  }, [isSupplier, mySupplierId, reloadKey]);
+  }, [isSupplier, mySupplierId]);
 
   return (
     <div className="space-y-6">
@@ -167,20 +133,6 @@ export default function PriceListPage() {
           </div>
         )}
       </div>
-
-      {isSupplier && hiddenCount > 0 && (
-        <Card className="border-amber-300 bg-amber-50/50">
-          <CardContent className="p-4 flex items-start gap-3">
-            <Lock className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <p className="font-medium text-amber-800">มี Catalog {hiddenCount} รายการที่ยังไม่เปิดให้เข้าถึง</p>
-              <p className="text-amber-700 text-xs mt-0.5">
-                Catalog เหล่านี้กำหนดเกณฑ์ความเสี่ยงขั้นต่ำ — กรุณาอัปโหลดเอกสาร/ใบรับรองที่จำเป็น (เช่น HACCP, GMP, ISO) เพื่อปลดล็อกการเข้าถึง
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {loading ? (
         <Card><CardContent className="p-12 text-center text-muted-foreground">กำลังโหลด...</CardContent></Card>
@@ -249,18 +201,6 @@ export default function PriceListPage() {
                     </div>
                   </div>
 
-                  {!isSupplier && Object.keys(cat.accessRiskRules).length > 0 && (
-                    <div className="mt-3 flex flex-wrap items-center gap-1">
-                      <ShieldCheck className="h-3.5 w-3.5 text-teal-600" />
-                      <span className="text-xs text-muted-foreground">เกณฑ์เข้าถึง:</span>
-                      {Object.entries(cat.accessRiskRules).map(([dim, max]) => (
-                        <Badge key={dim} variant="outline" className="text-[10px]">
-                          {DIMENSION_LABEL[dim] || dim} ≤ {max}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-
                   <div className="mt-4 flex gap-2">
                     <Button asChild className="flex-1">
                       <Link to={`/price-lists/${cat.id}`}>
@@ -269,11 +209,6 @@ export default function PriceListPage() {
                         <ArrowRight className="h-4 w-4 ml-2" />
                       </Link>
                     </Button>
-                    {!isSupplier && (
-                      <Button variant="outline" size="icon" title="ตั้งเกณฑ์การเข้าถึง" onClick={() => setAccessEditFor(cat)}>
-                        <ShieldCheck className="h-4 w-4" />
-                      </Button>
-                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -281,12 +216,6 @@ export default function PriceListPage() {
           })}
         </div>
       )}
-
-      <CatalogAccessDialog
-        catalog={accessEditFor}
-        onClose={() => setAccessEditFor(null)}
-        onSaved={() => { setAccessEditFor(null); setReloadKey(k => k + 1); }}
-      />
     </div>
   );
 }
