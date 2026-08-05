@@ -504,6 +504,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                             <Zap className="w-3 h-3" />Auto ตอน RFQ
                           </Badge>
                         )}
+                        {r.mandatoryMet === false && (
+                          <Badge variant="outline" className="text-[10px] gap-1 border-red-400 bg-red-100 text-red-800">
+                            <AlertTriangle className="w-3 h-3" />ยังไม่คิดคะแนน — ขาดเอกสารบังคับ
+                          </Badge>
+                        )}
                         {!portalMode && r.pending && !isQuotation && (
                           <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 bg-amber-100 text-amber-800">
                             <UserCheck className="w-3 h-3" />รอเลือกผลประเมิน
