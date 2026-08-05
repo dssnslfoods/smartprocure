@@ -220,6 +220,25 @@ describe('evaluateBrc — evidence matching', () => {
     expect(topicById(brc, 't-cert').score).toBe(10);
   });
 
+  it('ignores letter case on both sides of the match', () => {
+    // Keywords are typed however the admin prefers — "ISO14001", "iso14001" and
+    // "Iso14001" must all match a certificate recorded in any casing.
+    const esg = mkOption({
+      id: 'o-esg', topic_id: 't-cert', label: 'ESG', score: 7,
+      match_keywords: ['ISO14001', 'SA8000', 'BSCI', 'SMETA 4 pillar'],
+    });
+    const run = (certificate_type: string) => topicById(evalWith({
+      topics: [T_CERT], optionsByTopic: { 't-cert': [esg] },
+      certs: [{ certificate_type, expiry_date: futureDate() }],
+    }), 't-cert').score;
+
+    expect(run('iso14001 certificate')).toBe(7);   // lower-case record
+    expect(run('ISO14001')).toBe(7);               // upper-case record
+    expect(run('Certificate of SA8000')).toBe(7);  // mixed case, substring
+    expect(run('smeta 4 PILLAR audit')).toBe(7);   // multi-word keyword
+    expect(run('ISO 14001')).toBe(0);              // a space is still a difference
+  });
+
   it('ignores expired certificates', () => {
     const brc = evalWith({ certs: [{ certificate_type: 'GFSI', expiry_date: pastDate() }] });
     expect(topicById(brc, 't-cert').score).toBe(0);
@@ -309,6 +328,29 @@ describe('evaluateBrc — mandatory gate', () => {
       ],
     });
     expect(topicById(brc, 't-cert').score).toBe(10); // not 15
+  });
+
+  // Failing the gate disqualifies the supplier, so partial marks would mislead.
+  it('scores the topic 0 while a mandatory requirement is unmet', () => {
+    const brc = evalWith({
+      topics: TOPICS_M, optionsByTopic: OPTS_M,
+      certs: [{ certificate_type: 'GFSI', expiry_date: futureDate() }], // 10pt, but no Halal
+    });
+    expect(brc.mandatoryPassed).toBe(false);
+    expect(topicById(brc, 't-cert').score).toBe(0);
+    expect(topicById(brc, 't-cert').matchedOptions.length).toBeGreaterThan(0); // evidence still recorded
+  });
+
+  it('releases the score as soon as the gate is satisfied', () => {
+    const brc = evalWith({
+      topics: TOPICS_M, optionsByTopic: OPTS_M,
+      certs: [
+        { certificate_type: 'Halal', expiry_date: futureDate() },
+        { certificate_type: 'GFSI', expiry_date: futureDate() },
+      ],
+    });
+    expect(brc.mandatoryPassed).toBe(true);
+    expect(topicById(brc, 't-cert').score).toBe(10);
   });
 
   it('fails the gate when the mandatory certificate has expired', () => {

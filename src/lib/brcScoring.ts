@@ -288,6 +288,11 @@ export function evaluateBrc(
       }
     }
 
+    // Failing the gate disqualifies the supplier from this category, so partial
+    // marks on the topic would be meaningless — it scores nothing until the
+    // required document is in place. Uploading evidence stays open throughout.
+    if (mandatoryMet === false) score = 0;
+
     return { topic, options, matchedOptions: matched, evidence: topicEvidence, score, maxScore: topic.target_score, pending, mandatoryMet };
   });
 
