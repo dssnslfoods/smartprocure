@@ -217,16 +217,33 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     });
     if (insErr) {
       toast({ title: 'บันทึกเอกสารไม่สำเร็จ', description: insErr.message, variant: 'destructive' });
-    } else {
-      toast({
-        title: '✅ แนบเอกสารเรียบร้อย',
-        description: result?.expiry_date
-          ? `${file.name} — วันหมดอายุ ${new Date(result.expiry_date).toLocaleDateString('th-TH')}`
-          : file.name,
-      });
-      await load();
-      onRiskUpdated?.();
+      setVerify(null);
+      return;
     }
+    // Certificate-type options also feed the central certificate store, so
+    // Dashboard expiry alerts, RFQ certificate filters, and the "ใบรับรอง" tab
+    // pick it up — not just this one BRC criterion.
+    if (option?.match_type === 'certificate') {
+      await supabase.from('supplier_certificates').insert({
+        supplier_id: supplierId,
+        certificate_type: option.label,
+        issued_date: result?.issued_date ?? null,
+        expiry_date: result?.expiry_date ?? null,
+        file_url: urlData.publicUrl,
+        file_name: file.name,
+        file_size: file.size,
+        notes: result ? `แนบจากการประเมิน BRCGS — ${result.reason}`.slice(0, 500) : 'แนบจากการประเมิน BRCGS',
+        created_by: user?.id ?? null,
+      });
+    }
+    toast({
+      title: '✅ แนบเอกสารเรียบร้อย',
+      description: result?.expiry_date
+        ? `${file.name} — วันหมดอายุ ${new Date(result.expiry_date).toLocaleDateString('th-TH')}`
+        : file.name,
+    });
+    await load();
+    onRiskUpdated?.();
     setVerify(null);
   };
 
