@@ -7,6 +7,8 @@ interface UseSupabasePaginationOptions {
   select?: string;
   orderColumn?: string;
   orderAscending?: boolean;
+  /** Where NULLs land in the sort — default lets Postgres decide (last for ASC, first for DESC). */
+  orderNullsFirst?: boolean;
   filters?: (query: any) => any;
 }
 
@@ -17,6 +19,7 @@ export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) 
     select = '*',
     orderColumn = 'created_at',
     orderAscending = false,
+    orderNullsFirst,
     filters,
   } = options;
 
@@ -50,7 +53,7 @@ export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) 
     let dataQuery = supabase
       .from(tableName as any)
       .select(select)
-      .order(orderColumn, { ascending: orderAscending })
+      .order(orderColumn, { ascending: orderAscending, nullsFirst: orderNullsFirst })
       .range(from, to);
 
     if (filters) {
@@ -66,7 +69,7 @@ export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) 
     }
     
     setLoading(false);
-  }, [tableName, select, orderColumn, orderAscending, currentPage, pageSize, filters]);
+  }, [tableName, select, orderColumn, orderAscending, orderNullsFirst, currentPage, pageSize, filters]);
 
   useEffect(() => {
     fetchData();

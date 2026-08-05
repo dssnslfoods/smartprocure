@@ -33,6 +33,7 @@ export default function SupplierList() {
   const [tierFilter, setTierFilter] = useState('all');
   const [certFilter, setCertFilter] = useState('all');         // certificate type
   const [certStatusFilter, setCertStatusFilter] = useState('all'); // valid / expiring / expired / missing
+  const [sortBy, setSortBy] = useState<'recent' | 'risk_desc' | 'risk_asc'>('recent');
   const { hasRole, isSuperAdmin } = useAuth();
   const { toast } = useToast();
   const canDelete = hasRole('admin') || isSuperAdmin;
@@ -114,11 +115,20 @@ export default function SupplierList() {
     'supplier_risk_assessments(total_risk_score, assessed_at), ' +
     `supplier_certificates${certJoinKind}(certificate_type, expiry_date, certificate_no)`;
 
+  // risk_level is an enum ordered low < medium < high < critical, so DESC surfaces
+  // the worst BRCGS grades (D/critical) first — nulls (never assessed) always sort last.
+  const sortConfig = {
+    recent:    { orderColumn: 'created_at', orderAscending: false, orderNullsFirst: undefined },
+    risk_desc: { orderColumn: 'risk_level', orderAscending: false, orderNullsFirst: false },
+    risk_asc:  { orderColumn: 'risk_level', orderAscending: true,  orderNullsFirst: false },
+  }[sortBy];
+
   const pagination = useSupabasePagination<any>({
     tableName: 'suppliers',
     pageSize: 20,
     filters,
     select: baseSelect,
+    ...sortConfig,
   });
 
   return (
@@ -168,6 +178,14 @@ export default function SupplierList() {
             <SelectItem value="valid">ใช้งานได้ (&gt; 90 วัน)</SelectItem>
             <SelectItem value="expiring">ใกล้หมดอายุ (≤ 90 วัน)</SelectItem>
             <SelectItem value="expired">หมดอายุแล้ว</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={(v: any) => { setSortBy(v); pagination.goToPage(1); }}>
+          <SelectTrigger className="w-[190px]"><SelectValue placeholder="เรียงตาม" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="recent">ล่าสุด</SelectItem>
+            <SelectItem value="risk_desc">ความเสี่ยงสูงสุดก่อน</SelectItem>
+            <SelectItem value="risk_asc">ความเสี่ยงต่ำสุดก่อน</SelectItem>
           </SelectContent>
         </Select>
       </div>
