@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Boxes, Package2, Wrench, FlaskConical, Beaker, Cog, Settings2, MoreHorizontal, FileSpreadsheet, ArrowRight, Pin, History, Upload, FileDown, Plus, Pencil } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES, LEGACY_CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
+import { CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES, type PriceListCategory } from '@/lib/priceListConstants';
 import { exportCatalog } from '@/lib/catalogExcel';
 import { useAuth } from '@/contexts/AuthContext';
 import { assessCycle, loadPricelistCycle, CYCLE_STATUS_CLASS, CYCLE_STATUS_LABEL,
@@ -62,12 +62,16 @@ export default function PriceListPage() {
 
   const openNew = () => { setForm({ title: '', category: CATEGORIES[0], valid_until: '', notes: '' }); setEditing('new'); };
   const openEdit = (cat: CatalogRow) => {
-    setForm({ title: cat.title, category: cat.category, valid_until: cat.valid_until || '', notes: cat.notes || '' });
+    // A legacy category (not one of the 7 BRC types) shows blank — force
+    // procurement to consciously pick the right BRC category rather than
+    // silently keep the old value.
+    const isBrcCategory = (CATEGORIES as readonly string[]).includes(cat.category);
+    setForm({ title: cat.title, category: isBrcCategory ? cat.category : '', valid_until: cat.valid_until || '', notes: cat.notes || '' });
     setEditing(cat);
   };
 
   const saveCatalog = async () => {
-    if (!form.title.trim()) return;
+    if (!form.title.trim() || !form.category) return;
     setSaving(true);
     const payload = {
       title: form.title.trim(),
@@ -283,16 +287,18 @@ export default function PriceListPage() {
               <Input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
             </div>
             <div>
-              <Label>หมวดหมู่ (ตามประเภท BRC)</Label>
+              <Label>หมวดหมู่ (ตามประเภท BRC) *</Label>
               <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="เลือกหมวดหมู่..." /></SelectTrigger>
                 <SelectContent>
-                  {(LEGACY_CATEGORIES as readonly string[]).includes(form.category) && (
-                    <SelectItem value={form.category}>{CATEGORY_LABELS[form.category]} — เลือกหมวดใหม่ด้านล่าง</SelectItem>
-                  )}
                   {CATEGORIES.map(c => <SelectItem key={c} value={c}>{CATEGORY_LABELS[c]}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {!form.category && editing !== 'new' && (
+                <p className="text-[11px] text-amber-600 mt-1">
+                  Catalog นี้ยังใช้หมวดหมู่เดิมที่เลิกใช้แล้ว — กรุณาเลือกหมวด BRC ที่ตรงกับสินค้าในเล่มนี้
+                </p>
+              )}
             </div>
             <div>
               <Label>ใช้ได้ถึง</Label>
@@ -305,7 +311,7 @@ export default function PriceListPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>ยกเลิก</Button>
-            <Button onClick={saveCatalog} disabled={saving || !form.title.trim()}>
+            <Button onClick={saveCatalog} disabled={saving || !form.title.trim() || !form.category}>
               {saving ? 'กำลังบันทึก...' : 'บันทึก'}
             </Button>
           </DialogFooter>
