@@ -10,6 +10,7 @@ import { ArrowLeft, Edit, CheckCircle, XCircle, Send, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import SupplierContacts from './SupplierContacts';
 import SupplierDocuments from './SupplierDocuments';
+import SupplierCertificates from './SupplierCertificates';
 import SupplierBrcAssessment from './SupplierBrcAssessment';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
 
@@ -111,6 +112,7 @@ export default function SupplierDetail() {
           <TabsTrigger value="info">Information</TabsTrigger>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
           <TabsTrigger value="documents">เอกสารบริษัท</TabsTrigger>
+          <TabsTrigger value="certificates">ใบรับรอง</TabsTrigger>
           <TabsTrigger value="risk">ประเมิน BRCGS</TabsTrigger>
         </TabsList>
 
@@ -147,6 +149,10 @@ export default function SupplierDetail() {
 
         <TabsContent value="documents">
           <SupplierDocuments supplierId={id!} />
+        </TabsContent>
+
+        <TabsContent value="certificates">
+          <SupplierCertificates supplierId={id!} />
         </TabsContent>
 
         <TabsContent value="risk">

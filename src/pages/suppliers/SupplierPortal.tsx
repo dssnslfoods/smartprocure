@@ -13,10 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Building2, User, FileText, Landmark, Save, Upload, Download, Trash2, Plus,
-  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X, ClipboardCheck,
+  Phone, Mail, Globe, MapPin, CheckCircle2, Clock, AlertCircle, X, ClipboardCheck, ShieldCheck,
 } from 'lucide-react';
 import SupplierBrcAssessment from './SupplierBrcAssessment';
 import SupplierDocuments from './SupplierDocuments';
+import SupplierCertificates from './SupplierCertificates';
 
 const DOC_TYPES = [
   { value: 'company_certificate', label: 'หนังสือรับรองบริษัท' },
@@ -268,6 +269,7 @@ export default function SupplierPortal() {
           <TabsTrigger value="company" className="gap-1.5"><Building2 className="w-4 h-4" /> ข้อมูลบริษัท</TabsTrigger>
           <TabsTrigger value="contacts" className="gap-1.5"><User className="w-4 h-4" /> ผู้ติดต่อ</TabsTrigger>
           <TabsTrigger value="documents" className="gap-1.5"><FileText className="w-4 h-4" /> เอกสาร</TabsTrigger>
+          <TabsTrigger value="certificates" className="gap-1.5"><ShieldCheck className="w-4 h-4" /> ใบรับรอง</TabsTrigger>
           <TabsTrigger value="brc" className="gap-1.5"><ClipboardCheck className="w-4 h-4" /> เอกสารประเมิน BRCGS</TabsTrigger>
         </TabsList>
 
@@ -375,6 +377,10 @@ export default function SupplierPortal() {
         {/* Documents Tab */}
         <TabsContent value="documents">
           <SupplierDocuments supplierId={supplier.id} portalMode />
+        </TabsContent>
+        {/* Certificates Tab */}
+        <TabsContent value="certificates">
+          <SupplierCertificates supplierId={supplier.id} portalMode />
         </TabsContent>
         {/* BRC Evidence Tab */}
         <TabsContent value="brc">
