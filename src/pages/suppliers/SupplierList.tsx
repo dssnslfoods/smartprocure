@@ -109,6 +109,7 @@ export default function SupplierList() {
   const certJoinKind = (certFilter !== 'all' || (certStatusFilter !== 'all' && certStatusFilter !== 'missing')) ? '!inner' : '';
   const baseSelect =
     'id, company_name, supplier_code, supplier_type, tax_id, email, status, tier, risk_level, ' +
+    'brc_grade, brc_percent, ' +
     'certificate_expiry_date, created_at, ' +
     'supplier_risk_assessments(total_risk_score, assessed_at), ' +
     `supplier_certificates${certJoinKind}(certificate_type, expiry_date, certificate_no)`;
@@ -208,7 +209,7 @@ export default function SupplierList() {
                         <td className="p-3">
                           {(() => {
                             const assessments = s.supplier_risk_assessments as any[];
-                            const hasAssessment = assessments?.length > 0;
+                            const hasAssessment = assessments?.length > 0 || s.brc_grade != null;
                             return hasAssessment
                               ? <RiskBadge level={s.risk_level} />
                               : <span className="text-muted-foreground text-xs">ยังไม่ประเมิน</span>;
@@ -219,12 +220,23 @@ export default function SupplierList() {
                             const latest = (s.supplier_risk_assessments as any[])?.sort(
                               (a: any, b: any) => new Date(b.assessed_at).getTime() - new Date(a.assessed_at).getTime()
                             )[0];
-                            return latest?.total_risk_score != null ? (
-                              <span className="font-semibold tabular-nums text-sm">
-                                {Number(latest.total_risk_score).toFixed(1)}
-                                <span className="text-[10px] text-muted-foreground font-normal">/100</span>
-                              </span>
-                            ) : <span className="text-muted-foreground text-xs">—</span>;
+                            if (latest?.total_risk_score != null) {
+                              return (
+                                <span className="font-semibold tabular-nums text-sm">
+                                  {Number(latest.total_risk_score).toFixed(1)}
+                                  <span className="text-[10px] text-muted-foreground font-normal">/100</span>
+                                </span>
+                              );
+                            }
+                            if (s.brc_grade != null) {
+                              return (
+                                <span className="font-semibold tabular-nums text-sm">
+                                  {s.brc_grade}
+                                  <span className="text-[10px] text-muted-foreground font-normal"> · {Number(s.brc_percent ?? 0).toFixed(0)}%</span>
+                                </span>
+                              );
+                            }
+                            return <span className="text-muted-foreground text-xs">—</span>;
                           })()}
                         </td>
                         <td className="p-3">

@@ -93,6 +93,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
 
   const fileRef = useRef<HTMLInputElement>(null);
   const uploadTarget = useRef<{ topic: BrcTopic; option: BrcOption | null } | null>(null);
+  const lastSyncedRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,9 +270,23 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     onRiskUpdated?.();
   };
 
+  const brc: BrcAssessment = evaluateBrc(supplierType, topics, optionsByTopic, certs, docs, manual, bands, undefined, evidence, groupWeightsFor(weightsByType, supplierType));
+
+  // Persist a snapshot so the Suppliers list, Dashboard risk counts, and RFQ
+  // invite badges — which all read suppliers.risk_level — reflect the actual
+  // BRCGS result instead of staying stuck on the legacy vendor-risk system.
+  useEffect(() => {
+    if (!brc.grade) return;
+    const sig = `${brc.grade}|${brc.percent}|${brc.level}`;
+    if (lastSyncedRef.current === sig) return;
+    lastSyncedRef.current = sig;
+    supabase.rpc('sync_supplier_brc_risk', {
+      p_supplier_id: supplierId, p_grade: brc.grade, p_percent: brc.percent, p_level: brc.level,
+    }).then(({ error }) => { if (!error) onRiskUpdated?.(); });
+  }, [brc.grade, brc.percent, brc.level, supplierId]);
+
   if (loading) return <div className="p-8 text-center text-muted-foreground">กำลังโหลด...</div>;
 
-  const brc: BrcAssessment = evaluateBrc(supplierType, topics, optionsByTopic, certs, docs, manual, bands, undefined, evidence, groupWeightsFor(weightsByType, supplierType));
   const gs = brc.grade ? GRADE_STYLE[brc.grade] : null;
   // When commercial weight is 0, BRCGS grades purely on safety/quality — price is
   // scored separately in the RFQ Commercial pillar, so hide the commercial topics here.
