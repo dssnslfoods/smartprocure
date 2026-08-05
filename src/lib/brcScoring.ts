@@ -65,6 +65,8 @@ export interface BrcOption {
   match_keywords: string[];
   requirement: string | null;
   is_mandatory: boolean;    // qualification gate — must satisfy ≥1 mandatory option per topic
+  /** How an expired document is treated: ignore it entirely, or score it with a warning. */
+  expired_policy: 'block' | 'warn';
   sort_order: number;
 }
 
@@ -112,7 +114,8 @@ export interface QuotationContext {
 export interface TopicResult {
   topic: BrcTopic;
   options: BrcOption[];
-  matchedOptions: { option: BrcOption; via: string }[]; // via = evidence name / 'quotation' / 'manual'
+  /** via = evidence name / 'quotation' / 'manual'; expired = scored on a lapsed document */
+  matchedOptions: { option: BrcOption; via: string; expired?: boolean }[];
   evidence: BrcEvidence[];       // files uploaded directly against this topic
   score: number;
   maxScore: number;
@@ -143,6 +146,8 @@ export interface BrcAssessment {
   // Mandatory qualification gate (separate from scoring)
   mandatoryPassed: boolean;                              // false = ineligible for RFQ
   mandatoryFailures: { topic: string; options: string[] }[]; // unmet mandatory requirements
+  /** Scores awarded on lapsed documents because the option allows it — chase a renewal. */
+  expiredWarnings: { topic: string; option: string; via: string }[];
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
@@ -151,16 +156,32 @@ const norm = (s: string | null | undefined) => (s ?? '').toLowerCase();
 // the same way (parsed as LOCAL midnight, not UTC).
 
 /** Returns matched evidence name, or null. */
-function matchEvidence(opt: BrcOption, certs: SupplierCert[], docs: SupplierDoc[]): string | null {
+/**
+ * Match an option against the supplier's evidence.
+ *
+ * A valid (non-expired) certificate always wins. An expired one is only accepted
+ * when the option's `expired_policy` is 'warn', and the result is flagged so the
+ * caller can surface it — under the default 'block' policy an expired document
+ * counts for nothing.
+ */
+function matchEvidence(
+  opt: BrcOption, certs: SupplierCert[], docs: SupplierDoc[],
+): { via: string; expired: boolean } | null {
   const kws = (opt.match_keywords || []).map(norm).filter(Boolean);
   if (kws.length === 0) return null;
   if (opt.match_type === 'certificate') {
-    const hit = certs.find(c => !isExpired(c.expiry_date) && kws.some(kw => norm(c.certificate_type).includes(kw)));
-    return hit ? (hit.certificate_type || 'certificate') : null;
+    const hits = certs.filter(c => kws.some(kw => norm(c.certificate_type).includes(kw)));
+    const valid = hits.find(c => !isExpired(c.expiry_date));
+    if (valid) return { via: valid.certificate_type || 'certificate', expired: false };
+    if (opt.expired_policy === 'warn' && hits.length > 0) {
+      return { via: hits[0].certificate_type || 'certificate', expired: true };
+    }
+    return null;
   }
   if (opt.match_type === 'document') {
+    // supplier_documents carry no expiry in this view, so nothing to age out.
     const hit = docs.find(d => kws.some(kw => `${norm(d.document_type)} ${norm(d.document_name)}`.includes(kw)));
-    return hit ? (hit.document_name || hit.document_type || 'document') : null;
+    return hit ? { via: hit.document_name || hit.document_type || 'document', expired: false } : null;
   }
   return null;
 }
@@ -236,13 +257,19 @@ export function evaluateBrc(
       // evidence matching for cert/doc options
       for (const opt of options) {
         if (opt.match_type === 'certificate' || opt.match_type === 'document') {
-          const via = matchEvidence(opt, certs, docs);
-          if (via) {
-            matched.push({ option: opt, via });
+          const hit = matchEvidence(opt, certs, docs);
+          if (hit) {
+            matched.push({ option: opt, via: hit.via, expired: hit.expired });
           } else {
-            // a file uploaded directly against this option also counts (expiry-checked)
-            const direct = topicEvidence.find(e => e.option_id === opt.id && !isExpired(e.expiry_date));
-            if (direct) matched.push({ option: opt, via: direct.file_name });
+            // A file uploaded directly against this option also counts. An expired
+            // upload is accepted only when the option's policy allows it.
+            const uploads = topicEvidence.filter(e => e.option_id === opt.id);
+            const valid = uploads.find(e => !isExpired(e.expiry_date));
+            if (valid) {
+              matched.push({ option: opt, via: valid.file_name });
+            } else if (opt.expired_policy === 'warn' && uploads.length > 0) {
+              matched.push({ option: opt, via: uploads[0].file_name, expired: true });
+            }
           }
         }
       }
@@ -341,6 +368,10 @@ export function evaluateBrc(
     .filter(r => r.mandatoryMet === false)
     .map(r => ({ topic: r.topic.topic, options: r.options.filter(o => o.is_mandatory).map(o => o.label) }));
 
+  const expiredWarnings = results.flatMap(r =>
+    r.matchedOptions.filter(m => m.expired)
+      .map(m => ({ topic: r.topic.topic, option: m.option.label, via: m.via })));
+
   return {
     supplierType,
     topics: results,
@@ -362,6 +393,7 @@ export function evaluateBrc(
     commercialWeight: den > 0 ? Math.round((wCommercial / (wSafety + wCommercial)) * 100) : 0,
     mandatoryPassed: mandatoryFailures.length === 0,
     mandatoryFailures,
+    expiredWarnings,
   };
 }
 

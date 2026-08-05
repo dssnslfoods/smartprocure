@@ -561,6 +561,27 @@ export default function RiskCriteria() {
     scaled: { id: string; label: string; from: number; to: number; changed: boolean }[];
   }>(null);
 
+  /** Switch how a lapsed document is treated for this option. */
+  const toggleExpiredPolicy = async (o: BrcOption) => {
+    const next = o.expired_policy === 'warn' ? 'block' : 'warn';
+    setOptions(prev => prev.map(x => x.id === o.id ? { ...x, expired_policy: next } : x)); // optimistic
+    const { error } = await supabase.from('brc_options' as any).update({ expired_policy: next }).eq('id', o.id);
+    if (error) {
+      setOptions(prev => prev.map(x => x.id === o.id ? { ...x, expired_policy: o.expired_policy } : x));
+      toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
+      return;
+    }
+    const parent = topics.find(t => t.id === o.topic_id);
+    if (parent) {
+      await logCriteria('update_option', parent.supplier_type,
+        `ตั้งเอกสารหมดอายุของ "${o.label}" เป็น ${next === 'warn' ? 'ยังนับแต่เตือน' : 'ถือว่าไม่มีเอกสาร'}`,
+        { option: o }, { expired_policy: next });
+    }
+    toast({
+      title: next === 'warn' ? 'หมดอายุแล้วยังนับคะแนน (แจ้งเตือน)' : 'หมดอายุแล้วถือว่าไม่มีเอกสาร',
+    });
+  };
+
   const toggleMandatory = async (o: BrcOption) => {
     const next = !o.is_mandatory;
     const optimistic = options.map(x => x.id === o.id ? { ...x, is_mandatory: next } : x);
@@ -949,6 +970,15 @@ export default function RiskCriteria() {
                                       className={`text-[10px] px-1.5 py-0.5 rounded border mr-1 transition-colors ${o.is_mandatory ? 'border-red-300 bg-red-50 text-red-700' : 'border-muted-foreground/30 text-muted-foreground hover:bg-muted'}`}
                                     >
                                       {o.is_mandatory ? 'บังคับ' : 'ตั้งบังคับ'}
+                                    </button>
+                                  )}
+                                  {o.match_type === 'certificate' && (
+                                    <button
+                                      onClick={() => toggleExpiredPolicy(o)}
+                                      title="เมื่อใบรับรองหมดอายุ: ยังนับคะแนนแต่แจ้งเตือน หรือ ถือว่าไม่มีเอกสาร"
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border mr-1 transition-colors ${o.expired_policy === 'warn' ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-muted-foreground/30 text-muted-foreground hover:bg-muted'}`}
+                                    >
+                                      {o.expired_policy === 'warn' ? 'หมดอายุ: ยังนับ (เตือน)' : 'หมดอายุ: ไม่นับ'}
                                     </button>
                                   )}
                                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditOpt(o)}><Pencil className="w-3.5 h-3.5" /></Button>

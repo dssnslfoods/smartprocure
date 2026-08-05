@@ -40,6 +40,7 @@ function mkOption(over: Partial<BrcOption> & { id: string; topic_id: string }): 
     match_keywords: [],
     requirement: null,
     is_mandatory: false,
+    expired_policy: 'block',
     sort_order: 10,
     ...over,
   };
@@ -242,6 +243,72 @@ describe('evaluateBrc — evidence matching', () => {
   it('ignores expired certificates', () => {
     const brc = evalWith({ certs: [{ certificate_type: 'GFSI', expiry_date: pastDate() }] });
     expect(topicById(brc, 't-cert').score).toBe(0);
+  });
+
+  describe('expired_policy', () => {
+    const withPolicy = (expired_policy: 'block' | 'warn') => ({
+      topics: [T_CERT],
+      optionsByTopic: {
+        't-cert': [mkOption({ id: 'o-gfsi', topic_id: 't-cert', label: 'GFSI', score: 10, match_keywords: ['gfsi'], expired_policy })],
+      },
+    });
+
+    it("'block' (default) ignores an expired certificate entirely", () => {
+      const brc = evalWith({ ...withPolicy('block'), certs: [{ certificate_type: 'GFSI', expiry_date: pastDate() }] });
+      expect(topicById(brc, 't-cert').score).toBe(0);
+      expect(brc.expiredWarnings).toEqual([]);
+    });
+
+    it("'warn' still scores an expired certificate but records a warning", () => {
+      const brc = evalWith({ ...withPolicy('warn'), certs: [{ certificate_type: 'GFSI', expiry_date: pastDate() }] });
+      const t = topicById(brc, 't-cert');
+      expect(t.score).toBe(10);
+      expect(t.matchedOptions[0].expired).toBe(true);
+      expect(brc.expiredWarnings).toEqual([{ topic: 'Product Certificate', option: 'GFSI', via: 'GFSI' }]);
+    });
+
+    it('prefers a valid certificate over a lapsed one and raises no warning', () => {
+      const brc = evalWith({
+        ...withPolicy('warn'),
+        certs: [
+          { certificate_type: 'GFSI old', expiry_date: pastDate() },
+          { certificate_type: 'GFSI current', expiry_date: futureDate() },
+        ],
+      });
+      const t = topicById(brc, 't-cert');
+      expect(t.score).toBe(10);
+      expect(t.matchedOptions[0].expired).toBeFalsy();
+      expect(brc.expiredWarnings).toEqual([]);
+    });
+
+    it("'warn' also applies to a file uploaded against the option", () => {
+      const stale: BrcEvidence = {
+        id: 'e1', supplier_id: 's1', topic_id: 't-cert', option_id: 'o-gfsi',
+        file_url: 'u', file_name: 'gfsi-2020.pdf', file_size: 1, expiry_date: pastDate(),
+        note: null, created_at: new Date().toISOString(),
+      };
+      const blocked = evalWith({ ...withPolicy('block'), evidence: [stale] });
+      const warned = evalWith({ ...withPolicy('warn'), evidence: [stale] });
+      expect(topicById(blocked, 't-cert').score).toBe(0);
+      expect(topicById(warned, 't-cert').score).toBe(10);
+      expect(warned.expiredWarnings[0].via).toBe('gfsi-2020.pdf');
+    });
+
+    it("lets 'warn' satisfy the mandatory gate on a lapsed document", () => {
+      const gate = mkOption({
+        id: 'o-halal', topic_id: 't-cert', label: 'Halal', score: 0,
+        match_keywords: ['halal'], is_mandatory: true, expired_policy: 'warn',
+      });
+      const brc = evalWith({
+        topics: [T_CERT], optionsByTopic: { 't-cert': [gate, O_GFSI] },
+        certs: [
+          { certificate_type: 'Halal', expiry_date: pastDate() },
+          { certificate_type: 'GFSI', expiry_date: futureDate() },
+        ],
+      });
+      expect(brc.mandatoryPassed).toBe(true);
+      expect(brc.expiredWarnings.some(w => w.option === 'Halal')).toBe(true);
+    });
   });
 
   it('treats a certificate with no expiry date as valid', () => {

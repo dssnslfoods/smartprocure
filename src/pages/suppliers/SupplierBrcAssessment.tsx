@@ -445,6 +445,26 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
         )
       )}
 
+      {/* Scores still awarded on lapsed documents, per the criterion's setting */}
+      {brc.expiredWarnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900 text-sm">
+          <Clock className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">
+              ยังให้คะแนนจากเอกสารที่หมดอายุ {brc.expiredWarnings.length} รายการ — ควรขอฉบับต่ออายุ
+            </p>
+            <ul className="mt-1 text-xs list-disc list-inside space-y-0.5">
+              {brc.expiredWarnings.map((w, i) => (
+                <li key={i}>{w.topic} — {w.option} (พบ: {w.via})</li>
+              ))}
+            </ul>
+            <p className="text-[11px] mt-1">
+              เกณฑ์เหล่านี้ตั้งไว้เป็น "หมดอายุ: ยังนับ (เตือน)" หากต้องการให้ถือว่าไม่มีเอกสาร ปรับได้ที่หน้าเกณฑ์ความเสี่ยง
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Mandatory qualification gate */}
       {hasMandatory && (
         brc.mandatoryFailures.length > 0 ? (
@@ -478,6 +498,7 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
             const hasManualChoice = t.auto_source === 'manual' || manualOptions.length > 0;
             const selected = manual[t.id]?.option_id ?? '_none';
             const matchedIds = new Set(r.matchedOptions.map(m => m.option.id));
+            const matchedExpired = new Set(r.matchedOptions.filter(m => m.expired).map(m => m.option.id));
             const viaOf = (optId: string) => r.matchedOptions.find(m => m.option.id === optId)?.via;
             // In best_match the tiers are alternatives — only the highest one scores.
             const isBestMatch = t.scoring_mode === 'best_match';
@@ -566,6 +587,11 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
                                   )}
                                   {met && via && via !== 'manual' && via !== 'quotation' && (
                                     <span className="text-[10px] text-green-700">— พบ: {via}</span>
+                                  )}
+                                  {matchedExpired.has(o.id) && (
+                                    <Badge variant="outline" className="text-[9px] gap-0.5 border-amber-400 bg-amber-50 text-amber-800 py-0">
+                                      <Clock className="w-2.5 h-2.5" />หมดอายุแล้ว — ยังนับตามที่ตั้งไว้
+                                    </Badge>
                                   )}
                                   {isManualOpt && (
                                     <span className="text-[10px] text-muted-foreground">({portalMode ? 'เจ้าหน้าที่เป็นผู้ประเมิน — แนบเอกสารประกอบได้' : 'ประเมินเอง'})</span>
