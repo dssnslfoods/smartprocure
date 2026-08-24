@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import RiskBadge, { EligibilityBadge } from '@/components/RiskBadge';
 import { checkSupplierEligibility } from '@/lib/eligibility';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
-import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
+import { requiredCertsForCatalogItems, checkCatalogEligibility, targetTypeForCatalogItems, type CatalogEligibility } from '@/lib/catalogCerts';
 import { computeRfqBidRisk, risk10ToLevel, type BidRiskResult } from '@/lib/bidRisk';
 import { computeDimensionRisks, DIMENSION_LABEL, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import type { EligibilityResult } from '@/types/procurement';
@@ -113,13 +113,17 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
 
       // BRCGS mandatory qualification gate for the Available list.
       if (supplierIds.length) {
-        setMandatoryElig(await computeSupplierEligibility(supplierIds));
-
-        // Catalog/product certificate gate — from this RFQ's catalog items.
         const { data: rfqItems } = await supabase.from('rfq_items')
           .select('source_price_list_item_id').eq('rfq_id', rfqId);
         const catItemIds = ((rfqItems as any[]) || [])
           .map(r => r.source_price_list_item_id).filter(Boolean);
+
+        // Gate against the category this RFQ is actually buying in, so a supplier
+        // assessed in several categories is judged on the relevant one.
+        const targetType = await targetTypeForCatalogItems(catItemIds);
+        setMandatoryElig(await computeSupplierEligibility(supplierIds, targetType));
+
+        // Catalog/product certificate gate — from this RFQ's catalog items.
         if (catItemIds.length) {
           const certs = await requiredCertsForCatalogItems(catItemIds);
           setCatalogElig(await checkCatalogEligibility(supplierIds, certs));

@@ -3,6 +3,7 @@ import {
   evaluateBrc,
   parsePaymentTermDays,
   groupWeightsFor,
+  gateTypesFor,
   type BrcTopic,
   type BrcOption,
   type BrcGradeBand,
@@ -678,5 +679,37 @@ describe('groupWeightsFor', () => {
 
   it('returns undefined for an unconfigured type so the engine falls back', () => {
     expect(groupWeightsFor({}, TYPE)).toBeUndefined();
+  });
+});
+
+describe('gateTypesFor — multi-category suppliers', () => {
+  it('auto-passes an unclassified supplier (no categories assigned)', () => {
+    expect(gateTypesFor([])).toEqual([]);
+    expect(gateTypesFor([], 'rm_primary_pk')).toEqual([]);
+  });
+
+  it('gates a single-category supplier on that category', () => {
+    expect(gateTypesFor(['service'])).toEqual(['service']);
+  });
+
+  it('gates on the target category when the supplier sells in it', () => {
+    expect(gateTypesFor(['secondary_pk', 'service'], 'service')).toEqual(['service']);
+  });
+
+  it('auto-passes when the supplier is not assessed in the target category', () => {
+    // Not assessed in what this RFQ buys → nothing to hold them to here, same as
+    // the pre-existing rule for unclassified suppliers.
+    expect(gateTypesFor(['service'], 'rm_primary_pk')).toEqual([]);
+  });
+
+  it('gates on every assigned category when the target is unknown', () => {
+    // RFQ spans several catalogs (or none) — supplier passes if ANY qualifies.
+    expect(gateTypesFor(['secondary_pk', 'service'])).toEqual(['secondary_pk', 'service']);
+    expect(gateTypesFor(['secondary_pk', 'service'], null)).toEqual(['secondary_pk', 'service']);
+  });
+
+  it('is unaffected by a target category that is an empty string', () => {
+    // '' is falsy — must behave as "no target", not as "target not assigned".
+    expect(gateTypesFor(['service'], '')).toEqual(['service']);
   });
 });

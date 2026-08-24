@@ -106,6 +106,25 @@ export async function requiredCertsForCatalogItems(
   });
 }
 
+/**
+ * The BRC category an RFQ is effectively bidding in, derived from the catalogs its
+ * items came from. Returns null when the items span several categories (or none) —
+ * there is no single category to hold suppliers to, so the caller should fall back
+ * to the permissive "passes if any assigned category qualifies" rule.
+ */
+export async function targetTypeForCatalogItems(
+  priceListItemIds: string[],
+): Promise<string | null> {
+  const ids = Array.from(new Set(priceListItemIds)).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data } = await supabase.from('price_list_items')
+    .select('price_lists(category)').in('id', ids);
+  const cats = new Set(
+    ((data as any[]) || []).map(r => r.price_lists?.category).filter(Boolean),
+  );
+  return cats.size === 1 ? ([...cats][0] as string) : null;
+}
+
 export interface CatalogEligibility {
   passed: boolean;
   missing: string[];   // labels of required certs the supplier lacks

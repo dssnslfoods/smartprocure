@@ -10,13 +10,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   FileBadge, FileText, Zap, UserCheck, CheckCircle2, CircleDashed, Trophy,
-  Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle, ListChecks,
+  Paperclip, ExternalLink, Trash2, Loader2, Sparkles, AlertTriangle, Clock, XCircle, ListChecks, Plus,
 } from 'lucide-react';
 import {
   evaluateBrc, loadBrcStandard, loadSupplierEvidence, groupWeightsFor, loadSupplierTypes,
+  loadSupplierBrcTypes,
   type BrcAssessment, type BrcSupplierType, type BrcTopic, type BrcOption,
   type BrcGradeBand, type BrcManualScore, type BrcEvidence, type BrcCategoryWeight,
-  type SupplierCert, type SupplierDoc, type BrcSupplierTypeRow,
+  type SupplierCert, type SupplierDoc, type BrcSupplierTypeRow, type SupplierBrcTypeRow,
 } from '@/lib/brcScoring';
 import { expiryStatus } from '@/lib/dateUtils';
 import { safeStorageName } from '@/lib/companyDocs';
@@ -79,6 +80,9 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   const [supplierType, setSupplierType] = useState<BrcSupplierType>('rm_primary_pk');
   const [companyName, setCompanyName] = useState('');
   const [typeRows, setTypeRows] = useState<BrcSupplierTypeRow[]>([]);
+  // Categories this supplier is assessed under — a supplier can sell in several.
+  const [assigned, setAssigned] = useState<SupplierBrcTypeRow[]>([]);
+  const [removeTarget, setRemoveTarget] = useState<SupplierBrcTypeRow | null>(null);
   const SUPPLIER_TYPES = useMemo(() => typeRows.filter(t => t.active).map(t => t.key), [typeRows]);
   const SUPPLIER_TYPE_LABEL = useMemo(
     () => Object.fromEntries(typeRows.map(t => [t.key, t.label_th])) as Record<string, string>,
@@ -102,11 +106,12 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [standard, ev, supRes, typeRes] = await Promise.all([
+    const [standard, ev, supRes, typeRes, assignedRows] = await Promise.all([
       loadBrcStandard(),
       loadSupplierEvidence([supplierId]),
       supabase.from('suppliers').select('company_name').eq('id', supplierId).single(),
       loadSupplierTypes(),
+      loadSupplierBrcTypes(supplierId),
     ]);
     setTopics(standard.topics);
     setOptionsByTopic(standard.optionsByTopic);
@@ -118,16 +123,51 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
     setEvidence(ev.evidenceBy[supplierId] || []);
     setCompanyName(supRes.data?.company_name || '');
     setTypeRows(typeRes);
-    const st = ev.typesBy[supplierId] as BrcSupplierType | null;
-    if (st && typeRes.some(t => t.key === st)) setSupplierType(st);
+    setAssigned(assignedRows);
+
+    // View whichever assigned category makes sense: keep the one already open,
+    // else the primary, else the first assigned, else the legacy single column.
+    const known = (k: string | null | undefined) => !!k && typeRes.some(t => t.key === k);
+    const assignedKeys = assignedRows.map(a => a.supplier_type).filter(known);
+    const primary = assignedRows.find(a => a.is_primary)?.supplier_type;
+    const legacy = ev.typesBy[supplierId] as BrcSupplierType | null;
+    setSupplierType(prev =>
+      assignedKeys.includes(prev) ? prev
+      : (known(primary) && primary) || assignedKeys[0] || (known(legacy) && legacy) || prev);
     setLoading(false);
   }, [supplierId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const changeType = async (st: BrcSupplierType) => {
+  /** Assign a category this supplier also sells in. Existing categories are untouched. */
+  const addType = async (st: BrcSupplierType) => {
+    const { error } = await supabase.from('supplier_brc_types' as any).insert({
+      supplier_id: supplierId, supplier_type: st, is_primary: assigned.length === 0,
+    });
+    if (error) { toast({ title: 'เพิ่มประเภทไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    // Keep the legacy single column pointing at the primary category so the
+    // Suppliers list / RFQ screens that still read it keep working.
+    if (assigned.length === 0) {
+      await supabase.from('suppliers').update({ brc_supplier_type: st } as any).eq('id', supplierId);
+    }
     setSupplierType(st);
-    await supabase.from('suppliers').update({ brc_supplier_type: st } as any).eq('id', supplierId);
+    toast({ title: 'เพิ่มประเภทแล้ว', description: SUPPLIER_TYPE_LABEL[st] });
+    await load();
+    onRiskUpdated?.();
+  };
+
+  const removeType = async (row: SupplierBrcTypeRow) => {
+    const { error } = await supabase.from('supplier_brc_types' as any).delete().eq('id', row.id);
+    if (error) { toast({ title: 'ลบไม่สำเร็จ', description: error.message, variant: 'destructive' }); return; }
+    // Hand "primary" to another category so the legacy column never goes stale.
+    const rest = assigned.filter(a => a.id !== row.id);
+    if (row.is_primary && rest.length > 0) {
+      await supabase.from('supplier_brc_types' as any).update({ is_primary: true }).eq('id', rest[0].id);
+      await supabase.from('suppliers').update({ brc_supplier_type: rest[0].supplier_type } as any).eq('id', supplierId);
+    }
+    toast({ title: 'ลบประเภทออกแล้ว', description: 'เอกสารที่แนบไว้ยังอยู่ครบ หากเพิ่มประเภทนี้กลับมาจะเห็นเหมือนเดิม' });
+    setRemoveTarget(null);
+    await load();
     onRiskUpdated?.();
   };
 
@@ -282,15 +322,18 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
   // Persist a snapshot so the Suppliers list, Dashboard risk counts, and RFQ
   // invite badges — which all read suppliers.risk_level — reflect the actual
   // BRCGS result instead of staying stuck on the legacy vendor-risk system.
+  // Recorded per category; the RPC then rolls the WORST grade across all of the
+  // supplier's categories up to suppliers.risk_level / brc_grade.
   useEffect(() => {
-    if (!brc.grade) return;
-    const sig = `${brc.grade}|${brc.percent}|${brc.level}`;
+    if (!brc.grade || !assigned.some(a => a.supplier_type === supplierType)) return;
+    const sig = `${supplierType}|${brc.grade}|${brc.percent}|${brc.level}`;
     if (lastSyncedRef.current === sig) return;
     lastSyncedRef.current = sig;
-    supabase.rpc('sync_supplier_brc_risk', {
-      p_supplier_id: supplierId, p_grade: brc.grade, p_percent: brc.percent, p_level: brc.level,
+    supabase.rpc('sync_supplier_brc_type_risk', {
+      p_supplier_id: supplierId, p_type: supplierType,
+      p_grade: brc.grade, p_percent: brc.percent, p_level: brc.level,
     }).then(({ error }) => { if (!error) onRiskUpdated?.(); });
-  }, [brc.grade, brc.percent, brc.level, supplierId]);
+  }, [brc.grade, brc.percent, brc.level, supplierId, supplierType, assigned]);
 
   if (loading) return <div className="p-8 text-center text-muted-foreground">กำลังโหลด...</div>;
 
@@ -354,14 +397,53 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
       <Card className={portalMode ? '' : (gs?.card || '')}>
         <CardContent className="p-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="space-y-1.5 min-w-[260px]">
-              <Label className="text-xs">ประเภท Supplier (BRCGS)</Label>
-              <Select value={supplierType} onValueChange={v => changeType(v as BrcSupplierType)} disabled={!canEdit}>
-                <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {SUPPLIER_TYPES.map(st => <SelectItem key={st} value={st}>{SUPPLIER_TYPE_LABEL[st]}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            <div className="space-y-1.5 min-w-[260px] max-w-full">
+              <Label className="text-xs">ประเภท Supplier (BRCGS) — เลือกได้หลายประเภท</Label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {assigned.map(a => {
+                  const isView = a.supplier_type === supplierType;
+                  return (
+                    <span key={a.id}
+                      className={`inline-flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-0.5 text-xs cursor-pointer transition-colors ${
+                        isView ? 'border-primary bg-primary/10 text-primary font-medium' : 'bg-background hover:bg-muted'
+                      }`}
+                      onClick={() => setSupplierType(a.supplier_type)}>
+                      {SUPPLIER_TYPE_LABEL[a.supplier_type] || a.supplier_type}
+                      {a.grade && (
+                        <span className={`rounded px-1 text-[10px] font-bold ${GRADE_STYLE[a.grade]?.badge || 'bg-muted'}`}>{a.grade}</span>
+                      )}
+                      {canEdit && (
+                        <button className="rounded-full p-0.5 hover:bg-destructive/15"
+                          title="ลบประเภทนี้ออก"
+                          onClick={e => { e.stopPropagation(); setRemoveTarget(a); }}>
+                          <XCircle className="w-3 h-3 text-muted-foreground" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+                {canEdit && SUPPLIER_TYPES.some(st => !assigned.some(a => a.supplier_type === st)) && (
+                  <Select value="" onValueChange={v => addType(v as BrcSupplierType)}>
+                    <SelectTrigger className="h-7 w-auto gap-1 border-dashed bg-background px-2 text-xs">
+                      <Plus className="w-3 h-3" />เพิ่มประเภท
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUPPLIER_TYPES.filter(st => !assigned.some(a => a.supplier_type === st))
+                        .map(st => <SelectItem key={st} value={st}>{SUPPLIER_TYPE_LABEL[st]}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              {assigned.length === 0 && (
+                <p className="text-[11px] text-amber-600">
+                  ยังไม่ได้กำหนดประเภท — {canEdit ? 'กด "เพิ่มประเภท" เพื่อเริ่มประเมิน' : 'รอฝ่ายจัดซื้อกำหนดประเภท'} (ยังไม่ถูกบังคับตามเกณฑ์ใดจนกว่าจะกำหนด)
+                </p>
+              )}
+              {assigned.length > 1 && (
+                <p className="text-[11px] text-muted-foreground">
+                  คลิกที่ประเภทเพื่อสลับดูเกณฑ์/คะแนนของประเภทนั้น — แต่ละประเภทมีเกรดของตัวเอง
+                </p>
+              )}
               {portalMode && (
                 <p className="text-[11px] text-muted-foreground">อัปโหลดเอกสารประกอบในแต่ละข้อด้านล่าง — AI จะตรวจสอบความถูกต้องและวันหมดอายุให้อัตโนมัติ</p>
               )}
@@ -852,6 +934,24 @@ export default function SupplierBrcAssessment({ supplierId, onRiskUpdated, porta
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove an assigned category — evidence is deliberately kept */}
+      <Dialog open={!!removeTarget} onOpenChange={v => !v && setRemoveTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>ลบประเภท "{removeTarget ? (SUPPLIER_TYPE_LABEL[removeTarget.supplier_type] || removeTarget.supplier_type) : ''}" ออก?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            ผู้ขายรายนี้จะไม่ถูกประเมิน/ไม่ถูกบังคับตามเกณฑ์ของประเภทนี้อีก
+            <br /><br />
+            <b className="text-foreground">เอกสารและผลประเมินที่ทำไว้จะไม่ถูกลบ</b> — หากเพิ่มประเภทนี้กลับมาภายหลังจะเห็นข้อมูลเดิมครบเหมือนเดิม
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRemoveTarget(null)}>ยกเลิก</Button>
+            <Button variant="destructive" size="sm" onClick={() => removeTarget && removeType(removeTarget)}>ลบประเภท</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -447,12 +447,37 @@ export interface SupplierEligibility {
 }
 
 /**
+ * Which of a supplier's assigned categories the mandatory gate should be evaluated
+ * against. `[]` means "nothing to hold them to" → auto-pass. More than one entry
+ * means the supplier passes if ANY of them qualifies.
+ *
+ *  - no categories assigned      → auto-pass (an unclassified supplier can't fairly
+ *                                  be held to a specific category's requirements)
+ *  - a target category given     → only that one, and only if actually assigned
+ *  - no target category          → all assigned (RFQ spans categories, or unknown)
+ */
+export function gateTypesFor(
+  assigned: string[],
+  targetType?: string | null,
+): string[] {
+  if (assigned.length === 0) return [];
+  if (targetType) return assigned.includes(targetType) ? [targetType] : [];
+  return assigned;
+}
+
+/**
  * Compute the mandatory qualification gate for a set of suppliers (evidence-based,
- * no RFQ/quotation context). A supplier is ineligible when it fails any mandatory
- * requirement of its BRCGS category — used to gate RFQ invitations.
+ * no RFQ/quotation context). A supplier is ineligible when it fails the mandatory
+ * requirements of the BRCGS category it would be bidding in — used to gate RFQ
+ * invitations.
+ *
+ * `targetType` is the category being bid on (from the catalog). Without it, a
+ * supplier assessed in several categories passes if ANY of them qualifies — it
+ * may be bidding in any of the categories it sells into.
  */
 export async function computeSupplierEligibility(
   supplierIds: string[],
+  targetType?: BrcSupplierType | null,
 ): Promise<Record<string, SupplierEligibility>> {
   const ids = Array.from(new Set(supplierIds)).filter(Boolean);
   const out: Record<string, SupplierEligibility> = {};
@@ -467,43 +492,63 @@ export async function computeSupplierEligibility(
     ids.forEach(sid => { out[sid] = { passed: true, failures: [] }; });
     return out;
   }
-  for (const sid of ids) {
-    // Only gate suppliers whose BRCGS category is explicitly set — an unclassified
-    // supplier can't fairly be held to a specific category's mandatory requirements.
-    const st = evidence.typesBy[sid] as BrcSupplierType | null;
-    if (!st || !SUPPLIER_TYPES.includes(st)) {
-      out[sid] = { passed: true, failures: [] };
-      continue;
-    }
+  const gateFor = (sid: string, st: BrcSupplierType) => {
     const brc = evaluateBrc(
       st, topics, optionsByTopic,
       evidence.certsBy[sid] || [], evidence.docsBy[sid] || [],
       evidence.manualBy[sid] || {}, bands, undefined,
       evidence.evidenceBy[sid] || [], groupWeightsFor(weightsByType, st),
     );
-    out[sid] = { passed: brc.mandatoryPassed, failures: brc.mandatoryFailures };
+    return { passed: brc.mandatoryPassed, failures: brc.mandatoryFailures };
+  };
+
+  for (const sid of ids) {
+    const gateTypes = gateTypesFor(evidence.typeListBy[sid] || [], targetType);
+    if (gateTypes.length === 0) { out[sid] = { passed: true, failures: [] }; continue; }
+    // Passes if ANY gated category qualifies; otherwise report the first failure.
+    const results = gateTypes.map(st => gateFor(sid, st));
+    out[sid] = results.find(r => r.passed) ?? results[0];
   }
   return out;
+}
+
+/** Categories a supplier is assessed under (many-to-many). */
+export async function loadSupplierBrcTypes(supplierId: string): Promise<SupplierBrcTypeRow[]> {
+  const { data } = await supabase.from('supplier_brc_types' as any)
+    .select('*').eq('supplier_id', supplierId).order('created_at');
+  return (data as unknown as SupplierBrcTypeRow[]) || [];
+}
+
+export interface SupplierBrcTypeRow {
+  id: string;
+  supplier_id: string;
+  supplier_type: string;
+  grade: string | null;
+  percent: number | null;
+  assessed_at: string | null;
+  is_primary: boolean;
 }
 
 /** Load supplier evidence + manual scores for a set of suppliers. */
 export async function loadSupplierEvidence(supplierIds: string[]) {
   const ids = Array.from(new Set(supplierIds)).filter(Boolean);
   if (ids.length === 0) {
-    return { certsBy: {}, docsBy: {}, manualBy: {}, typesBy: {}, evidenceBy: {} } as {
+    return { certsBy: {}, docsBy: {}, manualBy: {}, typesBy: {}, typeListBy: {}, evidenceBy: {} } as {
       certsBy: Record<string, SupplierCert[]>;
       docsBy: Record<string, SupplierDoc[]>;
       manualBy: Record<string, Record<string, BrcManualScore>>;
       typesBy: Record<string, string | null>;
+      typeListBy: Record<string, string[]>;
       evidenceBy: Record<string, BrcEvidence[]>;
     };
   }
-  const [cRes, dRes, mRes, sRes, eRes] = await Promise.all([
+  const [cRes, dRes, mRes, sRes, eRes, tRes] = await Promise.all([
     supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date').in('supplier_id', ids),
     supabase.from('supplier_documents').select('supplier_id, document_type, document_name').in('supplier_id', ids),
     supabase.from('brc_manual_scores' as any).select('*').in('supplier_id', ids),
     supabase.from('suppliers').select('id, brc_supplier_type').in('id', ids),
     supabase.from('brc_evidence' as any).select('*').in('supplier_id', ids).order('created_at', { ascending: false }),
+    supabase.from('supplier_brc_types' as any).select('supplier_id, supplier_type').in('supplier_id', ids),
   ]);
   const certsBy: Record<string, SupplierCert[]> = {};
   (cRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
@@ -511,9 +556,17 @@ export async function loadSupplierEvidence(supplierIds: string[]) {
   (dRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
   const manualBy: Record<string, Record<string, BrcManualScore>> = {};
   ((mRes.data as any[]) || []).forEach((m: any) => ((manualBy[m.supplier_id] ??= {})[m.topic_id] = m));
+  // typesBy = the primary/default category (suppliers.brc_supplier_type);
+  // typeListBy = every category the supplier is assessed under.
   const typesBy: Record<string, string | null> = {};
   ((sRes.data as any[]) || []).forEach((s: any) => (typesBy[s.id] = s.brc_supplier_type));
+  const typeListBy: Record<string, string[]> = {};
+  ((tRes.data as any[]) || []).forEach((t: any) => (typeListBy[t.supplier_id] ??= []).push(t.supplier_type));
+  // Fall back to the legacy single column for any supplier with no rows yet.
+  for (const sid of ids) {
+    if (!typeListBy[sid]?.length && typesBy[sid]) typeListBy[sid] = [typesBy[sid] as string];
+  }
   const evidenceBy: Record<string, BrcEvidence[]> = {};
   ((eRes.data as any[]) || []).forEach((e: any) => (evidenceBy[e.supplier_id] ??= []).push(e));
-  return { certsBy, docsBy, manualBy, typesBy, evidenceBy };
+  return { certsBy, docsBy, manualBy, typesBy, typeListBy, evidenceBy };
 }
