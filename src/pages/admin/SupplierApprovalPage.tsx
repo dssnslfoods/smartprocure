@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
-import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2, Trash2, AlertTriangle } from 'lucide-react';
+import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2, Trash2, AlertTriangle, History } from 'lucide-react';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -35,6 +35,9 @@ export default function SupplierApprovalPage() {
   const [deleteBlocked, setDeleteBlocked] = useState(false);
   const [deleteTxDetails, setDeleteTxDetails] = useState<any[]>([]);
   const [deleting, setDeleting] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const { toast } = useToast();
 
   const fetchSuppliers = async () => {
@@ -81,34 +84,46 @@ export default function SupplierApprovalPage() {
 
   const handleSaveEdit = async () => {
     if (!selected) return;
-    if (!editForm.company_name?.trim()) {
-      toast({ title: 'กรุณากรอกชื่อบริษัท', variant: 'destructive' });
-      return;
-    }
+    // Only contact-type fields are editable here — everything else on the
+    // registration (company name, tax ID, address, ...) is locked.
+    const changed = EDIT_FIELDS.filter(f => (editForm[f.key] || '') !== (selected[f.key] || ''));
+    if (changed.length === 0) { setEditing(false); return; }
+
     setSaving(true);
-    const { error } = await supabase.from('suppliers').update({
-      company_name: editForm.company_name,
-      tax_id: editForm.tax_id || null,
-      address: editForm.address || null,
-      city: editForm.city || null,
-      country: editForm.country || null,
-      phone: editForm.phone || null,
-      email: editForm.email || null,
-      website: editForm.website || null,
-      contact_person: editForm.contact_person || null,
-      notes: editForm.notes || null,
-      updated_at: new Date().toISOString(),
-    } as any).eq('id', selected.id);
-    setSaving(false);
+    const payload: Record<string, any> = { updated_at: new Date().toISOString() };
+    changed.forEach(f => { payload[f.key] = editForm[f.key] || null; });
+    const { error } = await supabase.from('suppliers').update(payload).eq('id', selected.id);
 
     if (error) {
+      setSaving(false);
       toast({ title: 'บันทึกไม่สำเร็จ', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'บันทึกสำเร็จ', description: `อัปเดตข้อมูล ${editForm.company_name} เรียบร้อย` });
-      setEditing(false);
-      setSelected({ ...selected, ...editForm });
-      fetchSuppliers();
+      return;
     }
+
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from('supplier_contact_history').insert(changed.map(f => ({
+      supplier_id: selected.id,
+      field: f.key,
+      old_value: selected[f.key] || null,
+      new_value: editForm[f.key] || null,
+      changed_by: userData.user?.id ?? null,
+      changed_by_email: userData.user?.email ?? null,
+    })));
+
+    setSaving(false);
+    toast({ title: 'บันทึกสำเร็จ', description: `อัปเดตข้อมูลติดต่อของ ${selected.company_name} เรียบร้อย — เก็บค่าเดิมไว้ในประวัติแล้ว` });
+    setEditing(false);
+    setSelected((prev: any) => ({ ...prev, ...payload }));
+    fetchSuppliers();
+  };
+
+  const loadHistory = async (supplierId: string) => {
+    setHistoryLoading(true);
+    setHistoryOpen(true);
+    const { data } = await supabase.from('supplier_contact_history')
+      .select('*').eq('supplier_id', supplierId).order('changed_at', { ascending: false });
+    setHistory(data || []);
+    setHistoryLoading(false);
   };
 
   const handleApprove = async (id: string) => {
@@ -292,12 +307,17 @@ export default function SupplierApprovalPage() {
 
   const pagination = usePagination(filtered, { pageSize: 20 });
 
+  // Only contact-type info may be edited from this screen — company name, tax
+  // ID, address, etc. are part of the verified registration and stay locked.
+  // Every change here is kept in supplier_contact_history.
   const EDIT_FIELDS: { key: string; label: string; required?: boolean }[] = [
-    { key: 'company_name', label: 'ชื่อบริษัท', required: true },
-    { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
     { key: 'contact_person', label: 'ผู้ติดต่อ' },
     { key: 'phone', label: 'เบอร์โทร' },
     { key: 'email', label: 'อีเมล' },
+  ];
+  const LOCKED_FIELDS: { key: string; label: string }[] = [
+    { key: 'company_name', label: 'ชื่อบริษัท' },
+    { key: 'tax_id', label: 'เลขประจำตัวผู้เสียภาษี' },
     { key: 'website', label: 'เว็บไซต์' },
     { key: 'address', label: 'ที่อยู่' },
     { key: 'city', label: 'จังหวัด' },
@@ -445,29 +465,31 @@ export default function SupplierApprovalPage() {
                   <Building2 className="w-4 h-4" /> ข้อมูลบริษัท
                 </h3>
                 {editing ? (
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {EDIT_FIELDS.map(f => (
-                      <div key={f.key} className={f.key === 'address' ? 'md:col-span-2 space-y-1.5' : 'space-y-1.5'}>
-                        <Label className="text-xs">
-                          {f.label} {f.required && <span className="text-red-500">*</span>}
-                        </Label>
-                        <Input
-                          value={editForm[f.key] || ''}
-                          onChange={e => handleEditChange(f.key, e.target.value)}
-                          placeholder={f.label}
-                          className="h-9"
-                        />
-                      </div>
-                    ))}
-                    <div className="md:col-span-2 space-y-1.5">
-                      <Label className="text-xs">หมายเหตุ</Label>
-                      <Textarea
-                        value={editForm.notes || ''}
-                        onChange={e => handleEditChange('notes', e.target.value)}
-                        rows={2}
-                        placeholder="หมายเหตุ"
-                      />
+                  <div className="space-y-4">
+                    <div className="rounded-lg border bg-muted/30 p-3 grid gap-2 text-sm">
+                      <p className="text-xs text-muted-foreground mb-1">
+                        ข้อมูลลงทะเบียนที่ตรวจสอบแล้ว — แก้ไขไม่ได้จากหน้านี้
+                      </p>
+                      {LOCKED_FIELDS.map(f => <Row key={f.key} label={f.label} value={selected[f.key]} />)}
+                      {selected.notes && <Row label="หมายเหตุ" value={selected.notes} />}
                     </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {EDIT_FIELDS.map(f => (
+                        <div key={f.key} className="space-y-1.5">
+                          <Label className="text-xs">{f.label}</Label>
+                          <Input
+                            value={editForm[f.key] || ''}
+                            onChange={e => handleEditChange(f.key, e.target.value)}
+                            placeholder={f.label}
+                            className="h-9"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <Button variant="ghost" size="sm" className="text-muted-foreground"
+                      onClick={() => loadHistory(selected.id)}>
+                      <History className="w-3.5 h-3.5 mr-1" /> ดูประวัติการแก้ไข
+                    </Button>
                   </div>
                 ) : (
                   <div className="grid gap-2 text-sm">
@@ -655,6 +677,41 @@ export default function SupplierApprovalPage() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Contact field edit history */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-w-lg max-h-[75vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><History className="w-4 h-4" /> ประวัติการแก้ไขข้อมูลติดต่อ</DialogTitle>
+          </DialogHeader>
+          {historyLoading ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> กำลังโหลด...
+            </div>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">ยังไม่มีประวัติการแก้ไข</p>
+          ) : (
+            <div className="space-y-2">
+              {history.map(h => (
+                <div key={h.id} className="rounded-lg border p-3 text-sm space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">
+                      {EDIT_FIELDS.find(f => f.key === h.field)?.label || h.field}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{new Date(h.changed_at).toLocaleString('th-TH')}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground line-through">{h.old_value || '(ว่าง)'}</span>
+                    <span>→</span>
+                    <span className="font-medium">{h.new_value || '(ว่าง)'}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">โดย {h.changed_by_email || 'ไม่ทราบผู้แก้ไข'}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
