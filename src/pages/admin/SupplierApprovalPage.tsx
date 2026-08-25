@@ -11,8 +11,10 @@ import { useToast } from '@/hooks/use-toast';
 import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2, Trash2, AlertTriangle, History } from 'lucide-react';
 import SupplierBlacklistAction from '@/components/SupplierBlacklistAction';
+import { loadSupplierTypes, type BrcSupplierTypeRow, type SupplierBrcTypeRow } from '@/lib/brcScoring';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -39,20 +41,33 @@ export default function SupplierApprovalPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [typeRows, setTypeRows] = useState<BrcSupplierTypeRow[]>([]);
+  // supplier_id → BRC categories it's assigned to (many-to-many; each row also
+  // carries the grade, so we can tell "assigned" apart from "actually assessed").
+  const [brcByType, setBrcByType] = useState<Record<string, SupplierBrcTypeRow[]>>({});
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [assessFilter, setAssessFilter] = useState<'all' | 'assessed' | 'not_assessed'>('all');
+  const [blacklistFilter, setBlacklistFilter] = useState<'all' | 'yes' | 'no'>('all');
   const { toast } = useToast();
 
   const fetchSuppliers = async () => {
-    const { data, error } = await supabase
-      .from('suppliers')
-      .select('*')
-      .in('status', ['draft', 'submitted', 'review', 'approved', 'rejected'])
-      .order('created_at', { ascending: false });
+    const [{ data, error }, brcRes] = await Promise.all([
+      supabase
+        .from('suppliers')
+        .select('*')
+        .in('status', ['draft', 'submitted', 'review', 'approved', 'rejected'])
+        .order('created_at', { ascending: false }),
+      supabase.from('supplier_brc_types' as any).select('*'),
+    ]);
     if (error) console.error('fetchSuppliers error:', error);
     if (data) setSuppliers(data);
+    const byType: Record<string, SupplierBrcTypeRow[]> = {};
+    ((brcRes.data as unknown as SupplierBrcTypeRow[]) || []).forEach(r => (byType[r.supplier_id] ??= []).push(r));
+    setBrcByType(byType);
     setLoading(false);
   };
 
-  useEffect(() => { fetchSuppliers(); }, []);
+  useEffect(() => { fetchSuppliers(); loadSupplierTypes(true).then(setTypeRows); }, []);
 
   const openDetail = async (supplier: any, startEditing = false) => {
     setSelected(supplier);
@@ -301,10 +316,28 @@ export default function SupplierApprovalPage() {
     setDeleteTarget(null);
   };
 
-  const filtered = suppliers.filter(s =>
-    s.company_name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.tax_id?.toLowerCase().includes(search.toLowerCase())
-  );
+  const typeLabel = Object.fromEntries(typeRows.map(t => [t.key, t.label_th]));
+
+  const filtered = suppliers.filter(s => {
+    if (!(s.company_name?.toLowerCase().includes(search.toLowerCase()) ||
+          s.tax_id?.toLowerCase().includes(search.toLowerCase()))) return false;
+
+    if (blacklistFilter === 'yes' && !s.is_blacklisted) return false;
+    if (blacklistFilter === 'no' && s.is_blacklisted) return false;
+
+    const rows = brcByType[s.id] || [];
+    if (typeFilter !== 'all') {
+      const row = rows.find(r => r.supplier_type === typeFilter);
+      if (!row) return false; // not assigned to this category at all
+      if (assessFilter === 'assessed' && !row.grade) return false;
+      if (assessFilter === 'not_assessed' && row.grade) return false;
+    } else if (assessFilter !== 'all') {
+      const hasAssessed = rows.some(r => r.grade);
+      if (assessFilter === 'assessed' && !hasAssessed) return false;
+      if (assessFilter === 'not_assessed' && hasAssessed) return false;
+    }
+    return true;
+  });
 
   const pagination = usePagination(filtered, { pageSize: 20 });
 
@@ -367,9 +400,34 @@ export default function SupplierApprovalPage() {
         </Card>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input placeholder="ค้นหา Supplier..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input placeholder="ค้นหา Supplier..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        <Select value={typeFilter} onValueChange={setTypeFilter}>
+          <SelectTrigger className="w-[220px]"><SelectValue placeholder="หมวด BRC" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">ทุกหมวด BRC</SelectItem>
+            {typeRows.map(t => <SelectItem key={t.key} value={t.key}>{t.label_th}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={assessFilter} onValueChange={(v: any) => setAssessFilter(v)}>
+          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">สถานะประเมิน: ทั้งหมด</SelectItem>
+            <SelectItem value="assessed">ประเมินแล้ว (มีเกรด)</SelectItem>
+            <SelectItem value="not_assessed">ยังไม่ประเมิน</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={blacklistFilter} onValueChange={(v: any) => setBlacklistFilter(v)}>
+          <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Blacklist: ทั้งหมด</SelectItem>
+            <SelectItem value="yes">เฉพาะที่ถูกบล็อก</SelectItem>
+            <SelectItem value="no">ไม่รวมที่ถูกบล็อก</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Card>
@@ -395,11 +453,25 @@ export default function SupplierApprovalPage() {
                   pagination.paginatedItems.map(s => (
                     <tr key={s.id} className={`border-b hover:bg-muted/30 ${s.is_blacklisted ? 'bg-red-50 hover:bg-red-100/70' : ''}`}>
                       <td className="p-3 font-medium">
-                        {s.company_name}
-                        {s.is_blacklisted && (
-                          <Badge variant="outline" className="ml-2 border-red-300 bg-red-50 text-red-700 text-[10px] align-middle">
-                            Blacklisted
-                          </Badge>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{s.company_name}</span>
+                          {s.is_blacklisted && (
+                            <Badge variant="outline" className="border-red-300 bg-red-50 text-red-700 text-[10px]">
+                              Blacklisted
+                            </Badge>
+                          )}
+                        </div>
+                        {(brcByType[s.id] || []).length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap mt-1">
+                            {(brcByType[s.id] || []).map(r => (
+                              <Badge key={r.id} variant="outline" className={`text-[10px] font-normal ${
+                                r.grade ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'
+                              }`}>
+                                {(typeLabel[r.supplier_type] || r.supplier_type).split('(')[0].trim()}
+                                {r.grade ? ` · ${r.grade}` : ' · ยังไม่ประเมิน'}
+                              </Badge>
+                            ))}
+                          </div>
                         )}
                       </td>
                       <td className="p-3 text-muted-foreground">{s.tax_id || '—'}</td>
