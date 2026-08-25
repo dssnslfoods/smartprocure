@@ -67,6 +67,9 @@ export default function RFQInviteSuppliers({ rfqId, rfqStatus, onUpdate }: Props
           .from('suppliers')
           .select('id, company_name, email, tier, status, supplier_type, risk_level, certificate_expiry_date, qa_approval_status, is_blacklisted')
           .neq('status', 'draft')
+          // Blacklisted suppliers must not appear by name anywhere in the RFQ
+          // process — including here if they were invited before being blacklisted.
+          .not('is_blacklisted', 'eq', true)
           .order('company_name'),
         supabase.from('rfq_suppliers')
           .select('supplier_id, responded, declined_at, declined_reason')

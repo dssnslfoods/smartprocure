@@ -110,7 +110,7 @@ export default function SupplierList() {
   const certJoinKind = (certFilter !== 'all' || (certStatusFilter !== 'all' && certStatusFilter !== 'missing')) ? '!inner' : '';
   const baseSelect =
     'id, company_name, supplier_code, supplier_type, tax_id, email, status, tier, risk_level, ' +
-    'brc_grade, brc_percent, ' +
+    'brc_grade, brc_percent, is_blacklisted, ' +
     'certificate_expiry_date, created_at, ' +
     'supplier_risk_assessments(total_risk_score, assessed_at), ' +
     `supplier_certificates${certJoinKind}(certificate_type, expiry_date, certificate_no)`;
@@ -218,6 +218,11 @@ export default function SupplierList() {
                       <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
                         <td className="p-3 font-medium">
                           <Link to={`/suppliers/${s.id}`} className="text-primary hover:underline">{s.company_name}</Link>
+                          {s.is_blacklisted && (
+                            <Badge variant="outline" className="ml-2 border-red-300 bg-red-50 text-red-700 text-[10px] align-middle">
+                              Blacklisted
+                            </Badge>
+                          )}
                         </td>
                         <td className="p-3 text-muted-foreground font-mono text-xs">{s.supplier_code || '—'}</td>
                         <td className="p-3"><SupplierTypeBadge type={s.supplier_type} /></td>

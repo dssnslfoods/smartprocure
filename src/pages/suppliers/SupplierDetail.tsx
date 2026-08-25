@@ -13,6 +13,7 @@ import SupplierDocuments from './SupplierDocuments';
 import SupplierCertificates from './SupplierCertificates';
 import SupplierBrcAssessment from './SupplierBrcAssessment';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
+import SupplierBlacklistAction from '@/components/SupplierBlacklistAction';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -90,14 +91,20 @@ export default function SupplierDetail() {
               <RiskBadge level={supplier.risk_level} />
             </div>
             <p className="text-sm text-muted-foreground">{supplier.email || 'No email'} · {supplier.city || ''}{supplier.country ? `, ${supplier.country}` : ''}</p>
+            {supplier.is_blacklisted && supplier.blacklist_reason && (
+              <p className="text-xs text-red-600 mt-1">เหตุผลที่บล็อก: {supplier.blacklist_reason}</p>
+            )}
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           {canChangeStatus && transitions.map((t) => (
             <Button key={t.next} variant={t.next === 'rejected' ? 'destructive' : 'default'} size="sm" onClick={() => handleStatusChange(t.next)}>
               <t.icon className="w-4 h-4 mr-1" />{t.label}
             </Button>
           ))}
+          {(hasRole('admin') || hasRole('procurement_officer')) && (
+            <SupplierBlacklistAction supplier={supplier} onChanged={fetchSupplier} />
+          )}
           {(hasRole('admin') || hasRole('procurement_officer')) && (
             <Link to={`/suppliers/${id}/edit`}>
               <Button variant="outline" size="sm"><Edit className="w-4 h-4 mr-1" />Edit</Button>

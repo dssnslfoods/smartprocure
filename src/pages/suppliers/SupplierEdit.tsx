@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { ArrowLeft } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import SupplierBlacklistAction from '@/components/SupplierBlacklistAction';
 
 export default function SupplierEdit() {
   const { id } = useParams<{ id: string }>();
@@ -20,19 +21,26 @@ export default function SupplierEdit() {
   const [form, setForm] = useState({
     company_name: '', tax_id: '', address: '', city: '', country: '',
     phone: '', email: '', website: '', tier: '', notes: '',
-    is_preferred: false, is_blacklisted: false,
+    is_preferred: false,
   });
+  // Blacklist has its own reason-required flow (SupplierBlacklistAction on the
+  // detail page) so it isn't part of this generic form — spreading `form` into
+  // an update must never silently flip it.
+  const [supplierRow, setSupplierRow] = useState<any>(null);
 
   useEffect(() => {
     if (!id) return;
     supabase.from('suppliers').select('*').eq('id', id).single().then(({ data }) => {
-      if (data) setForm({
-        company_name: data.company_name || '', tax_id: data.tax_id || '',
-        address: data.address || '', city: data.city || '', country: data.country || '',
-        phone: data.phone || '', email: data.email || '', website: data.website || '',
-        tier: data.tier || '', notes: data.notes || '',
-        is_preferred: data.is_preferred || false, is_blacklisted: data.is_blacklisted || false,
-      });
+      if (data) {
+        setSupplierRow(data);
+        setForm({
+          company_name: data.company_name || '', tax_id: data.tax_id || '',
+          address: data.address || '', city: data.city || '', country: data.country || '',
+          phone: data.phone || '', email: data.email || '', website: data.website || '',
+          tier: data.tier || '', notes: data.notes || '',
+          is_preferred: data.is_preferred || false,
+        });
+      }
       setLoading(false);
     });
   }, [id]);
@@ -136,10 +144,13 @@ export default function SupplierEdit() {
                 <Switch checked={form.is_preferred} onCheckedChange={v => handleChange('is_preferred', v)} />
                 <Label>Preferred Supplier</Label>
               </div>
-              <div className="flex items-center gap-2">
-                <Switch checked={form.is_blacklisted} onCheckedChange={v => handleChange('is_blacklisted', v)} />
-                <Label>Blacklisted</Label>
-              </div>
+              {supplierRow && (
+                <div className="flex items-center gap-2">
+                  <Label className="text-sm text-muted-foreground">Blacklist:</Label>
+                  <SupplierBlacklistAction supplier={supplierRow}
+                    onChanged={() => supabase.from('suppliers').select('*').eq('id', id!).single().then(({ data }) => data && setSupplierRow(data))} />
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-3">
               <Link to={`/suppliers/${id}`}><Button variant="outline">Cancel</Button></Link>

@@ -5,7 +5,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Area, AreaChart } from 'recharts';
 import { supabase } from '@/integrations/supabase/client';
 import { Badge } from '@/components/ui/badge';
-import { TrendingUp, TrendingDown, BarChart3, Activity, Users, Trophy, CheckCircle2, AlertCircle, Eye } from 'lucide-react';
+import { TrendingUp, TrendingDown, BarChart3, Activity, Users, Trophy, CheckCircle2, AlertCircle, Eye, ShieldOff } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import AwardSelectionSummary from '@/components/AwardSelectionSummary';
@@ -46,10 +46,13 @@ export default function ReportsPage() {
   const [rfqStats, setRfqStats] = useState({ total: 0, open: 0, closed: 0, awarded: 0 });
   const [allAwards, setAllAwards] = useState<any[]>([]);
   const [overrideAwards, setOverrideAwards] = useState<any[]>([]);
+  const [blacklisted, setBlacklisted] = useState<any[]>([]);
+  const [blacklistHistory, setBlacklistHistory] = useState<Record<string, any[]>>({});
   const [snapDialog, setSnapDialog] = useState<any>(null);
+  const [historyDialog, setHistoryDialog] = useState<any>(null);
   useEffect(() => {
     const load = async () => {
-      const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: overrides }] = await Promise.all([
+      const [{ data: suppliers }, { data: rfqs }, { data: awards }, { data: overrides }, { data: blacklist }] = await Promise.all([
         supabase.from('suppliers').select('status'),
         supabase.from('rfqs').select('status'),
         supabase.from('awards')
@@ -59,9 +62,14 @@ export default function ReportsPage() {
           .select('id, awarded_at, selection_reason, selection_snapshot, suppliers(company_name), rfqs(rfq_number, title)')
           .eq('is_override_selection', true)
           .order('awarded_at', { ascending: false }),
+        supabase.from('suppliers')
+          .select('id, company_name, tax_id, email, supplier_type, blacklist_reason, blacklisted_at, blacklisted_by_email')
+          .eq('is_blacklisted', true)
+          .order('blacklisted_at', { ascending: false }),
       ]);
       if (awards) setAllAwards(awards);
       if (overrides) setOverrideAwards(overrides);
+      if (blacklist) setBlacklisted(blacklist);
 
       if (suppliers) {
         setSupplierStats({
@@ -83,6 +91,13 @@ export default function ReportsPage() {
     };
     load();
   }, []);
+
+  const loadBlacklistHistory = async (supplierId: string) => {
+    if (blacklistHistory[supplierId]) return;
+    const { data } = await supabase.from('supplier_blacklist_history')
+      .select('*').eq('supplier_id', supplierId).order('changed_at', { ascending: false });
+    setBlacklistHistory(prev => ({ ...prev, [supplierId]: data || [] }));
+  };
 
   // Generate monthly trend data (simulated based on real counts)
   const monthlySpending = MONTHS.map((m, i) => ({
@@ -172,6 +187,9 @@ export default function ReportsPage() {
           </TabsTrigger>
           <TabsTrigger value="compliance">
             การคัดเลือกนอกเกณฑ์{overrideAwards.length > 0 ? ` (${overrideAwards.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="blacklist" className="flex items-center gap-1">
+            <ShieldOff className="w-3.5 h-3.5" />Blacklist ({blacklisted.length})
           </TabsTrigger>
         </TabsList>
 
@@ -434,6 +452,53 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Blacklisted Suppliers Tab */}
+        <TabsContent value="blacklist" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><ShieldOff className="w-4 h-4 text-red-600" />Supplier ที่ถูก Blacklist</CardTitle>
+              <CardDescription>Supplier เหล่านี้ไม่แสดงชื่อในกระบวนการ RFQ ทั้งหมด (สร้าง RFQ / เชิญเสนอราคา) จนกว่าจะปลดบล็อก</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {blacklisted.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">ไม่มี Supplier ที่ถูก Blacklist</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left p-3 font-medium text-muted-foreground">บริษัท</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">Tax ID</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">เหตุผล</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">บล็อกโดย</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">วันที่บล็อก</th>
+                        <th className="text-center p-3 font-medium text-muted-foreground">ประวัติ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {blacklisted.map(s => (
+                        <tr key={s.id} className="border-b hover:bg-muted/30 align-top">
+                          <td className="p-3 font-medium">{s.company_name}</td>
+                          <td className="p-3 text-muted-foreground text-xs">{s.tax_id || '—'}</td>
+                          <td className="p-3 text-xs max-w-[320px]">{s.blacklist_reason || <span className="text-muted-foreground">—</span>}</td>
+                          <td className="p-3 text-xs text-muted-foreground">{s.blacklisted_by_email || '—'}</td>
+                          <td className="p-3 text-xs text-muted-foreground">{s.blacklisted_at ? new Date(s.blacklisted_at).toLocaleDateString('th-TH') : '—'}</td>
+                          <td className="p-3 text-center">
+                            <Button variant="ghost" size="icon" className="h-7 w-7"
+                              onClick={() => { loadBlacklistHistory(s.id); setHistoryDialog(s); }}>
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Selection Snapshot Dialog */}
@@ -452,6 +517,33 @@ export default function ReportsPage() {
               selectionReason={snapDialog.selection_reason}
             />
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Blacklist history */}
+      <Dialog open={!!historyDialog} onOpenChange={() => setHistoryDialog(null)}>
+        <DialogContent className="max-w-lg max-h-[75vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ShieldOff className="w-4 h-4 text-red-600" />ประวัติ Blacklist — {historyDialog?.company_name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {(blacklistHistory[historyDialog?.id] || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">กำลังโหลด...</p>
+            ) : (
+              (blacklistHistory[historyDialog?.id] || []).map((h: any) => (
+                <div key={h.id} className="rounded-lg border p-3 text-sm space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="outline" className={h.action === 'blacklisted' ? 'border-red-300 bg-red-50 text-red-700' : 'border-emerald-300 bg-emerald-50 text-emerald-700'}>
+                      {h.action === 'blacklisted' ? 'บล็อก' : 'ปลดบล็อก'}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">{new Date(h.changed_at).toLocaleString('th-TH')}</span>
+                  </div>
+                  {h.reason && <p className="text-xs">{h.reason}</p>}
+                  <p className="text-[11px] text-muted-foreground">โดย {h.changed_by_email || 'ไม่ทราบผู้แก้ไข'}</p>
+                </div>
+              ))
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

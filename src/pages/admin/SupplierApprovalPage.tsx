@@ -12,6 +12,7 @@ import { usePagination } from '@/hooks/use-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { Search, CheckCircle2, XCircle, Eye, FileText, Download, Building2, User, KeyRound, Pencil, Save, Loader2, Trash2, AlertTriangle, History } from 'lucide-react';
+import SupplierBlacklistAction from '@/components/SupplierBlacklistAction';
 
 export default function SupplierApprovalPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -393,7 +394,14 @@ export default function SupplierApprovalPage() {
                 ) : (
                   pagination.paginatedItems.map(s => (
                     <tr key={s.id} className="border-b hover:bg-muted/30">
-                      <td className="p-3 font-medium">{s.company_name}</td>
+                      <td className="p-3 font-medium">
+                        {s.company_name}
+                        {s.is_blacklisted && (
+                          <Badge variant="outline" className="ml-2 border-red-300 bg-red-50 text-red-700 text-[10px] align-middle">
+                            Blacklisted
+                          </Badge>
+                        )}
+                      </td>
                       <td className="p-3 text-muted-foreground">{s.tax_id || '—'}</td>
                       <td className="p-3 text-muted-foreground">{s.email || '—'}</td>
                       <td className="p-3">
@@ -424,6 +432,7 @@ export default function SupplierApprovalPage() {
                               <KeyRound className="w-3 h-3 mr-1" /> รีเซ็ตรหัสผ่าน
                             </Button>
                           )}
+                          <SupplierBlacklistAction supplier={s} onChanged={fetchSuppliers} />
                           <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeleteClick(s)}>
                             <Trash2 className="w-3 h-3 mr-1" /> ลบ
                           </Button>
@@ -583,6 +592,8 @@ export default function SupplierApprovalPage() {
                         <XCircle className="w-4 h-4 mr-1" /> ปฏิเสธ
                       </Button>
                       <div className="flex-1" />
+                      <SupplierBlacklistAction supplier={selected}
+                        onChanged={() => { fetchSuppliers(); setDetailOpen(false); }} />
                       <Button variant="outline" size="sm" className="text-red-600 border-red-200 hover:bg-red-50" onClick={() => handleDeleteClick(selected)}>
                         <Trash2 className="w-4 h-4 mr-1" /> ลบ Supplier
                       </Button>
