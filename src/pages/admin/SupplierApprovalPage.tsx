@@ -393,7 +393,7 @@ export default function SupplierApprovalPage() {
                   <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">ไม่มีรายการรออนุมัติ</td></tr>
                 ) : (
                   pagination.paginatedItems.map(s => (
-                    <tr key={s.id} className="border-b hover:bg-muted/30">
+                    <tr key={s.id} className={`border-b hover:bg-muted/30 ${s.is_blacklisted ? 'bg-red-50 hover:bg-red-100/70' : ''}`}>
                       <td className="p-3 font-medium">
                         {s.company_name}
                         {s.is_blacklisted && (

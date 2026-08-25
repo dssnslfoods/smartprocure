@@ -478,7 +478,7 @@ export default function ReportsPage() {
                     </thead>
                     <tbody>
                       {blacklisted.map(s => (
-                        <tr key={s.id} className="border-b hover:bg-muted/30 align-top">
+                        <tr key={s.id} className="border-b bg-red-50 hover:bg-red-100/70 align-top">
                           <td className="p-3 font-medium">{s.company_name}</td>
                           <td className="p-3 text-muted-foreground text-xs">{s.tax_id || '—'}</td>
                           <td className="p-3 text-xs max-w-[320px]">{s.blacklist_reason || <span className="text-muted-foreground">—</span>}</td>

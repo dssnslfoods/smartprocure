@@ -215,7 +215,7 @@ export default function SupplierList() {
                 ) : (
                   pagination.items.map((s) => {
                     return (
-                      <tr key={s.id} className="border-b hover:bg-muted/30 transition-colors">
+                      <tr key={s.id} className={`border-b hover:bg-muted/30 transition-colors ${s.is_blacklisted ? 'bg-red-50 hover:bg-red-100/70' : ''}`}>
                         <td className="p-3 font-medium">
                           <Link to={`/suppliers/${s.id}`} className="text-primary hover:underline">{s.company_name}</Link>
                           {s.is_blacklisted && (
