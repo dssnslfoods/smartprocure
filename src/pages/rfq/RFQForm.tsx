@@ -308,7 +308,7 @@ export default function RFQForm() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Link to="/rfq"><Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button></Link>
         <div>
@@ -317,7 +317,8 @@ export default function RFQForm() {
         </div>
       </div>
 
-      <form onSubmit={e => e.preventDefault()} className="space-y-4">
+      <form onSubmit={e => e.preventDefault()} className="grid gap-6 xl:grid-cols-3 items-start">
+      <div className="xl:col-span-2 space-y-4">
         {/* General Info */}
         <Card>
           <CardHeader><CardTitle className="text-base">ข้อมูลทั่วไป</CardTitle></CardHeader>
@@ -439,6 +440,7 @@ export default function RFQForm() {
             ))}
           </CardContent>
         </Card>
+      </div>
 
         {/* Confirm switching Catalog when line items already have content */}
         <AlertDialog open={!!pendingCatalogId} onOpenChange={v => !v && setPendingCatalogId(null)}>
@@ -465,6 +467,7 @@ export default function RFQForm() {
           </AlertDialogContent>
         </AlertDialog>
 
+      <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-6">
         {/* Supplier Selection */}
         <Card>
           <CardHeader>
@@ -499,7 +502,7 @@ export default function RFQForm() {
               </div>
             )}
 
-            <div className="border rounded-lg max-h-60 overflow-y-auto divide-y">
+            <div className="border rounded-lg max-h-[420px] overflow-y-auto divide-y">
               {suppliersLoading ? (
                 <div className="p-4 text-center text-sm text-muted-foreground">กำลังโหลด...</div>
               ) : filteredSuppliers.length === 0 ? (
@@ -556,15 +559,18 @@ export default function RFQForm() {
           </CardContent>
         </Card>
 
-        <div className="flex justify-end gap-3">
-          <Link to="/rfq"><Button variant="outline">ยกเลิก</Button></Link>
-          <Button variant="secondary" disabled={saving} onClick={() => handleSubmit('draft')} className="gap-1.5">
-            <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก Draft'}
-          </Button>
-          <Button disabled={saving} onClick={() => { if (validateForm()) setPublishConfirmOpen(true); }} className="gap-1.5">
-            <Send className="w-4 h-4" />Publish ทันที
-          </Button>
-        </div>
+        <Card>
+          <CardContent className="p-4 flex flex-col gap-2">
+            <Button disabled={saving} onClick={() => { if (validateForm()) setPublishConfirmOpen(true); }} className="gap-1.5 w-full">
+              <Send className="w-4 h-4" />Publish ทันที
+            </Button>
+            <Button variant="secondary" disabled={saving} onClick={() => handleSubmit('draft')} className="gap-1.5 w-full">
+              <Save className="w-4 h-4" />{saving ? 'กำลังบันทึก...' : 'บันทึก Draft'}
+            </Button>
+            <Link to="/rfq" className="w-full"><Button variant="outline" className="w-full">ยกเลิก</Button></Link>
+          </CardContent>
+        </Card>
+      </div>
 
         <Dialog open={publishConfirmOpen} onOpenChange={setPublishConfirmOpen}>
           <DialogContent className="max-w-md">
