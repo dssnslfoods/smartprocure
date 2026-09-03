@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
 import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
 import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
-import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/lib/priceListConstants';
+import { CATEGORY_LABELS, CATEGORY_COLORS, LEGACY_CATEGORIES } from '@/lib/priceListConstants';
 
 interface CatalogItem {
   id: string;
@@ -604,6 +604,11 @@ function CatalogBookPicker({ books, loading, onSelect }: {
     (acc[b.category] ??= []).push(b);
     return acc;
   }, {} as Record<string, CatalogBook[]>);
+  // Catalogs tied to a BRC category (the current 7-type list, not the old
+  // raw_material/packaging/other set) list first — they're the ones the
+  // mandatory-cert gate and BRCGS criteria actually key off of.
+  const isLegacy = (category: string) => (LEGACY_CATEGORIES as readonly string[]).includes(category);
+  const groupEntries = Object.entries(grouped).sort(([a], [b]) => Number(isLegacy(a)) - Number(isLegacy(b)));
 
   if (loading) return <div className="p-4 text-center text-sm text-muted-foreground">กำลังโหลด Catalog...</div>;
   if (books.length === 0) return <div className="p-4 text-center text-sm text-muted-foreground">ยังไม่มี Catalog ในระบบ</div>;
@@ -618,7 +623,7 @@ function CatalogBookPicker({ books, loading, onSelect }: {
         {filtered.length === 0 ? (
           <div className="p-4 text-center text-sm text-muted-foreground">ไม่พบ Catalog</div>
         ) : (
-          Object.entries(grouped).map(([category, list]) => (
+          groupEntries.map(([category, list]) => (
             <div key={category}>
               <div className="px-3 py-1.5 text-[11px] font-semibold text-muted-foreground bg-muted/50 sticky top-0">
                 {CATEGORY_LABELS[category] || category}
