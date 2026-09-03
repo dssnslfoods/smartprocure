@@ -16,7 +16,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
 import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
 import { CATEGORY_LABELS, CATEGORY_COLORS, LEGACY_CATEGORIES } from '@/lib/priceListConstants';
@@ -45,9 +44,8 @@ interface SupplierOption {
   category: string | null;
   tier: string | null;
   contact_person: string | null;
-  brcScore: number | null;
-  brcMet: number;
-  brcTotal: number;
+  brc_grade: string | null;
+  brc_percent: number | null;
 }
 
 interface LineItem {
@@ -111,42 +109,20 @@ export default function RFQForm() {
       setCatalogLoading(false);
     };
     const fetchSuppliers = async () => {
-      const [supRes, critRes, certRes, docRes] = await Promise.all([
-        supabase.from('suppliers')
-          .select('id, company_name, category, tier, contact_person')
-          .not('is_blacklisted', 'eq', true),
-        supabase.from('risk_criteria').select('*').eq('active', true),
-        supabase.from('supplier_certificates').select('supplier_id, certificate_type, expiry_date'),
-        supabase.from('supplier_documents').select('supplier_id, document_type, document_name'),
-      ]);
-      const allSuppliers = (supRes.data || []) as { id: string; company_name: string; category: string | null; tier: string | null; contact_person: string | null }[];
-      const criteria = (critRes.data as RiskCriterion[]) || [];
-      const certsBy: Record<string, SupplierCert[]> = {};
-      (certRes.data || []).forEach((c: any) => (certsBy[c.supplier_id] ??= []).push(c));
-      const docsBy: Record<string, SupplierDoc[]> = {};
-      (docRes.data || []).forEach((d: any) => (docsBy[d.supplier_id] ??= []).push(d));
+      const { data: supData } = await supabase.from('suppliers')
+        .select('id, company_name, category, tier, contact_person, brc_grade, brc_percent')
+        .not('is_blacklisted', 'eq', true);
+      const enriched = (supData || []) as SupplierOption[];
 
-      const enriched: SupplierOption[] = allSuppliers.map(s => {
-        if (criteria.length === 0) {
-          return { ...s, brcScore: null, brcMet: 0, brcTotal: 0 };
-        }
-        const dims = computeDimensionRisks(criteria, certsBy[s.id] || [], docsBy[s.id] || [], 'all');
-        const dimList = Object.values(dims);
-        const totalCriteria = dimList.reduce((a, d) => a + d.criteria.length, 0);
-        const metCriteria = dimList.reduce((a, d) => a + d.criteria.filter(c => c.met).length, 0);
-        const wSum = dimList.reduce((a, d) => a + d.totalWeight, 0);
-        const risk10 = wSum > 0
-          ? dimList.reduce((a, d) => a + (d.score ?? 0) * d.totalWeight, 0) / wSum
-          : 0;
-        const riskScore = Math.round((1 - risk10 / 10) * 100);
-        return { ...s, brcScore: riskScore, brcMet: metCriteria, brcTotal: totalCriteria };
-      });
-
+      // Best grade first (A → D), ungraded suppliers last; within the same
+      // grade, higher % first.
+      const GRADE_RANK: Record<string, number> = { A: 0, B: 1, C: 2, D: 3 };
       enriched.sort((a, b) => {
-        if (a.brcScore !== null && b.brcScore !== null) return b.brcScore - a.brcScore;
-        if (a.brcScore !== null) return -1;
-        if (b.brcScore !== null) return 1;
-        return a.company_name.localeCompare(b.company_name);
+        const ra = a.brc_grade ? GRADE_RANK[a.brc_grade] ?? 99 : 99;
+        const rb = b.brc_grade ? GRADE_RANK[b.brc_grade] ?? 99 : 99;
+        if (ra !== rb) return ra - rb;
+        if (ra === 99) return a.company_name.localeCompare(b.company_name);
+        return (b.brc_percent ?? 0) - (a.brc_percent ?? 0);
       });
 
       setSuppliers(enriched);
@@ -532,17 +508,18 @@ export default function RFQForm() {
                           <Lock className="w-3 h-3" />บล็อก
                         </Badge>
                       )}
-                      {s.brcScore !== null && (
+                      {s.brc_grade != null && (
                         <Badge
                           variant="outline"
                           className={cn('text-[10px] gap-0.5',
-                            s.brcScore >= 75 ? 'border-green-300 bg-green-50 text-green-700' :
-                            s.brcScore >= 50 ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                            s.brc_grade === 'A' ? 'border-green-300 bg-green-50 text-green-700' :
+                            s.brc_grade === 'B' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                            s.brc_grade === 'C' ? 'border-amber-300 bg-amber-50 text-amber-700' :
                             'border-red-300 bg-red-50 text-red-700'
                           )}
                         >
                           <ShieldCheck className="w-3 h-3" />
-                          BRC {s.brcMet}/{s.brcTotal}
+                          เกรด {s.brc_grade} ({Math.round(s.brc_percent ?? 0)}%)
                         </Badge>
                       )}
                       {s.tier && (
