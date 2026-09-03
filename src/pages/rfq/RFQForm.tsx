@@ -11,22 +11,32 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save, ShieldCheck, Lock } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, ChevronsUpDown, Check, Search, Package, Users, Send, Save, ShieldCheck, Lock, BookOpen, RefreshCw, AlertTriangle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { computeDimensionRisks, type RiskCriterion, type SupplierCert, type SupplierDoc } from '@/lib/riskCriteria';
 import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
 import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
+import { CATEGORY_LABELS, CATEGORY_COLORS } from '@/lib/priceListConstants';
 
 interface CatalogItem {
   id: string;
+  price_list_id: string;
   item_code: string | null;
   item_name: string;
   description: string | null;
   unit: string | null;
   group_name: string | null;
   reference_price: number | null;
+}
+
+interface CatalogBook {
+  id: string;
+  title: string;
+  category: string;
+  itemCount: number;
 }
 
 interface SupplierOption {
@@ -61,9 +71,18 @@ export default function RFQForm() {
   ]);
   const [selectedSuppliers, setSelectedSuppliers] = useState<Set<string>>(new Set());
 
-  // Catalog items for search
+  // Catalog books, then items within the chosen book — procurement picks the
+  // catalog first, and only then browses/selects items that live in it.
+  const [catalogBooks, setCatalogBooks] = useState<CatalogBook[]>([]);
+  const [catalogBooksLoading, setCatalogBooksLoading] = useState(true);
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null);
+  const [pendingCatalogId, setPendingCatalogId] = useState<string | null>(null); // awaiting confirm to switch
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const scopedCatalogItems = selectedCatalogId
+    ? catalogItems.filter(c => c.price_list_id === selectedCatalogId)
+    : [];
+  const selectedCatalog = catalogBooks.find(b => b.id === selectedCatalogId) || null;
 
   // Suppliers for selection
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
@@ -74,10 +93,21 @@ export default function RFQForm() {
 
   useEffect(() => {
     const fetchCatalog = async () => {
-      const { data } = await supabase.from('price_list_items')
-        .select('id, item_code, item_name, description, unit, group_name, reference_price')
-        .order('item_name');
-      setCatalogItems((data as CatalogItem[]) || []);
+      const [booksRes, itemsRes] = await Promise.all([
+        supabase.from('price_lists')
+          .select('id, title, category, price_list_items(id)')
+          .order('category').order('title'),
+        supabase.from('price_list_items')
+          .select('id, price_list_id, item_code, item_name, description, unit, group_name, reference_price')
+          .order('item_name'),
+      ]);
+      const books: CatalogBook[] = ((booksRes.data as any[]) || []).map(b => ({
+        id: b.id, title: b.title, category: b.category,
+        itemCount: (b.price_list_items || []).length,
+      }));
+      setCatalogBooks(books);
+      setCatalogBooksLoading(false);
+      setCatalogItems((itemsRes.data as CatalogItem[]) || []);
       setCatalogLoading(false);
     };
     const fetchSuppliers = async () => {
@@ -161,6 +191,23 @@ export default function RFQForm() {
       specifications: catalogItem.group_name ? `กลุ่ม: ${catalogItem.group_name}` : '',
       catalog_item_id: catalogItem.id,
     } : item));
+  };
+
+  const emptyItem: LineItem = { item_name: '', description: '', quantity: '', unit: '', specifications: '', catalog_item_id: null };
+  const itemsHaveContent = items.some(i => i.item_name.trim() || i.catalog_item_id);
+
+  // Switching catalogs mid-form would leave line items pointing at items from
+  // the wrong book, so confirm first if anything's already been entered.
+  const requestCatalogChange = (id: string) => {
+    if (id === selectedCatalogId) return;
+    if (itemsHaveContent) { setPendingCatalogId(id); return; }
+    setSelectedCatalogId(id);
+  };
+  const confirmCatalogChange = () => {
+    if (!pendingCatalogId) return;
+    setSelectedCatalogId(pendingCatalogId);
+    setItems([emptyItem]);
+    setPendingCatalogId(null);
   };
 
   // Combined mandatory gate: supplier-category (BRCGS) + catalog/product certs.
@@ -296,19 +343,62 @@ export default function RFQForm() {
           </CardContent>
         </Card>
 
-        {/* Line Items */}
+        {/* Step 1: pick the Catalog first */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <BookOpen className="w-4 h-4" /> 1. เลือก Catalog
+            </CardTitle>
+            <CardDescription>รายการสินค้าด้านล่างจะดึงมาจาก Catalog ที่เลือกเท่านั้น</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {selectedCatalog ? (
+              <div className="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg border bg-accent/30">
+                <div className="flex items-center gap-2 min-w-0">
+                  <BookOpen className="w-4 h-4 text-primary shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{selectedCatalog.title}</div>
+                    <div className="text-xs text-muted-foreground">{selectedCatalog.itemCount} รายการในเล่ม</div>
+                  </div>
+                  <Badge variant="outline" className={cn('text-xs shrink-0', CATEGORY_COLORS[selectedCatalog.category])}>
+                    {CATEGORY_LABELS[selectedCatalog.category] || selectedCatalog.category}
+                  </Badge>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => {
+                  if (itemsHaveContent) setPendingCatalogId('__reset__');
+                  else { setSelectedCatalogId(null); setItems([emptyItem]); }
+                }}>
+                  <RefreshCw className="w-3.5 h-3.5 mr-1" />เปลี่ยน Catalog
+                </Button>
+              </div>
+            ) : (
+              <CatalogBookPicker books={catalogBooks} loading={catalogBooksLoading} onSelect={requestCatalogChange} />
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Step 2: pick items from that Catalog */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle className="text-base flex items-center gap-2">
-                <Package className="w-4 h-4" /> รายการสินค้า (Line Items)
+                <Package className="w-4 h-4" /> 2. รายการสินค้า (Line Items)
               </CardTitle>
-              <CardDescription>เลือกจาก Catalog หรือพิมพ์เอง</CardDescription>
+              <CardDescription>
+                {selectedCatalog ? `เลือกจาก "${selectedCatalog.title}" หรือพิมพ์เอง` : 'เลือก Catalog ด้านบนก่อน จึงจะเพิ่มรายการได้'}
+              </CardDescription>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={addItem}><Plus className="w-4 h-4 mr-1" />เพิ่มรายการ</Button>
+            <Button type="button" variant="outline" size="sm" onClick={addItem} disabled={!selectedCatalogId}>
+              <Plus className="w-4 h-4 mr-1" />เพิ่มรายการ
+            </Button>
           </CardHeader>
           <CardContent className="space-y-4">
-            {items.map((item, i) => (
+            {!selectedCatalogId ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                กรุณาเลือก Catalog ก่อนเพื่อเริ่มเพิ่มรายการสินค้า
+              </div>
+            ) : items.map((item, i) => (
               <div key={i} className="p-4 border rounded-lg space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-muted-foreground">รายการ #{i + 1}</span>
@@ -319,9 +409,9 @@ export default function RFQForm() {
                   )}
                 </div>
 
-                {/* Catalog Search */}
+                {/* Catalog Search — scoped to the chosen Catalog */}
                 <CatalogCombobox
-                  catalogItems={catalogItems}
+                  catalogItems={scopedCatalogItems}
                   loading={catalogLoading}
                   selectedId={item.catalog_item_id}
                   onSelect={(ci) => selectCatalogItem(i, ci)}
@@ -349,6 +439,31 @@ export default function RFQForm() {
             ))}
           </CardContent>
         </Card>
+
+        {/* Confirm switching Catalog when line items already have content */}
+        <AlertDialog open={!!pendingCatalogId} onOpenChange={v => !v && setPendingCatalogId(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />เปลี่ยน Catalog?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                รายการสินค้าที่เลือกไว้ทั้งหมดผูกกับ Catalog เดิม การเปลี่ยน Catalog จะล้างรายการที่กรอกไว้และเริ่มใหม่
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setPendingCatalogId(null)}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (pendingCatalogId === '__reset__') { setSelectedCatalogId(null); setItems([emptyItem]); setPendingCatalogId(null); }
+                  else confirmCatalogChange();
+                }}
+              >
+                ยืนยันเปลี่ยน
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Supplier Selection */}
         <Card>
@@ -471,6 +586,57 @@ export default function RFQForm() {
           </DialogContent>
         </Dialog>
       </form>
+    </div>
+  );
+}
+
+// Step 1 — pick which Catalog book this RFQ buys from.
+function CatalogBookPicker({ books, loading, onSelect }: {
+  books: CatalogBook[];
+  loading: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = search
+    ? books.filter(b => b.title.toLowerCase().includes(search.toLowerCase()))
+    : books;
+  const grouped = filtered.reduce((acc, b) => {
+    (acc[b.category] ??= []).push(b);
+    return acc;
+  }, {} as Record<string, CatalogBook[]>);
+
+  if (loading) return <div className="p-4 text-center text-sm text-muted-foreground">กำลังโหลด Catalog...</div>;
+  if (books.length === 0) return <div className="p-4 text-center text-sm text-muted-foreground">ยังไม่มี Catalog ในระบบ</div>;
+
+  return (
+    <div className="space-y-3">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input placeholder="ค้นหาชื่อ Catalog..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      </div>
+      <div className="border rounded-lg max-h-72 overflow-y-auto divide-y">
+        {filtered.length === 0 ? (
+          <div className="p-4 text-center text-sm text-muted-foreground">ไม่พบ Catalog</div>
+        ) : (
+          Object.entries(grouped).map(([category, list]) => (
+            <div key={category}>
+              <div className="px-3 py-1.5 text-[11px] font-semibold text-muted-foreground bg-muted/50 sticky top-0">
+                {CATEGORY_LABELS[category] || category}
+              </div>
+              {list.map(b => (
+                <button key={b.id} type="button" onClick={() => onSelect(b.id)}
+                  className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-accent">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm truncate">{b.title}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">{b.itemCount} รายการ</span>
+                </button>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
