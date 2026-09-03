@@ -1,12 +1,13 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
-import { Plus, Search, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Plus, Search, Trash2, AlertTriangle, Loader2, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -28,18 +29,75 @@ const SUPPLIER_STATUSES = ['draft', 'submitted', 'review', 'approved', 'rejected
 const SUPPLIER_TIERS = ['Silver', 'Gold', 'Platinum'];
 const CERT_TYPES = ['GMP', 'HACCP', 'ISO9001', 'ISO22000', 'BRCGS', 'FSSC22000', 'HALAL', 'IFS', 'KOSHER'];
 
+// Filters live in the URL (via useSearchParams, replacing not pushing history)
+// so that opening a supplier and pressing Back restores the exact same list —
+// same search text, dropdowns, score range, sort, and page — instead of
+// resetting to defaults.
+const FILTER_KEYS = {
+  search: 'q', statusFilter: 'status', tierFilter: 'tier', certFilter: 'cert',
+  certStatusFilter: 'certStatus', brcTypeFilter: 'brcType', scoreMin: 'min',
+  scoreMax: 'max', sortBy: 'sort', page: 'page',
+} as const;
+
 export default function SupplierList() {
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [tierFilter, setTierFilter] = useState('all');
-  const [certFilter, setCertFilter] = useState('all');         // certificate type
-  const [certStatusFilter, setCertStatusFilter] = useState('all'); // valid / expiring / expired / missing
-  const [brcTypeFilter, setBrcTypeFilter] = useState('all');
-  const [scoreMin, setScoreMin] = useState('');
-  const [scoreMax, setScoreMax] = useState('');
-  const [sortBy, setSortBy] = useState<'recent' | 'risk_desc' | 'risk_asc'>('recent');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const getParam = (key: string, fallback: string) => searchParams.get(key) ?? fallback;
+
+  const [search, setSearch] = useState(() => getParam(FILTER_KEYS.search, ''));
+  const [statusFilter, setStatusFilter] = useState(() => getParam(FILTER_KEYS.statusFilter, 'all'));
+  const [tierFilter, setTierFilter] = useState(() => getParam(FILTER_KEYS.tierFilter, 'all'));
+  const [certFilter, setCertFilter] = useState(() => getParam(FILTER_KEYS.certFilter, 'all'));         // certificate type
+  const [certStatusFilter, setCertStatusFilter] = useState(() => getParam(FILTER_KEYS.certStatusFilter, 'all')); // valid / expiring / expired / missing
+  const [brcTypeFilter, setBrcTypeFilter] = useState(() => getParam(FILTER_KEYS.brcTypeFilter, 'all'));
+  const [scoreMin, setScoreMin] = useState(() => getParam(FILTER_KEYS.scoreMin, ''));
+  const [scoreMax, setScoreMax] = useState(() => getParam(FILTER_KEYS.scoreMax, ''));
+  const [sortBy, setSortBy] = useState<'recent' | 'risk_desc' | 'risk_asc'>(
+    () => (getParam(FILTER_KEYS.sortBy, 'recent') as 'recent' | 'risk_desc' | 'risk_asc'),
+  );
+  const initialPage = Number(getParam(FILTER_KEYS.page, '1')) || 1;
   const [brcTypes, setBrcTypes] = useState<BrcSupplierTypeRow[]>([]);
   useEffect(() => { loadSupplierTypes().then(setBrcTypes); }, []);
+
+  // Grade bands per BRC category, for the "Risk" column tooltip — score ranges
+  // vary by category (raw points, not %), so show them grouped by category.
+  const [gradeBands, setGradeBands] = useState<{ supplier_type: string; grade: string; label_th: string; min_score: number; max_score: number }[]>([]);
+  useEffect(() => {
+    supabase.from('brc_grade_bands' as any).select('*').order('min_score', { ascending: false })
+      .then(({ data }) => setGradeBands((data as any[]) || []));
+  }, []);
+
+  // Mirror every filter (and the current page, set below) into the URL. Skip
+  // the very first run — those values just came FROM the URL (e.g. restored
+  // via Back), so re-writing it here would wipe the page param immediately.
+  const filtersMounted = useRef(false);
+  useEffect(() => {
+    if (!filtersMounted.current) { filtersMounted.current = true; return; }
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      const entries: [string, string][] = [
+        [FILTER_KEYS.search, search], [FILTER_KEYS.statusFilter, statusFilter],
+        [FILTER_KEYS.tierFilter, tierFilter], [FILTER_KEYS.certFilter, certFilter],
+        [FILTER_KEYS.certStatusFilter, certStatusFilter], [FILTER_KEYS.brcTypeFilter, brcTypeFilter],
+        [FILTER_KEYS.scoreMin, scoreMin], [FILTER_KEYS.scoreMax, scoreMax],
+        [FILTER_KEYS.sortBy, sortBy],
+      ];
+      entries.forEach(([key, value]) => {
+        const isDefault = value === '' || value === 'all' || (key === FILTER_KEYS.sortBy && value === 'recent');
+        if (isDefault) next.delete(key); else next.set(key, value);
+      });
+      return next;
+    }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, scoreMin, scoreMax, sortBy]);
+
+  const handlePageChange = (page: number) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (page <= 1) next.delete(FILTER_KEYS.page); else next.set(FILTER_KEYS.page, String(page));
+      return next;
+    }, { replace: true });
+  };
+
   const { hasRole, isSuperAdmin } = useAuth();
   const { toast } = useToast();
   const canDelete = hasRole('admin') || isSuperAdmin;
@@ -151,6 +209,8 @@ export default function SupplierList() {
     pageSize: 20,
     filters,
     select: baseSelect,
+    initialPage,
+    onPageChange: handlePageChange,
     ...sortConfig,
   });
 
@@ -237,7 +297,36 @@ export default function SupplierList() {
                   <th className="text-left p-3 font-medium text-muted-foreground">Code</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Type</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Status</th>
-                  <th className="text-left p-3 font-medium text-muted-foreground">Risk</th>
+                  <th className="text-left p-3 font-medium text-muted-foreground">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex items-center gap-1 cursor-help">
+                          Risk<Info className="w-3 h-3" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-sm">
+                        <div className="space-y-2 text-xs">
+                          <p className="font-semibold text-sm">กติกาการให้เกรด BRCGS</p>
+                          <p>A = Low · B = Medium · C = High · D = Critical Risk</p>
+                          <p className="text-muted-foreground">ช่วงคะแนน (จากคะแนนเต็มของแต่ละหมวด) ต่างกันตามหมวดผู้ขาย:</p>
+                          <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                            {brcTypes.map(t => {
+                              const bands = gradeBands.filter(b => b.supplier_type === t.key);
+                              if (bands.length === 0) return null;
+                              return (
+                                <div key={t.key}>
+                                  <p className="font-medium">{t.label_th.split('(')[0].trim()}</p>
+                                  <p className="text-muted-foreground">
+                                    {bands.map(b => `${b.grade} ${b.min_score}-${b.max_score}`).join(' · ')}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </th>
                   <th className="text-right p-3 font-medium text-muted-foreground">คะแนนความเสี่ยง</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Certificates</th>
                   <th className="text-left p-3 font-medium text-muted-foreground">Created</th>

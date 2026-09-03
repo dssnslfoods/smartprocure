@@ -10,6 +10,10 @@ interface UseSupabasePaginationOptions {
   /** Where NULLs land in the sort — default lets Postgres decide (last for ASC, first for DESC). */
   orderNullsFirst?: boolean;
   filters?: (query: any) => any;
+  /** Starting page — e.g. restored from a URL param so a filtered list survives navigating away and back. */
+  initialPage?: number;
+  /** Called whenever the current page changes, so a caller can mirror it into the URL. */
+  onPageChange?: (page: number) => void;
 }
 
 export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) {
@@ -21,11 +25,13 @@ export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) 
     orderAscending = false,
     orderNullsFirst,
     filters,
+    initialPage,
+    onPageChange,
   } = options;
 
   const [items, setItems] = useState<T[]>([]);
   const [totalItems, setTotalItems] = useState(0);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(initialPage && initialPage > 0 ? initialPage : 1);
   const [loading, setLoading] = useState(true);
 
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -76,7 +82,9 @@ export function useSupabasePagination<T>(options: UseSupabasePaginationOptions) 
   }, [fetchData]);
 
   const goToPage = (page: number) => {
-    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+    const clamped = Math.max(1, Math.min(page, totalPages));
+    setCurrentPage(clamped);
+    onPageChange?.(clamped);
   };
 
   return {
