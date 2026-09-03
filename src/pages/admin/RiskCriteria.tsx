@@ -1624,12 +1624,12 @@ export default function RiskCriteria() {
                   .reduce((a, t) => a + Number(t.target_score), 0);
                 const newTotal = others + (Number(topicForm.target_score) || 0);
                 const topBand = bands.find(b => b.supplier_type === editTopic.supplier_type && b.grade === 'A');
-                const mismatch = topBand && topBand.max !== newTotal;
+                const mismatch = topBand && topBand.max_score !== newTotal;
                 return (
                   <p className={`text-[11px] mt-1 ${mismatch ? 'text-amber-700' : 'text-emerald-700'}`}>
                     คะแนนเต็มรวมใหม่ = <b>{newTotal}</b>
                     {mismatch
-                      ? ` — ไม่ตรงกับเกรด A สูงสุด (${topBand!.max}) ควรกด "แก้ไขช่วงเกรด" ปรับตาม`
+                      ? ` — ไม่ตรงกับเกรด A สูงสุด (${topBand!.max_score}) ควรกด "แก้ไขช่วงเกรด" ปรับตาม`
                       : ' — ตรงกับช่วงเกรดปัจจุบัน'}
                   </p>
                 );

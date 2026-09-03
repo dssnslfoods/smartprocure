@@ -253,7 +253,7 @@ export function evaluateBrc(
 
   const results: TopicResult[] = relevant.map(topic => {
     const options = (optionsByTopic[topic.id] || []).sort((a, b) => a.sort_order - b.sort_order);
-    const matched: { option: BrcOption; via: string }[] = [];
+    const matched: { option: BrcOption; via: string; expired?: boolean }[] = [];
     const topicEvidence = evidence.filter(e => e.topic_id === topic.id);
     let pending = false;
 

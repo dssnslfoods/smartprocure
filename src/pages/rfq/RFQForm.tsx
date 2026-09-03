@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { computeSupplierEligibility, type SupplierEligibility } from '@/lib/brcScoring';
+import { computeSupplierEligibility, type SupplierEligibility, type SupplierBrcTypeRow } from '@/lib/brcScoring';
 import { requiredCertsForCatalogItems, checkCatalogEligibility, type CatalogEligibility } from '@/lib/catalogCerts';
 import { CATEGORY_LABELS, CATEGORY_COLORS, LEGACY_CATEGORIES } from '@/lib/priceListConstants';
 
@@ -37,6 +37,11 @@ interface CatalogBook {
   category: string;
   itemCount: number;
 }
+
+// Catalogs tied to a BRC category (the current 7-type list) vs the legacy
+// raw_material/packaging/other set — only the former maps to a real category
+// in supplier_brc_types, so only those can refresh the supplier list.
+const isLegacyCategory = (category: string) => (LEGACY_CATEGORIES as readonly string[]).includes(category);
 
 interface SupplierOption {
   id: string;
@@ -88,6 +93,11 @@ export default function RFQForm() {
   const [supplierSearch, setSupplierSearch] = useState('');
   const [eligibility, setEligibility] = useState<Record<string, SupplierEligibility>>({});
   const [catalogElig, setCatalogElig] = useState<Record<string, CatalogEligibility>>({});
+  // Per-category BRC grade — a supplier can sell in several categories, each
+  // with its own grade, so the picker refreshes to match whichever Catalog
+  // (→ BRC category) is selected instead of always showing the primary one.
+  const [supplierTypesBy, setSupplierTypesBy] = useState<Record<string, SupplierBrcTypeRow[]>>({});
+  const [showAllSuppliers, setShowAllSuppliers] = useState(false);
 
   useEffect(() => {
     const fetchCatalog = async () => {
@@ -129,8 +139,17 @@ export default function RFQForm() {
       setSuppliersLoading(false);
 
       // BRCGS mandatory qualification gate — block ineligible suppliers.
-      const elig = await computeSupplierEligibility(allSuppliers.map(s => s.id));
+      const elig = await computeSupplierEligibility(enriched.map(s => s.id));
       setEligibility(elig);
+
+      // Per-category grade — refreshed against whichever Catalog is picked.
+      if (enriched.length) {
+        const { data: typeRows } = await supabase.from('supplier_brc_types' as any)
+          .select('*').in('supplier_id', enriched.map(s => s.id));
+        const byId: Record<string, SupplierBrcTypeRow[]> = {};
+        ((typeRows as unknown as SupplierBrcTypeRow[]) || []).forEach(r => (byId[r.supplier_id] ??= []).push(r));
+        setSupplierTypesBy(byId);
+      }
     };
     fetchCatalog();
     fetchSuppliers();
@@ -178,11 +197,13 @@ export default function RFQForm() {
     if (id === selectedCatalogId) return;
     if (itemsHaveContent) { setPendingCatalogId(id); return; }
     setSelectedCatalogId(id);
+    setShowAllSuppliers(false); // new catalog → back to its own filtered supplier list
   };
   const confirmCatalogChange = () => {
     if (!pendingCatalogId) return;
     setSelectedCatalogId(pendingCatalogId);
     setItems([emptyItem]);
+    setShowAllSuppliers(false);
     setPendingCatalogId(null);
   };
 
@@ -208,13 +229,30 @@ export default function RFQForm() {
     });
   };
 
+  // The Catalog's own category (if it's one of the 7 BRC types, not the legacy
+  // set) is what the supplier list refreshes against — a supplier can sell in
+  // several categories, each with its own grade, so this both narrows WHO
+  // shows up and WHICH of their grades is displayed.
+  const catalogBrcType = selectedCatalog && !isLegacyCategory(selectedCatalog.category)
+    ? selectedCatalog.category : null;
+  const gradeFor = (s: SupplierOption): { grade: string | null; percent: number | null } => {
+    if (!catalogBrcType) return { grade: s.brc_grade, percent: s.brc_percent };
+    const row = supplierTypesBy[s.id]?.find(r => r.supplier_type === catalogBrcType);
+    return row ? { grade: row.grade, percent: row.percent } : { grade: null, percent: null };
+  };
+  const matchesCatalogType = (s: SupplierOption) =>
+    !catalogBrcType || (supplierTypesBy[s.id]?.some(r => r.supplier_type === catalogBrcType) ?? false);
+
+  const catalogFilteredCount = catalogBrcType ? suppliers.filter(matchesCatalogType).length : suppliers.length;
+  const baseSuppliers = (catalogBrcType && !showAllSuppliers) ? suppliers.filter(matchesCatalogType) : suppliers;
+
   const filteredSuppliers = supplierSearch
-    ? suppliers.filter(s =>
+    ? baseSuppliers.filter(s =>
         s.company_name.toLowerCase().includes(supplierSearch.toLowerCase()) ||
         s.category?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
         s.contact_person?.toLowerCase().includes(supplierSearch.toLowerCase())
       )
-    : suppliers;
+    : baseSuppliers;
 
   const validateForm = () => {
     if (items.filter(i => i.item_name.trim()).length === 0) {
@@ -453,9 +491,19 @@ export default function RFQForm() {
                 <Badge variant="secondary" className="ml-2">{selectedSuppliers.size} ราย</Badge>
               )}
             </CardTitle>
-            <CardDescription>เลือก Supplier ที่ต้องการให้เสนอราคา</CardDescription>
+            <CardDescription>
+              {catalogBrcType
+                ? `เฉพาะผู้จัดจำหน่ายประเภท "${CATEGORY_LABELS[catalogBrcType] || catalogBrcType}" (${catalogFilteredCount} ราย) — ตาม Catalog ที่เลือก`
+                : 'เลือก Supplier ที่ต้องการให้เสนอราคา'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            {catalogBrcType && (
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                <Checkbox checked={showAllSuppliers} onCheckedChange={v => setShowAllSuppliers(!!v)} />
+                แสดงผู้จัดจำหน่ายทั้งหมด (ไม่กรองตามประเภท Catalog)
+              </label>
+            )}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -487,6 +535,7 @@ export default function RFQForm() {
                 filteredSuppliers.map(s => {
                   const blockReason = supplierBlock(s.id);
                   const blocked = !!blockReason;
+                  const g = gradeFor(s);
                   return (
                   <label key={s.id} className={cn('flex items-center gap-3 px-3 py-2.5', blocked ? 'opacity-60 cursor-not-allowed bg-red-50/40' : 'hover:bg-accent cursor-pointer')}>
                     <Checkbox
@@ -508,18 +557,18 @@ export default function RFQForm() {
                           <Lock className="w-3 h-3" />บล็อก
                         </Badge>
                       )}
-                      {s.brc_grade != null && (
+                      {g.grade != null && (
                         <Badge
                           variant="outline"
                           className={cn('text-[10px] gap-0.5',
-                            s.brc_grade === 'A' ? 'border-green-300 bg-green-50 text-green-700' :
-                            s.brc_grade === 'B' ? 'border-blue-300 bg-blue-50 text-blue-700' :
-                            s.brc_grade === 'C' ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                            g.grade === 'A' ? 'border-green-300 bg-green-50 text-green-700' :
+                            g.grade === 'B' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                            g.grade === 'C' ? 'border-amber-300 bg-amber-50 text-amber-700' :
                             'border-red-300 bg-red-50 text-red-700'
                           )}
                         >
                           <ShieldCheck className="w-3 h-3" />
-                          เกรด {s.brc_grade} ({Math.round(s.brc_percent ?? 0)}%)
+                          เกรด {g.grade} ({Math.round(g.percent ?? 0)}%)
                         </Badge>
                       )}
                       {s.tier && (
@@ -587,11 +636,9 @@ function CatalogBookPicker({ books, loading, onSelect }: {
     (acc[b.category] ??= []).push(b);
     return acc;
   }, {} as Record<string, CatalogBook[]>);
-  // Catalogs tied to a BRC category (the current 7-type list, not the old
-  // raw_material/packaging/other set) list first — they're the ones the
+  // Catalogs tied to a BRC category list first — they're the ones the
   // mandatory-cert gate and BRCGS criteria actually key off of.
-  const isLegacy = (category: string) => (LEGACY_CATEGORIES as readonly string[]).includes(category);
-  const groupEntries = Object.entries(grouped).sort(([a], [b]) => Number(isLegacy(a)) - Number(isLegacy(b)));
+  const groupEntries = Object.entries(grouped).sort(([a], [b]) => Number(isLegacyCategory(a)) - Number(isLegacyCategory(b)));
 
   if (loading) return <div className="p-4 text-center text-sm text-muted-foreground">กำลังโหลด Catalog...</div>;
   if (books.length === 0) return <div className="p-4 text-center text-sm text-muted-foreground">ยังไม่มี Catalog ในระบบ</div>;
