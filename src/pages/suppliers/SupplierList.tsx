@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useSupabasePagination } from '@/hooks/use-supabase-pagination';
 import { PaginationControls } from '@/components/PaginationControls';
 import RiskBadge, { SupplierTypeBadge } from '@/components/RiskBadge';
+import { loadSupplierTypes, type BrcSupplierTypeRow } from '@/lib/brcScoring';
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -33,7 +34,12 @@ export default function SupplierList() {
   const [tierFilter, setTierFilter] = useState('all');
   const [certFilter, setCertFilter] = useState('all');         // certificate type
   const [certStatusFilter, setCertStatusFilter] = useState('all'); // valid / expiring / expired / missing
+  const [brcTypeFilter, setBrcTypeFilter] = useState('all');
+  const [scoreMin, setScoreMin] = useState('');
+  const [scoreMax, setScoreMax] = useState('');
   const [sortBy, setSortBy] = useState<'recent' | 'risk_desc' | 'risk_asc'>('recent');
+  const [brcTypes, setBrcTypes] = useState<BrcSupplierTypeRow[]>([]);
+  useEffect(() => { loadSupplierTypes().then(setBrcTypes); }, []);
   const { hasRole, isSuperAdmin } = useAuth();
   const { toast } = useToast();
   const canDelete = hasRole('admin') || isSuperAdmin;
@@ -102,18 +108,35 @@ export default function SupplierList() {
     } else if (certStatusFilter === 'expired') {
       q = q.lt('supplier_certificates.expiry_date', today);
     }
+
+    // BRC category — a supplier can be assessed under several; match if any of them is this one.
+    if (brcTypeFilter !== 'all') {
+      q = q.eq('supplier_brc_types.supplier_type', brcTypeFilter);
+      // A category is selected, so score the range against THAT category's %,
+      // not the supplier-level summary (which is the worst across categories).
+      if (scoreMin !== '') q = q.gte('supplier_brc_types.percent', Number(scoreMin));
+      if (scoreMax !== '') q = q.lte('supplier_brc_types.percent', Number(scoreMax));
+    } else {
+      // No category picked — filter on the supplier-level summary %.
+      if (scoreMin !== '') q = q.gte('brc_percent', Number(scoreMin));
+      if (scoreMax !== '') q = q.lte('brc_percent', Number(scoreMax));
+    }
+
     return q;
-  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter]);
+  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, scoreMin, scoreMax]);
 
   // When filtering by cert type or cert status, switch the join to inner so the row only
-  // appears if the matching cert row exists. Otherwise leave a normal left join.
+  // appears if the matching cert row exists. Otherwise leave a normal left join. Same idea
+  // for the BRC category filter, joined against supplier_brc_types.
   const certJoinKind = (certFilter !== 'all' || (certStatusFilter !== 'all' && certStatusFilter !== 'missing')) ? '!inner' : '';
+  const brcJoinKind = brcTypeFilter !== 'all' ? '!inner' : '';
   const baseSelect =
     'id, company_name, supplier_code, supplier_type, tax_id, email, status, tier, risk_level, ' +
     'brc_grade, brc_percent, is_blacklisted, ' +
     'certificate_expiry_date, created_at, ' +
     'supplier_risk_assessments(total_risk_score, assessed_at), ' +
-    `supplier_certificates${certJoinKind}(certificate_type, expiry_date, certificate_no)`;
+    `supplier_certificates${certJoinKind}(certificate_type, expiry_date, certificate_no), ` +
+    `supplier_brc_types${brcJoinKind}(supplier_type, grade, percent)`;
 
   // risk_level is an enum ordered low < medium < high < critical, so DESC surfaces
   // the worst BRCGS grades (D/critical) first — nulls (never assessed) always sort last.
@@ -180,6 +203,20 @@ export default function SupplierList() {
             <SelectItem value="expired">หมดอายุแล้ว</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={brcTypeFilter} onValueChange={setBrcTypeFilter}>
+          <SelectTrigger className="w-[220px]"><SelectValue placeholder="หมวด BRC" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">ทุกหมวด BRC</SelectItem>
+            {brcTypes.map(t => <SelectItem key={t.key} value={t.key}>{t.label_th}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1.5">
+          <Input type="number" min={0} max={100} placeholder="คะแนนต่ำสุด" value={scoreMin}
+            onChange={e => setScoreMin(e.target.value)} className="w-[110px]" />
+          <span className="text-muted-foreground text-sm">–</span>
+          <Input type="number" min={0} max={100} placeholder="คะแนนสูงสุด" value={scoreMax}
+            onChange={e => setScoreMax(e.target.value)} className="w-[110px]" />
+        </div>
         <Select value={sortBy} onValueChange={(v: any) => { setSortBy(v); pagination.goToPage(1); }}>
           <SelectTrigger className="w-[190px]"><SelectValue placeholder="เรียงตาม" /></SelectTrigger>
           <SelectContent>
@@ -251,11 +288,19 @@ export default function SupplierList() {
                                 </span>
                               );
                             }
-                            if (s.brc_grade != null) {
+                            // When a BRC category is picked, show that category's own grade/%
+                            // (from the joined row) instead of the supplier-level summary,
+                            // so it matches whatever the score-range filter was applied to.
+                            const typeRow = brcTypeFilter !== 'all'
+                              ? (s.supplier_brc_types as any[])?.find(r => r.supplier_type === brcTypeFilter)
+                              : null;
+                            const grade = typeRow ? typeRow.grade : s.brc_grade;
+                            const percent = typeRow ? typeRow.percent : s.brc_percent;
+                            if (grade != null) {
                               return (
                                 <span className="font-semibold tabular-nums text-sm">
-                                  {s.brc_grade}
-                                  <span className="text-[10px] text-muted-foreground font-normal"> · {Number(s.brc_percent ?? 0).toFixed(0)}%</span>
+                                  {grade}
+                                  <span className="text-[10px] text-muted-foreground font-normal"> · {Number(percent ?? 0).toFixed(0)}%</span>
                                 </span>
                               );
                             }
