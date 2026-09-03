@@ -78,9 +78,11 @@ export default function SupplierDetail() {
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Link to="/suppliers">
-            <Button variant="ghost" size="icon"><ArrowLeft className="w-4 h-4" /></Button>
-          </Link>
+          {/* Actual browser-style back, not a hardcoded /suppliers link — so filters
+              the list had (search, dropdowns, page — all kept in its URL) survive. */}
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold">{supplier.company_name}</h1>
