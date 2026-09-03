@@ -35,9 +35,11 @@ const CERT_TYPES = ['GMP', 'HACCP', 'ISO9001', 'ISO22000', 'BRCGS', 'FSSC22000',
 // resetting to defaults.
 const FILTER_KEYS = {
   search: 'q', statusFilter: 'status', tierFilter: 'tier', certFilter: 'cert',
-  certStatusFilter: 'certStatus', brcTypeFilter: 'brcType', scoreMin: 'min',
-  scoreMax: 'max', sortBy: 'sort', page: 'page',
+  certStatusFilter: 'certStatus', brcTypeFilter: 'brcType', gradeFilter: 'grade',
+  scoreMin: 'min', scoreMax: 'max', sortBy: 'sort', page: 'page',
 } as const;
+
+const GRADES = ['A', 'B', 'C', 'D'] as const;
 
 export default function SupplierList() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -49,6 +51,7 @@ export default function SupplierList() {
   const [certFilter, setCertFilter] = useState(() => getParam(FILTER_KEYS.certFilter, 'all'));         // certificate type
   const [certStatusFilter, setCertStatusFilter] = useState(() => getParam(FILTER_KEYS.certStatusFilter, 'all')); // valid / expiring / expired / missing
   const [brcTypeFilter, setBrcTypeFilter] = useState(() => getParam(FILTER_KEYS.brcTypeFilter, 'all'));
+  const [gradeFilter, setGradeFilter] = useState(() => getParam(FILTER_KEYS.gradeFilter, 'all'));
   const [scoreMin, setScoreMin] = useState(() => getParam(FILTER_KEYS.scoreMin, ''));
   const [scoreMax, setScoreMax] = useState(() => getParam(FILTER_KEYS.scoreMax, ''));
   const [sortBy, setSortBy] = useState<'recent' | 'risk_desc' | 'risk_asc'>(
@@ -78,6 +81,7 @@ export default function SupplierList() {
         [FILTER_KEYS.search, search], [FILTER_KEYS.statusFilter, statusFilter],
         [FILTER_KEYS.tierFilter, tierFilter], [FILTER_KEYS.certFilter, certFilter],
         [FILTER_KEYS.certStatusFilter, certStatusFilter], [FILTER_KEYS.brcTypeFilter, brcTypeFilter],
+        [FILTER_KEYS.gradeFilter, gradeFilter],
         [FILTER_KEYS.scoreMin, scoreMin], [FILTER_KEYS.scoreMax, scoreMax],
         [FILTER_KEYS.sortBy, sortBy],
       ];
@@ -88,7 +92,7 @@ export default function SupplierList() {
       return next;
     }, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, scoreMin, scoreMax, sortBy]);
+  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, gradeFilter, scoreMin, scoreMax, sortBy]);
 
   const handlePageChange = (page: number) => {
     setSearchParams(prev => {
@@ -170,18 +174,20 @@ export default function SupplierList() {
     // BRC category — a supplier can be assessed under several; match if any of them is this one.
     if (brcTypeFilter !== 'all') {
       q = q.eq('supplier_brc_types.supplier_type', brcTypeFilter);
-      // A category is selected, so score the range against THAT category's %,
-      // not the supplier-level summary (which is the worst across categories).
+      // A category is selected, so grade/score filter against THAT category's
+      // own value, not the supplier-level summary (worst across categories).
+      if (gradeFilter !== 'all') q = q.eq('supplier_brc_types.grade', gradeFilter);
       if (scoreMin !== '') q = q.gte('supplier_brc_types.percent', Number(scoreMin));
       if (scoreMax !== '') q = q.lte('supplier_brc_types.percent', Number(scoreMax));
     } else {
-      // No category picked — filter on the supplier-level summary %.
+      // No category picked — filter on the supplier-level summary.
+      if (gradeFilter !== 'all') q = q.eq('brc_grade', gradeFilter);
       if (scoreMin !== '') q = q.gte('brc_percent', Number(scoreMin));
       if (scoreMax !== '') q = q.lte('brc_percent', Number(scoreMax));
     }
 
     return q;
-  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, scoreMin, scoreMax]);
+  }, [search, statusFilter, tierFilter, certFilter, certStatusFilter, brcTypeFilter, gradeFilter, scoreMin, scoreMax]);
 
   // When filtering by cert type or cert status, switch the join to inner so the row only
   // appears if the matching cert row exists. Otherwise leave a normal left join. Same idea
@@ -268,6 +274,13 @@ export default function SupplierList() {
           <SelectContent>
             <SelectItem value="all">ทุกหมวด BRC</SelectItem>
             {brcTypes.map(t => <SelectItem key={t.key} value={t.key}>{t.label_th}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={gradeFilter} onValueChange={setGradeFilter}>
+          <SelectTrigger className="w-[130px]"><SelectValue placeholder="เกรด" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">ทุกเกรด</SelectItem>
+            {GRADES.map(g => <SelectItem key={g} value={g}>เกรด {g}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="flex items-center gap-1.5">
