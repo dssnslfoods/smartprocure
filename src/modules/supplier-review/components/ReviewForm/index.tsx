@@ -34,13 +34,8 @@ export function ReviewFormTabs({ reviewId, onNavigate }: Props) {
   const updateReview = useUpdateReview();
   const [activeTab, setActiveTab] = useState('info');
 
-  if (isLoading) return <div className="p-8 text-center">Loading...</div>;
-  if (!review) return <div className="p-8 text-center">Review not found</div>;
-
-  const locked = review.locked || review.status === 'APPROVED';
-  const kpiData = (kpiSnapshot?.data ?? null) as KpiData | null;
-
   const tabStatuses: Record<string, TabStatus> = useMemo(() => {
+    if (!review) return { info: 'none', kpi: 'none', scoring: 'none', knockouts: 'none', outcome: 'none', attachments: 'none', signoff: 'none' };
     const hasKpi = !!kpiSnapshot;
     const hasScores = scores.length > 0;
     const hasKnockouts = knockouts.length > 0;
@@ -58,6 +53,12 @@ export function ReviewFormTabs({ reviewId, onNavigate }: Props) {
       signoff: isSubmitted ? 'complete' : 'none',
     };
   }, [kpiSnapshot, scores, knockouts, attachments, review]);
+
+  if (isLoading) return <div className="p-8 text-center">Loading...</div>;
+  if (!review) return <div className="p-8 text-center">Review not found</div>;
+
+  const locked = review.locked || review.status === 'APPROVED';
+  const kpiData = (kpiSnapshot?.data ?? null) as KpiData | null;
 
   const handleRiskAdjust = (adjusted: boolean, reason: string, newLevel: string) => {
     updateReview.mutate({

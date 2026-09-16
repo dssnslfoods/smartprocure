@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,7 +41,7 @@ export function PerformanceTab({ reviewId, kpiData, locked, reviewDate, supplier
   const evaluateKnockouts = useEvaluateKnockouts();
 
   useEffect(() => {
-    if (kpiData) setForm(kpiData);
+    if (kpiData && !dirty) setForm(kpiData);
   }, [kpiData]);
 
   const set = (key: keyof KpiData, value: unknown) => {
@@ -120,16 +120,18 @@ export function PerformanceTab({ reviewId, kpiData, locked, reviewDate, supplier
   };
 
   const [dirty, setDirty] = useState(false);
-  const origSet = set;
+  const formRef = useRef(form);
+  formRef.current = form;
+
   const setTracked = (key: keyof KpiData, value: unknown) => {
-    origSet(key, value);
+    set(key, value);
     setDirty(true);
   };
 
   useEffect(() => {
     if (!dirty || locked) return;
     const timer = setTimeout(() => {
-      const computed = computeDerivedFlags(form);
+      const computed = computeDerivedFlags(formRef.current);
       const errs = validate(computed);
       if (errs.length === 0) {
         upsertKpi.mutate({ reviewId, kpiData: computed as Record<string, unknown> });
@@ -137,7 +139,7 @@ export function PerformanceTab({ reviewId, kpiData, locked, reviewDate, supplier
       }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [dirty, form]);
+  }, [dirty]);
 
   const numField = (key: keyof KpiData, label: string, readOnly = false) => (
     <div key={key}>
