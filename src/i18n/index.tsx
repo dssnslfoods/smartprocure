@@ -29,7 +29,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       // fallback to english
       let fallback: any = translations['en'];
       for (const k of keys) { fallback = fallback?.[k]; }
-      val = typeof fallback === 'string' ? fallback : key;
+      if (typeof fallback === 'string') {
+        val = fallback;
+      } else {
+        if (import.meta.env.DEV) console.warn(`[i18n] missing key: "${key}"`);
+        val = key;
+      }
     }
     if (params) {
       Object.entries(params).forEach(([k, v]) => {
