@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useTranslation } from '@/i18n';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { useSuppliers, useCreateReview } from '../hooks/useReviews';
+import { useSuppliers, useCreateReview, useReviews } from '../hooks/useReviews';
 
 export default function NewReviewPage() {
   const { t } = useTranslation();
@@ -23,10 +23,25 @@ export default function NewReviewPage() {
   const [supplierId, setSupplierId] = useState(searchParams.get('supplier') ?? '');
   const [reviewYear, setReviewYear] = useState(currentYear);
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
-  const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);
+  const [periodEnd, setPeriodEnd] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId);
+  const { data: supplierReviews = [] } = useReviews(
+    supplierId ? { supplier_id: supplierId, limit: 10 } : undefined
+  );
+
+  useEffect(() => {
+    if (!supplierId || supplierReviews.length === 0) return;
+    const lastApproved = supplierReviews
+      .filter(r => r.status === 'APPROVED' && r.period_end)
+      .sort((a, b) => (b.period_end ?? '').localeCompare(a.period_end ?? ''))[0];
+    if (lastApproved?.period_end) {
+      const nextDay = new Date(lastApproved.period_end);
+      nextDay.setDate(nextDay.getDate() + 1);
+      setPeriodStart(nextDay.toISOString().split('T')[0]);
+    }
+  }, [supplierId, supplierReviews]);
 
   const handleCreate = async () => {
     setError('');

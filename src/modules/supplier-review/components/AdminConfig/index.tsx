@@ -18,7 +18,9 @@ import * as api from '../../api/client';
 export function AdminConfig() {
   const { t, i18n } = useTranslation();
   const [tab, setTab] = useState('frequency');
-  const [safetyCheck, setSafetyCheck] = useState<{ valid: boolean; safety_pct: number } | null>(null);
+  const [weightCheck, setWeightCheck] = useState<{
+    valid: boolean; total: number; safety_quality: number; commercial: number; safety_pct: number; errors?: string[];
+  } | null>(null);
 
   const { data: freqConfig = [] } = useFrequencyConfig();
   const updateFreq = useUpdateFrequencyConfig();
@@ -31,9 +33,9 @@ export function AdminConfig() {
   const { data: gradeThresholds = [] } = useGradeThresholds();
   const updateGrade = useUpdateGradeThreshold();
 
-  const checkSafety = async () => {
-    const result = await api.checkSafetyWeight('rm_primary_pk');
-    setSafetyCheck(result);
+  const checkWeights = async () => {
+    const result = await api.validateCriteriaWeights('rm_primary_pk');
+    setWeightCheck(result);
   };
 
   const nameKey = i18n.language === 'th' ? 'name_th' : 'name_en';
@@ -78,12 +80,18 @@ export function AdminConfig() {
             <CardHeader>
               <div className="flex justify-between items-center">
                 <CardTitle>{t('spr.config_section.criteria')}</CardTitle>
-                <Button variant="outline" size="sm" onClick={checkSafety}>Check Safety Weight</Button>
+                <Button variant="outline" size="sm" onClick={checkWeights}>Check Weights & BSAQ</Button>
               </div>
-              {safetyCheck && (
-                <Badge className={safetyCheck.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
-                  Safety/Quality weight: {(safetyCheck.safety_pct * 100).toFixed(0)}% {safetyCheck.valid ? '(OK)' : '(< 60% — BRCGS 3.5.1.3 violation)'}
-                </Badge>
+              {weightCheck && (
+                <div className="space-y-1">
+                  <Badge className={weightCheck.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
+                    Safety/Quality: {weightCheck.safety_quality}% | Commercial: {weightCheck.commercial}% | Total: {weightCheck.total}%
+                    {weightCheck.valid ? ' ✓' : ''}
+                  </Badge>
+                  {weightCheck.errors?.map((err, i) => (
+                    <p key={i} className="text-red-600 text-sm">{err}</p>
+                  ))}
+                </div>
               )}
             </CardHeader>
             <CardContent>
@@ -93,6 +101,7 @@ export function AdminConfig() {
                     <TableHead>Code</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Group</TableHead>
+                    <TableHead>BSAQ Tags</TableHead>
                     <TableHead>Weight</TableHead>
                     <TableHead>Category</TableHead>
                     <TableHead>Active</TableHead>
@@ -106,7 +115,14 @@ export function AdminConfig() {
                       <TableCell>
                         <Badge variant="outline">{c.criterion_group === 'SAFETY_QUALITY' ? 'Safety' : 'Commercial'}</Badge>
                       </TableCell>
-                      <TableCell>{(c.weight * 100).toFixed(0)}%</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {(c.bsaq_tags ?? []).map((tag: string) => (
+                            <Badge key={tag} variant="outline" className="text-[10px] px-1 py-0 uppercase">{tag.charAt(0).toUpperCase()}</Badge>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>{c.weight}%</TableCell>
                       <TableCell>{c.supplier_category}</TableCell>
                       <TableCell>{c.active ? '✓' : '—'}</TableCell>
                     </TableRow>

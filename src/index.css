@@ -121,3 +121,11 @@
     @apply bg-border rounded-full;
   }
 }
+
+@media print {
+  nav, aside, [role="tablist"], button, .no-print { display: none !important; }
+  [role="tabpanel"] { display: block !important; }
+  body { background: white !important; color: black !important; font-size: 11pt; }
+  .container { max-width: 100% !important; padding: 0 !important; }
+  * { box-shadow: none !important; }
+}
