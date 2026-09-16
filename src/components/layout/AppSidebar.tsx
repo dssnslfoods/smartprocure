@@ -3,7 +3,9 @@ import {
   LayoutDashboard, Building2, FileText, Send, ClipboardList,
   Award, BarChart3, Settings, LogOut, ChevronLeft, ChevronRight,
   UserCheck, Briefcase, ShieldAlert, Languages, FileUp, ShieldCheck, HelpCircle,
+  ClipboardCheck,
 } from 'lucide-react';
+import { isSprEnabled } from '@/modules/supplier-review';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
@@ -69,13 +71,23 @@ export default function AppSidebar() {
         { icon: BarChart3, label: t('nav.reports'), path: '/reports', roles: ['admin', 'procurement_officer', 'executive'], moduleKey: 'reports' },
       ],
     },
+    ...(isSprEnabled() ? [{
+      label: t('spr.title'),
+      items: [
+        { icon: ClipboardCheck, label: t('spr.dashboard'),  path: '/supplier-review',             roles: ['admin', 'procurement_officer', 'approver', 'executive'], moduleKey: '_spr' },
+        { icon: ClipboardCheck, label: t('spr.campaign'),   path: '/supplier-review/campaign',    roles: ['admin', 'procurement_officer'],                         moduleKey: '_spr' },
+        { icon: ClipboardCheck, label: t('spr.asl'),         path: '/supplier-review/status-list', roles: ['admin', 'procurement_officer', 'approver'],              moduleKey: '_spr' },
+        { icon: BarChart3,      label: t('spr.reports'),     path: '/supplier-review/reports',     roles: ['admin', 'procurement_officer', 'executive'],             moduleKey: '_spr' },
+        { icon: Settings,       label: t('spr.config'),      path: '/supplier-review/config',      roles: ['admin'],                                               moduleKey: '_spr' },
+      ],
+    }] : []),
   ];
 
   const visibleGroups = menuGroups
     .map(group => ({
       ...group,
       items: group.items.filter(
-        item => item.roles.some(r => roles.includes(r as any)) && canAccessModule(item.moduleKey)
+        item => item.roles.some(r => roles.includes(r as any)) && (item.moduleKey === '_spr' || canAccessModule(item.moduleKey))
       ),
     }))
     .filter(group => group.items.length > 0);
