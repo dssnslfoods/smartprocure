@@ -1,46 +1,60 @@
 -- ============================================================
 -- SPR Migration 009: Scoring Tab Round 2
 -- - Rebalance weights to S&Q 75% / Commercial 25% (13 criteria)
--- - Add BSAQ tags to Commercial criteria
--- - Add 4 new S&Q criteria (SQ07–SQ10)
+-- - Add 4 new S&Q criteria (SQ07–SQ10) with full BSAQ coverage
+-- - Add 'commercial' tag to Commercial criteria
 -- - Server-side weight validation in fn_calc_review_score
 -- ============================================================
 SET search_path = spr, pg_temp;
 
--- 1) Update existing S&Q criteria weights for rm_primary_pk (total = 75%)
-UPDATE spr.review_criteria SET weight = 10 WHERE code = 'SQ01' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 8  WHERE code = 'SQ02' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 10 WHERE code = 'SQ03' AND supplier_category = 'rm_primary_pk';
+-- 1) Update existing S&Q criteria weights for rm_primary_pk
+UPDATE spr.review_criteria SET weight = 12 WHERE code = 'SQ01' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 10 WHERE code = 'SQ02' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 12 WHERE code = 'SQ03' AND supplier_category = 'rm_primary_pk';
 UPDATE spr.review_criteria SET weight = 8  WHERE code = 'SQ04' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 7  WHERE code = 'SQ05' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 7  WHERE code = 'SQ06' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 6  WHERE code = 'SQ05' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 6  WHERE code = 'SQ06' AND supplier_category = 'rm_primary_pk';
 
--- 2) Update Commercial weights (total = 25%)
-UPDATE spr.review_criteria SET weight = 10, bsaq_tags = ARRAY['commercial'] WHERE code = 'CM01' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 8,  bsaq_tags = ARRAY['commercial'] WHERE code = 'CM02' AND supplier_category = 'rm_primary_pk';
-UPDATE spr.review_criteria SET weight = 7,  bsaq_tags = ARRAY['commercial'] WHERE code = 'CM03' AND supplier_category = 'rm_primary_pk';
+-- 2) Update Commercial weights + add 'commercial' tag
+UPDATE spr.review_criteria SET weight = 12, bsaq_tags = ARRAY['commercial'] WHERE code = 'CM01' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 7,  bsaq_tags = ARRAY['commercial'] WHERE code = 'CM02' AND supplier_category = 'rm_primary_pk';
+UPDATE spr.review_criteria SET weight = 6,  bsaq_tags = ARRAY['commercial'] WHERE code = 'CM03' AND supplier_category = 'rm_primary_pk';
 
--- 3) Insert new S&Q criteria (SQ07–SQ10) to reach 10 criteria
+-- 3) Insert 4 new S&Q criteria
+-- SQ07: ความแท้ของวัตถุดิบ / Food fraud controls
 INSERT INTO spr.review_criteria (supplier_category, code, name_th, name_en, criterion_group, bsaq_tags, weight, scale_max, auto_rule, score_descriptors, sort_order) VALUES
-  ('rm_primary_pk', 'SQ07', 'ข้อร้องเรียนจากลูกค้า', 'Customer Complaints', 'SAFETY_QUALITY',
-   ARRAY['safety','quality'], 7, 4, NULL,
-   '[{"score":4,"label":"ไม่มีข้อร้องเรียน"},{"score":3,"label":"1 ข้อร้องเรียน (เล็กน้อย)"},{"score":2,"label":"2-3 ข้อร้องเรียน"},{"score":1,"label":"4+ ข้อร้องเรียน"},{"score":0,"label":"ข้อร้องเรียนร้ายแรง"}]'::jsonb,
-   7),
-  ('rm_primary_pk', 'SQ08', 'การแจ้งเปลี่ยนแปลง / Change Notification', 'Change Notification Compliance', 'SAFETY_QUALITY',
-   ARRAY['quality','legality'], 6, 4, NULL,
-   '[{"score":4,"label":"แจ้งครบ ตรงเวลา"},{"score":3,"label":"แจ้งครบ ล่าช้าบ้าง"},{"score":2,"label":"แจ้งไม่ครบ"},{"score":1,"label":"ไม่แจ้ง แต่ไม่กระทบ"},{"score":0,"label":"ไม่แจ้ง กระทบ Safety"}]'::jsonb,
-   8),
-  ('rm_primary_pk', 'SQ09', 'ระบบ Food Defence / Food Fraud Prevention', 'Food Defence & Fraud Prevention', 'SAFETY_QUALITY',
-   ARRAY['safety','authenticity'], 6, 4, NULL,
-   '[{"score":4,"label":"มีระบบครบ + ตรวจสอบแล้ว"},{"score":3,"label":"มีระบบ ยังไม่ตรวจสอบ"},{"score":2,"label":"มีบางส่วน"},{"score":1,"label":"อยู่ระหว่างจัดทำ"},{"score":0,"label":"ไม่มี"}]'::jsonb,
-   9),
-  ('rm_primary_pk', 'SQ10', 'การจัดการสารก่อภูมิแพ้ / Allergen Management', 'Allergen Management', 'SAFETY_QUALITY',
-   ARRAY['safety','quality','legality'], 6, 4, NULL,
-   '[{"score":4,"label":"ควบคุมครบ ไม่มีเหตุผิดพลาด"},{"score":3,"label":"ควบคุมดี มีข้อแก้ไขเล็กน้อย"},{"score":2,"label":"มีระบบ แต่มีข้อบกพร่อง"},{"score":1,"label":"ระบบไม่เพียงพอ"},{"score":0,"label":"ไม่มีระบบ / เกิดเหตุ allergen"}]'::jsonb,
+  ('rm_primary_pk', 'SQ07', 'ความแท้ของวัตถุดิบ / Food fraud controls', 'Raw Material Authenticity / Food Fraud Controls', 'SAFETY_QUALITY',
+   ARRAY['authenticity'], 6, 4, NULL,
+   '[{"score":4,"label":"มีมาตรการป้องกัน fraud + หลักฐาน (CoA, origin cert, test)"},{"score":2,"label":"มีบางส่วน"},{"score":0,"label":"ไม่มี / พบปัญหา"}]'::jsonb,
+   7)
+ON CONFLICT DO NOTHING;
+
+-- SQ08: การปฏิบัติตามกฎหมาย
+INSERT INTO spr.review_criteria (supplier_category, code, name_th, name_en, criterion_group, bsaq_tags, weight, scale_max, auto_rule, score_descriptors, sort_order) VALUES
+  ('rm_primary_pk', 'SQ08', 'การปฏิบัติตามกฎหมาย (อย. / ใบอนุญาต)', 'Legal & Regulatory Compliance', 'SAFETY_QUALITY',
+   ARRAY['legality'], 5, 4, NULL,
+   '[{"score":4,"label":"ใบอนุญาต/ทะเบียนครบและยังไม่หมดอายุ ไม่มีปัญหา"},{"score":2,"label":"ขาดเอกสารบางรายการ"},{"score":0,"label":"ไม่ถูกต้อง / ถูกเรียกคืนตามกฎหมาย"}]'::jsonb,
+   8)
+ON CONFLICT DO NOTHING;
+
+-- SQ09: ข้อร้องเรียนจากลูกค้า
+INSERT INTO spr.review_criteria (supplier_category, code, name_th, name_en, criterion_group, bsaq_tags, weight, scale_max, auto_rule, score_descriptors, sort_order) VALUES
+  ('rm_primary_pk', 'SQ09', 'ข้อร้องเรียนจากลูกค้าที่เกี่ยวกับ supplier', 'Customer Complaints (Supplier-related)', 'SAFETY_QUALITY',
+   ARRAY['quality','safety'], 5, 4,
+   '{"field":"complaints_count","rules":[{"max":0,"score":4},{"max":1,"score":3},{"max":3,"score":2},{"max":5,"score":1}]}'::jsonb,
+   '[{"score":4,"label":"0 เรื่อง"},{"score":3,"label":"1 เรื่อง minor"},{"score":2,"label":"≥2 minor"},{"score":1,"label":"1 major"},{"score":0,"label":"critical / recall"}]'::jsonb,
+   9)
+ON CONFLICT DO NOTHING;
+
+-- SQ10: การแจ้งการเปลี่ยนแปลง
+INSERT INTO spr.review_criteria (supplier_category, code, name_th, name_en, criterion_group, bsaq_tags, weight, scale_max, auto_rule, score_descriptors, sort_order) VALUES
+  ('rm_primary_pk', 'SQ10', 'การแจ้งการเปลี่ยนแปลง / ตอบสนองความเสี่ยงใหม่', 'Change Notification & Emerging Risk Response', 'SAFETY_QUALITY',
+   ARRAY['safety','authenticity'], 5, 4, NULL,
+   '[{"score":4,"label":"แจ้งล่วงหน้าทุกครั้ง"},{"score":2,"label":"แจ้งช้า"},{"score":0,"label":"ไม่แจ้ง / ทราบจากแหล่งอื่น"}]'::jsonb,
    10)
 ON CONFLICT DO NOTHING;
 
--- Update sort_order for commercial criteria to come after SQ10
+-- Update sort_order for commercial criteria
 UPDATE spr.review_criteria SET sort_order = 11 WHERE code = 'CM01' AND supplier_category = 'rm_primary_pk';
 UPDATE spr.review_criteria SET sort_order = 12 WHERE code = 'CM02' AND supplier_category = 'rm_primary_pk';
 UPDATE spr.review_criteria SET sort_order = 13 WHERE code = 'CM03' AND supplier_category = 'rm_primary_pk';
@@ -69,7 +83,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'Review not found');
   END IF;
 
-  -- Server-side weight validation: total must = 100 and S&Q >= 60%
+  -- Server-side weight validation
   SELECT
     COALESCE(SUM(weight), 0),
     COALESCE(SUM(CASE WHEN criterion_group = 'SAFETY_QUALITY' THEN weight ELSE 0 END), 0)
