@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,13 +13,14 @@ import { useSuppliers, useCreateReview } from '../hooks/useReviews';
 export default function NewReviewPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const { toast } = useToast();
   const { data: suppliers = [] } = useSuppliers();
   const createReview = useCreateReview();
 
   const currentYear = new Date().getFullYear();
-  const [supplierId, setSupplierId] = useState('');
+  const [supplierId, setSupplierId] = useState(searchParams.get('supplier') ?? '');
   const [reviewYear, setReviewYear] = useState(currentYear);
   const [periodStart, setPeriodStart] = useState(`${currentYear}-01-01`);
   const [periodEnd, setPeriodEnd] = useState(`${currentYear}-12-31`);

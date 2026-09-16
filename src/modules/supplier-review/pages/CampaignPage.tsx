@@ -175,7 +175,7 @@ export default function CampaignPage() {
                     {s.latestReview ? (
                       <Button size="sm" variant="ghost" onClick={() => navigate(`/supplier-review/review/${s.latestReview!.id}`)}>Open</Button>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => navigate('/supplier-review/new')}>Create</Button>
+                      <Button size="sm" variant="outline" onClick={() => navigate(`/supplier-review/new?supplier=${s.id}`)}>Create</Button>
                     )}
                   </TableCell>
                 </TableRow>
