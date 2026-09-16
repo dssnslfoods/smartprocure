@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -40,6 +40,16 @@ import RFQBidComparison from "@/pages/rfq/RFQBidComparison";
 import RFQAwardApproval from "@/pages/rfq/RFQAwardApproval";
 import TenantSelector from "@/pages/TenantSelector";
 import NotFound from "@/pages/NotFound";
+import { isSprEnabled } from "@/modules/supplier-review";
+
+const SprDashboardPage = lazy(() => import("@/modules/supplier-review/pages/DashboardPage"));
+const SprNewReviewPage = lazy(() => import("@/modules/supplier-review/pages/NewReviewPage"));
+const SprReviewFormPage = lazy(() => import("@/modules/supplier-review/pages/ReviewFormPage"));
+const SprAdminConfigPage = lazy(() => import("@/modules/supplier-review/pages/AdminConfigPage"));
+const SprSupplierHistoryPage = lazy(() => import("@/modules/supplier-review/pages/SupplierHistoryPage"));
+const SprReviewStatusListPage = lazy(() => import("@/modules/supplier-review/pages/ReviewStatusListPage"));
+const SprCampaignPage = lazy(() => import("@/modules/supplier-review/pages/CampaignPage"));
+const SprReportsPage = lazy(() => import("@/modules/supplier-review/pages/ReportsPage"));
 import SuperAdminLayout from "@/components/layout/SuperAdminLayout";
 import SuperAdminDashboard from "@/pages/super-admin/SuperAdminDashboard";
 import TenantList from "@/pages/super-admin/TenantList";
@@ -139,6 +149,18 @@ const App = () => (
                   <SupplierApprovalPage />
                 </ProtectedRoute>
               } />
+              {isSprEnabled() && (
+                <>
+                  <Route path="/supplier-review" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprDashboardPage /></Suspense>} />
+                  <Route path="/supplier-review/new" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprNewReviewPage /></Suspense>} />
+                  <Route path="/supplier-review/review/:id" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprReviewFormPage /></Suspense>} />
+                  <Route path="/supplier-review/config" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprAdminConfigPage /></Suspense>} />
+                  <Route path="/supplier-review/history/:supplierId" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprSupplierHistoryPage /></Suspense>} />
+                  <Route path="/supplier-review/status-list" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprReviewStatusListPage /></Suspense>} />
+                  <Route path="/supplier-review/campaign" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprCampaignPage /></Suspense>} />
+                  <Route path="/supplier-review/reports" element={<Suspense fallback={<div className="p-8 text-center">Loading...</div>}><SprReportsPage /></Suspense>} />
+                </>
+              )}
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
