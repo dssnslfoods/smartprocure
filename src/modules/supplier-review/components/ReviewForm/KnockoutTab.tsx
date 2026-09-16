@@ -19,17 +19,30 @@ export function KnockoutTab({ reviewId, locked }: Props) {
   const handleEvaluate = () => evaluateKnockouts.mutate(reviewId);
 
   const knockoutMap = new Map(knockouts.map(k => [k.rule_id, k]));
-  const anyFailed = knockouts.some(k => !k.passed);
+  const anyFailed = knockouts.some(k => !k.passed && !k.detail?.startsWith('N/A'));
+
+  const getResultBadge = (result: { passed: boolean; detail: string | null } | undefined) => {
+    if (!result) return <Badge variant="outline">{t('spr.knockout.pending')}</Badge>;
+
+    const isNA = result.detail?.startsWith('N/A');
+    if (isNA) {
+      return <Badge className="bg-slate-100 text-slate-600">N/A</Badge>;
+    }
+    if (result.passed) {
+      return <Badge className="bg-green-100 text-green-700">{t('spr.knockout.passed')}</Badge>;
+    }
+    return <Badge className="bg-red-100 text-red-700">{t('spr.knockout.failed')}</Badge>;
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <Button variant="outline" onClick={handleEvaluate} disabled={locked || evaluateKnockouts.isPending}>
-          {evaluateKnockouts.isPending ? 'Evaluating...' : 'Evaluate Knockouts'}
+          {evaluateKnockouts.isPending ? t('spr.knockout.evaluating') : t('spr.knockout.evaluate')}
         </Button>
         {knockouts.length > 0 && (
           <Badge className={anyFailed ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}>
-            {anyFailed ? 'KNOCKOUT TRIGGERED' : 'ALL PASSED'}
+            {anyFailed ? t('spr.knockout.triggered') : t('spr.knockout.allPassed')}
           </Badge>
         )}
       </div>
@@ -48,9 +61,9 @@ export function KnockoutTab({ reviewId, locked }: Props) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Rule</TableHead>
-                <TableHead className="w-[100px]">Result</TableHead>
-                <TableHead>Detail</TableHead>
+                <TableHead>{t('spr.knockout.rule')}</TableHead>
+                <TableHead className="w-[100px]">{t('spr.knockout.result')}</TableHead>
+                <TableHead>{t('spr.knockout.detail')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -63,15 +76,7 @@ export function KnockoutTab({ reviewId, locked }: Props) {
                       <div className="font-medium">{desc}</div>
                       <div className="text-xs text-muted-foreground">{rule.code}</div>
                     </TableCell>
-                    <TableCell>
-                      {result ? (
-                        <Badge className={result.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
-                          {result.passed ? t('spr.knockout.passed') : t('spr.knockout.failed')}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Pending</Badge>
-                      )}
-                    </TableCell>
+                    <TableCell>{getResultBadge(result)}</TableCell>
                     <TableCell className="text-sm">{result?.detail ?? '—'}</TableCell>
                   </TableRow>
                 );
@@ -80,6 +85,10 @@ export function KnockoutTab({ reviewId, locked }: Props) {
           </Table>
         </CardContent>
       </Card>
+
+      <p className="text-xs text-muted-foreground">
+        {t('spr.knockout.autoNote')}
+      </p>
     </div>
   );
 }

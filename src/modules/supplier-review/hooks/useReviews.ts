@@ -313,3 +313,21 @@ export function useMarkNotificationRead() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: KEYS.notifications() }); },
   });
 }
+
+export function useSubmitReview() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ reviewId, reviewerId }: { reviewId: string; reviewerId: string }) =>
+      api.submitReview(reviewId, reviewerId),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: KEYS.review(vars.reviewId) });
+      qc.invalidateQueries({ queryKey: ['spr', 'reviews'] });
+    },
+  });
+}
+
+export function useValidateCriteriaWeights() {
+  return useMutation({
+    mutationFn: (category: string) => api.validateCriteriaWeights(category),
+  });
+}

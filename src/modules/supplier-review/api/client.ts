@@ -290,3 +290,19 @@ export async function checkBsaqCoverage(category: string): Promise<{ valid: bool
   if (error) throw error;
   return data ?? { valid: true };
 }
+
+export async function validateCriteriaWeights(category: string): Promise<{
+  valid: boolean; total: number; safety_quality: number; commercial: number; safety_pct: number; errors?: string[];
+}> {
+  const { data, error } = await rpc<{
+    valid: boolean; total: number; safety_quality: number; commercial: number; safety_pct: number; errors?: string[];
+  }>('spr.fn_validate_criteria_weights', { p_category: category });
+  if (error) throw error;
+  return data ?? { valid: true, total: 0, safety_quality: 0, commercial: 0, safety_pct: 0 };
+}
+
+export async function submitReview(reviewId: string, reviewerId: string): Promise<{ valid: boolean; missing?: string[]; status?: string; error?: string }> {
+  const { data, error } = await rpc<{ valid: boolean; missing?: string[]; status?: string; error?: string }>('spr.fn_submit_review', { p_review_id: reviewId, p_reviewer_id: reviewerId });
+  if (error) throw error;
+  return data ?? { valid: false, error: 'Unknown error' };
+}
