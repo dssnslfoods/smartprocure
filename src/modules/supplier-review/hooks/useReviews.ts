@@ -252,6 +252,7 @@ export function useEvaluateKnockouts() {
     mutationFn: (reviewId: string) => api.evaluateKnockouts(reviewId),
     onSuccess: (_data, reviewId) => {
       qc.invalidateQueries({ queryKey: KEYS.knockouts(reviewId) });
+      qc.invalidateQueries({ queryKey: KEYS.kpiSnapshot(reviewId) });
     },
   });
 }

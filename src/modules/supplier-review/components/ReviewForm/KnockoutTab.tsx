@@ -3,23 +3,36 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useTranslation } from '@/i18n';
-import { useKnockoutRules, useReviewKnockouts, useEvaluateKnockouts } from '../../hooks/useReviews';
+import { useKnockoutRules, useReviewKnockouts, useEvaluateKnockouts, useKpiSnapshot } from '../../hooks/useReviews';
 
 interface Props {
   reviewId: string;
   locked: boolean;
 }
 
+interface CertSummary {
+  type: string;
+  no: string | null;
+  expiry: string | null;
+  issued_by: string | null;
+  status: 'valid' | 'expired' | 'unknown';
+}
+
 export function KnockoutTab({ reviewId, locked }: Props) {
   const { t, i18n } = useTranslation();
   const { data: rules = [] } = useKnockoutRules();
   const { data: knockouts = [] } = useReviewKnockouts(reviewId);
+  const { data: kpiData } = useKpiSnapshot(reviewId);
   const evaluateKnockouts = useEvaluateKnockouts();
 
   const handleEvaluate = () => evaluateKnockouts.mutate(reviewId);
 
   const knockoutMap = new Map(knockouts.map(k => [k.rule_id, k]));
   const anyFailed = knockouts.some(k => !k.passed && !k.detail?.startsWith('N/A'));
+
+  const certificates: CertSummary[] = kpiData?.certificates ?? [];
+  const certSource = kpiData?.cert_source as string | undefined;
+  const certPopulatedAt = kpiData?.cert_populated_at as string | undefined;
 
   const getResultBadge = (result: { passed: boolean; detail: string | null } | undefined) => {
     if (!result) return <Badge variant="outline">{t('spr.knockout.pending')}</Badge>;
@@ -32,6 +45,17 @@ export function KnockoutTab({ reviewId, locked }: Props) {
       return <Badge className="bg-green-100 text-green-700">{t('spr.knockout.passed')}</Badge>;
     }
     return <Badge className="bg-red-100 text-red-700">{t('spr.knockout.failed')}</Badge>;
+  };
+
+  const getCertStatusBadge = (status: string) => {
+    switch (status) {
+      case 'valid':
+        return <Badge className="bg-green-100 text-green-700">{t('spr.knockout.certStatusValid')}</Badge>;
+      case 'expired':
+        return <Badge className="bg-red-100 text-red-700">{t('spr.knockout.certStatusExpired')}</Badge>;
+      default:
+        return <Badge variant="outline">{t('spr.knockout.certStatusUnknown')}</Badge>;
+    }
   };
 
   return (
@@ -51,6 +75,50 @@ export function KnockoutTab({ reviewId, locked }: Props) {
         <Card className="border-red-200 bg-red-50">
           <CardContent className="pt-4">
             <p className="text-red-700 font-medium">{t('spr.messages.knockoutOverride')}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {certificates.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              {t('spr.knockout.certTitle')}
+              {certSource && (
+                <Badge variant="outline" className="font-normal text-xs">
+                  {t('spr.knockout.certAutoSource')}
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t('spr.knockout.certType')}</TableHead>
+                  <TableHead>{t('spr.knockout.certNo')}</TableHead>
+                  <TableHead>{t('spr.knockout.certIssuedBy')}</TableHead>
+                  <TableHead>{t('spr.knockout.certExpiry')}</TableHead>
+                  <TableHead className="w-[100px]">{t('spr.knockout.certStatus')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {certificates.map((cert, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-medium text-sm">{cert.type}</TableCell>
+                    <TableCell className="text-sm">{cert.no ?? '—'}</TableCell>
+                    <TableCell className="text-sm">{cert.issued_by ?? '—'}</TableCell>
+                    <TableCell className="text-sm">{cert.expiry ?? '—'}</TableCell>
+                    <TableCell>{getCertStatusBadge(cert.status)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {certPopulatedAt && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {t('spr.knockout.certLastSync')}: {new Date(certPopulatedAt).toLocaleString(i18n.language === 'th' ? 'th-TH' : 'en-US')}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

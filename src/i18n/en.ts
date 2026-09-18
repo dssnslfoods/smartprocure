@@ -428,7 +428,11 @@ const en = {
       evaluate: 'Evaluate Knockouts', evaluating: 'Evaluating...',
       triggered: 'KNOCKOUT TRIGGERED', allPassed: 'ALL PASSED',
       rule: 'Rule', result: 'Result', detail: 'Detail',
-      autoNote: 'Knockouts are automatically evaluated when Performance data is saved.',
+      autoNote: 'Knockouts are automatically evaluated when Performance data is saved. Certificate data is pulled from the system automatically.',
+      certTitle: 'Supplier Certificates', certAutoSource: 'Auto-synced', certType: 'Certificate Type',
+      certNo: 'Certificate No.', certIssuedBy: 'Issued By', certExpiry: 'Expiry Date',
+      certStatus: 'Status', certStatusValid: 'Valid', certStatusExpired: 'Expired', certStatusUnknown: 'Unknown',
+      certLastSync: 'Last synced',
     },
     action: { capa: 'CAPA', improvement: 'Improvement', reissueQuestionnaire: 'Reissue Questionnaire', traceabilityVerify: 'Traceability Verification', other: 'Other' },
     dashboard_cards: {
