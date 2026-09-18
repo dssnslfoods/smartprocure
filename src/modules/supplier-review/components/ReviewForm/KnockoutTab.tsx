@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,9 +22,17 @@ interface CertSummary {
 export function KnockoutTab({ reviewId, locked }: Props) {
   const { t, i18n } = useTranslation();
   const { data: rules = [] } = useKnockoutRules();
-  const { data: knockouts = [] } = useReviewKnockouts(reviewId);
+  const { data: knockouts = [], isSuccess: knockoutsLoaded } = useReviewKnockouts(reviewId);
   const { data: kpiData } = useKpiSnapshot(reviewId);
   const evaluateKnockouts = useEvaluateKnockouts();
+  const autoEvaluated = useRef(false);
+
+  useEffect(() => {
+    if (knockoutsLoaded && knockouts.length === 0 && !autoEvaluated.current && !evaluateKnockouts.isPending) {
+      autoEvaluated.current = true;
+      evaluateKnockouts.mutate(reviewId);
+    }
+  }, [knockoutsLoaded, knockouts.length, reviewId]);
 
   const handleEvaluate = () => evaluateKnockouts.mutate(reviewId);
 
