@@ -126,6 +126,8 @@ DECLARE
   v_na       boolean;
   v_any_fail boolean := false;
   v_approval_method text;
+  v_cert_expiry text;
+  v_cert_type text;
 BEGIN
   SELECT * INTO v_review FROM spr.supplier_review WHERE id = p_review_id;
   IF NOT FOUND THEN
@@ -155,9 +157,12 @@ BEGIN
     WHERE review_id = p_review_id;
   END IF;
 
+  v_cert_expiry := v_kpi->>'cert_expiry_date';
+  v_cert_type := COALESCE(v_kpi->>'cert_type', 'GFSI');
+
   -- Compute derived flags
-  IF (v_kpi->>'cert_expiry_date') IS NOT NULL THEN
-    IF (v_kpi->>'cert_expiry_date')::date < v_review.period_end THEN
+  IF v_cert_expiry IS NOT NULL THEN
+    IF v_cert_expiry::date < v_review.period_end THEN
       v_kpi := v_kpi || '{"cert_expired": true}'::jsonb;
     ELSE
       v_kpi := v_kpi || '{"cert_expired": false}'::jsonb;
@@ -197,23 +202,24 @@ BEGIN
 
     CASE v_rule.code
       WHEN 'CERT_EXPIRED_NO_ALT' THEN
-        IF (v_kpi->>'cert_source') IS NULL THEN
+        IF (v_kpi->>'cert_source') IS NULL AND COALESCE((v_kpi->>'cert_count')::int, 0) = 0 THEN
+          v_passed := false;
           v_detail := 'ไม่พบใบรับรอง GFSI ในระบบ — กรุณาอัปโหลดใบรับรอง';
-        ELSIF (v_kpi->>'cert_expiry_date') IS NULL THEN
-          v_detail := 'พบใบรับรอง ' || COALESCE(v_kpi->>'cert_type', 'GFSI')
-            || ' แต่ยังไม่ได้บันทึกวันหมดอายุ (ดึงจากระบบอัตโนมัติ)';
+        ELSIF v_cert_expiry IS NULL THEN
+          v_passed := false;
+          v_detail := 'พบใบรับรอง ' || v_cert_type
+            || ' แต่ยังไม่ได้บันทึกวันหมดอายุ — กรุณาเพิ่มวันหมดอายุ';
         ELSIF (v_kpi->>'cert_expired')::boolean IS TRUE
            AND (v_kpi->>'cert_directory_verified')::boolean IS NOT TRUE THEN
           v_passed := false;
-          v_detail := 'ใบรับรองหมดอายุ ' || v_kpi->>'cert_expiry_date'
-            || ' (' || COALESCE(v_kpi->>'cert_type', '') || ')'
+          v_detail := 'ใบรับรองหมดอายุ ' || v_cert_expiry
+            || ' (' || v_cert_type || ')'
             || ' — ไม่ได้ verify จาก Directory';
         ELSIF (v_kpi->>'cert_expired')::boolean IS TRUE THEN
-          v_detail := 'ใบรับรองหมดอายุ ' || v_kpi->>'cert_expiry_date'
+          v_detail := 'ใบรับรองหมดอายุ ' || v_cert_expiry
             || ' แต่ verify จาก Directory แล้ว';
         ELSE
-          v_detail := 'ใบรับรองยังไม่หมดอายุ (' || COALESCE(v_kpi->>'cert_type', '') || ')'
-            || ' ถึง ' || v_kpi->>'cert_expiry_date'
+          v_detail := 'ใบรับรองยังไม่หมดอายุ (' || v_cert_type || ') ถึง ' || v_cert_expiry
             || ' (ดึงจากระบบอัตโนมัติ)';
         END IF;
 
