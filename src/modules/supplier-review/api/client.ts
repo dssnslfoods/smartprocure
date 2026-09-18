@@ -9,7 +9,9 @@ import type {
 const SPR = 'spr';
 
 function rpc<T>(fn: string, args?: Record<string, unknown>) {
-  return supabase.rpc(fn, args as Record<string, unknown>) as unknown as Promise<{ data: T; error: unknown }>;
+  const fnName = fn.startsWith('spr.') ? fn.slice(4) : fn;
+  const client = fn.startsWith('spr.') ? supabase.schema(SPR) : supabase;
+  return client.rpc(fnName, args as Record<string, unknown>) as unknown as Promise<{ data: T; error: unknown }>;
 }
 
 function from<T>(table: string) {
